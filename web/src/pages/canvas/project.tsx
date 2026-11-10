@@ -19,7 +19,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
-import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
+import { captureVideoFrameSafe, VideoFrameTaintedError, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
@@ -1884,37 +1884,77 @@ function InfiniteCanvasPage() {
     }, []);
 
     const captureVideoNodeFrame = useCallback(
-        async (nodeId: string, position: VideoFramePosition) => {
+        async (nodeId: string, position: VideoFramePosition, options: { openPanel?: boolean } = {}): Promise<CanvasNodeData | null> => {
             setContextMenu(null);
             const node = nodesRef.current.find((item) => item.id === nodeId);
-            const video = Array.from(containerRef.current!.querySelectorAll<HTMLVideoElement>("video[data-canvas-video]")).find((item) => item.dataset.canvasVideo === nodeId);
-            if (node?.type !== CanvasNodeType.Video || !node.metadata?.content || !video) return message.error(t("canvas.videoFrames.failed"));
+            const video = Array.from(containerRef.current?.querySelectorAll<HTMLVideoElement>("video[data-canvas-video]") || []).find((item) => item.dataset.canvasVideo === nodeId) || null;
+            if (node?.type !== CanvasNodeType.Video || !node.metadata?.content) {
+                message.error(t("canvas.videoFrames.failed"));
+                return null;
+            }
             try {
-                const image = await uploadImage(await captureVideoFrame(node.metadata.content, position, video.currentTime));
+                const image = await uploadImage(await captureVideoFrameSafe(node.metadata.content, position, video));
                 const size = fitNodeSize(image.width, image.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                const id = nanoid();
-                const x = node.position.x + node.width + 96;
-                let y = node.position.y + node.height / 2 - size.height / 2;
-                while (nodesRef.current.some((item) => item.id !== node.id && item.position.x < x + size.width && item.position.x + item.width > x && item.position.y < y + size.height && item.position.y + item.height > y)) y += size.height + 24;
+                const current = nodesRef.current.find((item) => item.id === nodeId) || node;
                 const child: CanvasNodeData = {
-                    id,
+                    id: nanoid(),
                     type: CanvasNodeType.Image,
-                    title: t(`canvas.videoFrames.${position}Title`, { name: node.title || t("assets.kinds.video") }),
-                    position: { x, y },
+                    title: t(`canvas.videoFrames.${position}Title`, { name: current.title || t("assets.kinds.video") }),
+                    position: findFreeRightPosition(current, size, nodesRef.current),
                     ...size,
                     metadata: imageMetadata(image),
                 };
-                setNodes((prev) => [...prev, child]);
-                setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: id }]);
-                setSelectedNodeIds(new Set([id]));
+                const nextNodes = [...nodesRef.current, child];
+                const nextConnections = [...connectionsRef.current, { id: nanoid(), fromNodeId: current.id, toNodeId: child.id }];
+                nodesRef.current = nextNodes;
+                connectionsRef.current = nextConnections;
+                setNodes(nextNodes);
+                setConnections(nextConnections);
+                setSelectedNodeIds(new Set([child.id]));
                 setSelectedConnectionId(null);
-                setDialogNodeId(id);
+                if (options.openPanel !== false) setDialogNodeId(child.id);
                 message.success(t("canvas.videoFrames.captured"));
-            } catch {
-                message.error(t("canvas.videoFrames.failed"));
+                return child;
+            } catch (error) {
+                message.error(error instanceof VideoFrameTaintedError ? t("hemosi.videoTools.tainted") : t("canvas.videoFrames.failed"));
+                return null;
             }
         },
         [message, t],
+    );
+
+    // 用末帧续拍: last frame -> image node -> new video generation node prefilled with the original prompt and params.
+    const continueVideoFromLastFrame = useCallback(
+        async (node: CanvasNodeData) => {
+            const frame = await captureVideoNodeFrame(node.id, "last", { openPanel: false });
+            if (!frame) return;
+            const spec = getNodeSpec(CanvasNodeType.Video);
+            const position = findFreeRightPosition(frame, spec, nodesRef.current);
+            const meta = node.metadata || {};
+            const created = createCanvasNode(
+                CanvasNodeType.Video,
+                { x: position.x + spec.width / 2, y: position.y + spec.height / 2 },
+                {
+                    prompt: meta.prompt || "",
+                    ...(meta.model ? { model: meta.model } : {}),
+                    ...(meta.size ? { size: meta.size } : {}),
+                    ...(meta.seconds ? { seconds: meta.seconds } : {}),
+                    ...(meta.vquality ? { vquality: meta.vquality } : {}),
+                    ...(meta.generateAudio ? { generateAudio: meta.generateAudio } : {}),
+                    ...(meta.watermark ? { watermark: meta.watermark } : {}),
+                    ...(meta.videoMode ? { videoMode: meta.videoMode } : {}),
+                },
+            );
+            const next: CanvasNodeData = { ...created, title: t("hemosi.videoTools.continueTitleNode", { name: node.title || t("assets.kinds.video") }) };
+            setNodes((prev) => [...prev, next]);
+            setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: frame.id, toNodeId: next.id }]);
+            setSelectedNodeIds(new Set([next.id]));
+            setSelectedConnectionId(null);
+            setToolbarNodeId(null);
+            setDialogNodeId(next.id);
+            focusNodePrompt(next.id);
+        },
+        [captureVideoNodeFrame, focusNodePrompt, t],
     );
 
     const saveNodeAsset = useCallback(
@@ -3482,6 +3522,9 @@ function InfiniteCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onHdRegenerate={(node) => void rerunIntoNewNode(node, "hd")}
+                    onCaptureFrame={(node) => void captureVideoNodeFrame(node.id, "current")}
+                    onContinueFromLastFrame={(node) => void continueVideoFromLastFrame(node)}
+                    onReshoot={(node) => void rerunIntoNewNode(node, "reshoot")}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                     onUngroup={(node) => ungroupSelection(new Set([node.id]))}

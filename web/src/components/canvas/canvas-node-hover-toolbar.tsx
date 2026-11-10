@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Sparkles, Trash2, Ungroup, Upload, Video } from "lucide-react";
+import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, SkipForward, Sparkles, Trash2, Camera, Clapperboard, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -36,6 +36,9 @@ type CanvasNodeHoverToolbarProps = {
     onReversePrompt: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
     onHdRegenerate?: (node: CanvasNodeData) => void;
+    onCaptureFrame?: (node: CanvasNodeData) => void;
+    onContinueFromLastFrame?: (node: CanvasNodeData) => void;
+    onReshoot?: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     onUngroup?: (node: CanvasNodeData) => void;
@@ -75,6 +78,9 @@ export function CanvasNodeHoverToolbar({
     onReversePrompt,
     onRetry,
     onHdRegenerate,
+    onCaptureFrame,
+    onContinueFromLastFrame,
+    onReshoot,
     onToggleFreeResize,
     onDelete,
     onUngroup,
@@ -148,7 +154,7 @@ export function CanvasNodeHoverToolbar({
         ...(canQueryVideoTask ? [{ id: "queryVideoTask", title: t("canvas.nodeToolbar.queryVideoTaskTitle"), label: t("canvas.nodeToolbar.queryVideoTask"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
-        ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : hasVideo ? "canvas.nodeToolbar.downloadVideo" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasImage || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: t("canvas.node.generateImage"), label: t("canvas.node.generate"), icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: t("canvas.configNode.title"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
@@ -161,6 +167,11 @@ export function CanvasNodeHoverToolbar({
     ];
     // Pinned tools always show, outside the user's image quick-tool selection.
     const pinnedTools: ToolbarTool[] = [
+        ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
+        ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
+        ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
+        // Video result toolbar: 截帧 / 用末帧续拍 / 重拍 / 下载, in that order.
+        ...(hasVideo ? [{ id: "download", title: t("canvas.nodeToolbar.downloadVideo"), label: t("hemosi.videoTools.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
     ];
     const toolbarTools = hasImage ? [...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...pinnedTools, ...baseToolbarTools, ...nodeToolbarTools, ...extraTools];

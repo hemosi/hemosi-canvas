@@ -687,6 +687,7 @@ export default {
     hemosi: {
         confirm: { title: "确认生成", mode: "类型", modes: { image: "图片", video: "视频", text: "文本", audio: "音频" }, model: "模型", channel: "渠道", prompt: "提示词", emptyPrompt: "（未填写提示词）", inputs: "输入", images: "参考图 {{count}} 张", videos: "参考视频 {{count}} 个", audios: "参考音频 {{count}} 个", noInputs: "无参考素材", size: "尺寸 / 比例", quality: "质量", resolution: "清晰度", seconds: "时长", secondsValue: "{{count}} 秒", count: "数量", countValue: "{{count}} 个", draft: "草稿模式", draftValue: "已开启，使用最低参数", dontAskAgain: "以后不再确认", dontAskHint: "可在 设置 › 偏好 中重新开启", confirm: "确认生成", cancel: "取消" },
         draft: { label: "草稿", tooltip: "草稿模式：用最低分辨率 / 低质量（视频为最低清晰度、最短时长）快速出样", badge: "草稿", hdRegenerate: "高清重生成", hdRegenerateTitle: "用相同提示词和参考，按节点的正常参数重新生成一个新节点", notDraft: "该节点不是草稿结果" },
+        videoTools: { frame: "截帧", frameTitle: "截取当前播放画面，生成图片节点", continue: "用末帧续拍", continueTitle: "截取最后一帧作为参考图，创建视频生成节点并填入原提示词", continueTitleNode: "续拍：{{name}}", reshoot: "重拍", reshootTitle: "按原生成参数在新节点重新生成", download: "下载", tainted: "视频跨域受限，无法截帧。请在 设置 › 本地代理 中开启代理后重试" },
         quickGrow: { add: "添加下游节点", text: "文本", image: "图片生成", video: "视频生成", edit: "改图", editTitle: "改图", connectFailed: "该节点不能连接到新节点" },
     },
     locale: {
