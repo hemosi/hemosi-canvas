@@ -1,4 +1,4 @@
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 
 import { AppConfigPanel } from "@/components/layout/app-config-modal";
 
@@ -13,6 +13,9 @@ export default function ConfigPage() {
                     <p className="mt-1 text-sm text-stone-500">{t("config.description")}</p>
                 </div>
                 <AppConfigPanel />
+                <p className="mt-8 border-t border-stone-200 pt-4 text-xs text-stone-500 dark:border-white/10">
+                    <Trans i18nKey="config.about" components={{ link: <a href="https://github.com/basketikun/infinite-canvas" target="_blank" rel="noopener noreferrer" className="text-[var(--hemosi-accent)] hover:underline" /> }} />
+                </p>
             </div>
         </main>
     );
