@@ -526,6 +526,8 @@ export default {
             regenerateBehaviorNewNode: "Create a new node (original behavior)",
             regenerateBehaviorNewNodeDescription: "Keep the current node and create a new one for the result. Good for variants or branches.",
             autoFocusOnSelect: "Auto-center on select",
+            confirmBeforeGenerate: "Confirm before generating",
+            confirmBeforeGenerateDescription: "Show a confirm card with model, channel, inputs and parameters before a canvas node starts generating.",
             audioVoice: "Default audio voice",
             audioFormat: "Default audio format",
             audioSpeed: "Default audio speed",
@@ -683,6 +685,7 @@ export default {
         },
     },
     hemosi: {
+        confirm: { title: "Confirm generation", mode: "Type", modes: { image: "Image", video: "Video", text: "Text", audio: "Audio" }, model: "Model", channel: "Channel", prompt: "Prompt", emptyPrompt: "(no prompt)", inputs: "Inputs", images: "{{count}} reference images", videos: "{{count}} reference videos", audios: "{{count}} reference audios", noInputs: "No reference media", size: "Size / ratio", quality: "Quality", resolution: "Resolution", seconds: "Duration", secondsValue: "{{count}} s", count: "Count", countValue: "{{count}}", draft: "Draft mode", draftValue: "On, using the lowest parameters", dontAskAgain: "Don't ask again", dontAskHint: "Turn it back on in Settings › Preferences", confirm: "Generate", cancel: "Cancel" },
         quickGrow: { add: "Add downstream node", text: "Text", image: "Image generation", video: "Video generation", edit: "Edit image", editTitle: "Edit image", connectFailed: "This node cannot connect to a new node" },
     },
     locale: {

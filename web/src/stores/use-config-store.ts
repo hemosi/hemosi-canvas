@@ -77,6 +77,8 @@ export type AiConfig = {
     proxyUrl: string;
     nodeRegenerateBehavior: "new-node" | "overwrite";
     autoFocusOnSelect: boolean;
+    /** Show the pre-generation confirm card before a canvas node fires a generation request. */
+    confirmBeforeGenerate: boolean;
 };
 
 export type WebdavSyncConfig = {
@@ -146,6 +148,7 @@ export const defaultConfig: AiConfig = {
     proxyUrl: DEFAULT_LOCAL_PROXY_URL,
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
+    confirmBeforeGenerate: true,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -305,6 +308,7 @@ export const useConfigStore = create<ConfigStore>()(
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
+                        confirmBeforeGenerate: config.confirmBeforeGenerate !== false,
                     },
                 };
             },

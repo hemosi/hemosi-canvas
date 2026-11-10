@@ -76,6 +76,7 @@ import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu";
+import { CanvasGenerationConfirmModal, buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
 import { findFreeRightPosition, quickGrowKinds, quickGrowNodeType, type QuickGrowKind } from "@/lib/canvas/canvas-quick-grow";
 import {
     CanvasNodeType,
@@ -274,6 +275,8 @@ function InfiniteCanvasPage() {
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [referencePickerNodeId, setReferencePickerNodeId] = useState<string | null>(null);
     const [quickGrowMenu, setQuickGrowMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+    const [generationConfirmSummary, setGenerationConfirmSummary] = useState<GenerationConfirmSummary | null>(null);
+    const generationConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -318,6 +321,26 @@ function InfiniteCanvasPage() {
         const request = generationRequestsRef.current.get(targetNodeId);
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
+
+    // Pre-generation confirm card. Resolves true right away when the user turned confirmation off in settings.
+    const requestGenerationConfirm = useCallback((summary: GenerationConfirmSummary) => {
+        if (!useConfigStore.getState().config.confirmBeforeGenerate) return Promise.resolve(true);
+        generationConfirmResolveRef.current?.(false);
+        return new Promise<boolean>((resolve) => {
+            generationConfirmResolveRef.current = resolve;
+            setGenerationConfirmSummary(summary);
+        });
+    }, []);
+
+    const settleGenerationConfirm = useCallback((confirmed: boolean, dontAskAgain = false) => {
+        if (confirmed && dontAskAgain) useConfigStore.getState().updateConfig("confirmBeforeGenerate", false);
+        const resolve = generationConfirmResolveRef.current;
+        generationConfirmResolveRef.current = null;
+        setGenerationConfirmSummary(null);
+        resolve?.(confirmed);
+    }, []);
+
+    useEffect(() => () => generationConfirmResolveRef.current?.(false), []);
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
@@ -2089,6 +2112,7 @@ function InfiniteCanvasPage() {
             setSelectedConnectionId(null);
             setDialogNodeId(childId);
             if (!payload.generate) return;
+            if (!(await requestGenerationConfirm(buildGenerationConfirmSummary(generationConfig, "image", { prompt, images: references, count: 1 })))) return;
             setRunningNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
@@ -2106,7 +2130,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, requestGenerationConfirm, startGenerationRequest, t],
     );
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
@@ -2142,10 +2166,11 @@ function InfiniteCanvasPage() {
                 openConfigDialog(true);
                 return;
             }
+            const prompt = buildAnglePrompt(params);
+            if (!(await requestGenerationConfirm(buildGenerationConfirmSummary(generationConfig, "image", { prompt, images: sourceNodeReferenceImages(node), count: 1 })))) return;
             const childId = nanoid();
             const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
             const title = buildAngleLabel(params);
-            const prompt = buildAnglePrompt(params);
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
                 { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
             ]);
@@ -2186,7 +2211,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, openConfigDialog, requestGenerationConfirm, startGenerationRequest, t],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2379,6 +2404,17 @@ function InfiniteCanvasPage() {
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
+            }
+
+            {
+                const preview = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt);
+                const sourceImages = mode === "image" && effectiveConfig.nodeRegenerateBehavior !== "overwrite" ? sourceNodeReferenceImages(sourceNode || null) : [];
+                const previewImages = [...new Map([...sourceImages, ...preview.referenceImages].map((image) => [image.id, image])).values()];
+                const previewCount = mode === "image" ? getGenerationCount(generationConfig.count) : mode === "text" ? getGenerationCount(String(sourceNode?.metadata?.textCount || 1)) : 1;
+                const confirmed = await requestGenerationConfirm(
+                    buildGenerationConfirmSummary(generationConfig, mode, { prompt: preview.prompt, images: previewImages, videos: preview.referenceVideos, audioCount: preview.referenceAudios.length, count: previewCount }),
+                );
+                if (!confirmed) return;
             }
 
             // useBuiltinPanel.writeBackToSelf reuses built-in generation while writing the result back to the plugin node.
@@ -2808,7 +2844,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, requestGenerationConfirm, startGenerationRequest, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2855,6 +2891,11 @@ function InfiniteCanvasPage() {
                 return;
             }
             const retryImages = retryReferenceImages || [];
+            const retryMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image";
+            const retryConfirmed = await requestGenerationConfirm(
+                buildGenerationConfirmSummary(generationConfig, retryMode, { prompt, images: retryImages, videos: context?.referenceVideos, audioCount: context?.referenceAudios.length, count: 1 }),
+            );
+            if (!retryConfirmed) return;
 
             setRunningNodeId(node.id);
             setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_LOADING, errorDetails: undefined } : image)) } } : item)));
@@ -2965,7 +3006,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, pollVideoNodeTask, requestGenerationConfirm, startGenerationRequest, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {
@@ -3522,6 +3563,8 @@ function InfiniteCanvasPage() {
                 >
                     <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
                 </Modal>
+
+                <CanvasGenerationConfirmModal summary={generationConfirmSummary} onConfirm={(dontAskAgain) => settleGenerationConfirm(true, dontAskAgain)} onCancel={() => settleGenerationConfirm(false)} />
 
                 <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>

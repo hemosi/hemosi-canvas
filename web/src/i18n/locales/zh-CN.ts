@@ -526,6 +526,8 @@ export default {
             regenerateBehaviorNewNode: "新建节点（原行为）",
             regenerateBehaviorNewNodeDescription: "保留当前节点，新建一个节点承接生成结果，适合做变体或分支。",
             autoFocusOnSelect: "选中自动居中",
+            confirmBeforeGenerate: "生成前确认参数",
+            confirmBeforeGenerateDescription: "画布节点发起生成前，先弹出确认卡片核对模型、渠道、输入和参数。",
             audioVoice: "默认音频声音",
             audioFormat: "默认音频格式",
             audioSpeed: "默认音频语速",
@@ -683,6 +685,7 @@ export default {
         },
     },
     hemosi: {
+        confirm: { title: "确认生成", mode: "类型", modes: { image: "图片", video: "视频", text: "文本", audio: "音频" }, model: "模型", channel: "渠道", prompt: "提示词", emptyPrompt: "（未填写提示词）", inputs: "输入", images: "参考图 {{count}} 张", videos: "参考视频 {{count}} 个", audios: "参考音频 {{count}} 个", noInputs: "无参考素材", size: "尺寸 / 比例", quality: "质量", resolution: "清晰度", seconds: "时长", secondsValue: "{{count}} 秒", count: "数量", countValue: "{{count}} 个", draft: "草稿模式", draftValue: "已开启，使用最低参数", dontAskAgain: "以后不再确认", dontAskHint: "可在 设置 › 偏好 中重新开启", confirm: "确认生成", cancel: "取消" },
         quickGrow: { add: "添加下游节点", text: "文本", image: "图片生成", video: "视频生成", edit: "改图", editTitle: "改图", connectFailed: "该节点不能连接到新节点" },
     },
     locale: {
