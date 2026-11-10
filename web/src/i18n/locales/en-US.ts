@@ -530,6 +530,14 @@ export default {
             scriptReady: "Script set",
             script: "Request script",
             empty: "Select models to fetch or manually add models.",
+            imageEdit: {
+                title: "Reference image upload",
+                description: "Change this if reference images do not reach the provider. Defaults fit most gateways.",
+                mode: "Request format",
+                multipart: "Multipart",
+                field: "Image field name",
+                extraParams: "Also send output_format / response_format",
+            },
             capabilities: {
                 image: "Image",
                 video: "Video",

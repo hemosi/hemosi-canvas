@@ -1,9 +1,9 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
+import { Button, Drawer, Input, Segmented, Select, Space, Switch } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, normalizeImageEditOptions, type ImageEditOptions, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -28,6 +28,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
     const setModels = (models: ChannelModel[]) => patch({ models });
+    const imageEdit = normalizeImageEditOptions(draft.imageEdit);
+    const patchImageEdit = (value: Partial<ImageEditOptions>) => patch({ imageEdit: { ...imageEdit, ...value } });
 
     const changeApiFormat = (apiFormat: ApiCallFormat) => {
         const baseUrl = !draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
@@ -82,6 +84,44 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
                 </label>
             </div>
+
+            {draft.apiFormat === "openai" ? (
+                <div className="mt-6 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                    <div className="text-sm font-semibold">{t("config.channelEditor.imageEdit.title")}</div>
+                    <div className="mt-0.5 mb-3 text-xs text-stone-500">{t("config.channelEditor.imageEdit.description")}</div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <label className="block">
+                            <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.imageEdit.mode")}</span>
+                            <Segmented
+                                block
+                                value={imageEdit.mode}
+                                options={[
+                                    { label: t("config.channelEditor.imageEdit.multipart"), value: "multipart" },
+                                    { label: "JSON", value: "json" },
+                                ]}
+                                onChange={(value) => patchImageEdit({ mode: value as ImageEditOptions["mode"] })}
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.imageEdit.field")}</span>
+                            <Segmented
+                                block
+                                disabled={imageEdit.mode !== "multipart"}
+                                value={imageEdit.field}
+                                options={[
+                                    { label: "image", value: "image" },
+                                    { label: "image[]", value: "image[]" },
+                                ]}
+                                onChange={(value) => patchImageEdit({ field: value as ImageEditOptions["field"] })}
+                            />
+                        </label>
+                        <label className="flex items-center justify-between gap-3 md:col-span-2">
+                            <span className="text-sm">{t("config.channelEditor.imageEdit.extraParams")}</span>
+                            <Switch checked={imageEdit.extraParams} onChange={(checked) => patchImageEdit({ extraParams: checked })} />
+                        </label>
+                    </div>
+                </div>
+            ) : null}
 
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>

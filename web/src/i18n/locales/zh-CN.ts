@@ -530,6 +530,14 @@ export default {
             scriptReady: "脚本已设",
             script: "调用脚本",
             empty: "点击「选择模型」拉取或手动增加模型。",
+            imageEdit: {
+                title: "参考图发送方式",
+                description: "改图传不过去时在这里换。默认适配大多数网关。",
+                mode: "请求格式",
+                multipart: "表单上传",
+                field: "图片字段名",
+                extraParams: "额外发送 output_format / response_format",
+            },
             capabilities: {
                 image: "生图",
                 video: "视频",

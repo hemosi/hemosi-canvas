@@ -787,32 +787,36 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.size);
     const background = normalizeBackground(config.background);
-    const formData = new FormData();
-    formData.set("model", requestConfig.model);
-    formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-    formData.set("n", String(n));
-    // gpt-image models reject response_format; they always return b64.
-    if (!/gpt-image/.test(requestConfig.model)) {
-        formData.set("response_format", "b64_json");
+    const editOptions = requestConfig.imageEdit;
+    const editPrompt = withSystemPrompt(requestConfig, requestPrompt);
+    const dataUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const unreadable = dataUrls.findIndex((url) => !url || !url.startsWith("data:"));
+    if (unreadable >= 0) throw new Error(apiText("referenceImageReadFailed"));
+    const optional: Record<string, string> = {};
+    if (quality) optional.quality = quality;
+    if (requestSize) optional.size = requestSize;
+    if (background) optional.background = background;
+    if (editOptions.extraParams) {
+        optional.output_format = IMAGE_OUTPUT_FORMAT;
+        // gpt-image models reject response_format; they always return b64.
+        if (!/gpt-image/.test(requestConfig.model)) optional.response_format = "b64_json";
     }
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
-    if (quality) {
-        formData.set("quality", quality);
-    }
-    if (requestSize) {
-        formData.set("size", requestSize);
-    }
-    if (background) {
-        formData.set("background", background);
-    }
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    const imageField = files.length > 1 ? "image[]" : "image";
-    files.forEach((file) => formData.append(imageField, file));
 
     try {
+        if (editOptions.mode === "json") {
+            const body = { model: requestConfig.model, prompt: editPrompt, n, ...optional, images: dataUrls.map((url) => ({ image_url: url })) };
+            const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
+            return await parseImagePayload(response.data);
+        }
+        const formData = new FormData();
+        formData.set("model", requestConfig.model);
+        formData.set("prompt", editPrompt);
+        formData.set("n", String(n));
+        Object.entries(optional).forEach(([key, value]) => formData.set(key, value));
+        const files = references.map((image, index) => dataUrlToFile({ ...image, dataUrl: dataUrls[index] }));
+        files.forEach((file) => formData.append(editOptions.field, file));
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
-        const images = await parseImagePayload(response.data);
-        return images;
+        return await parseImagePayload(response.data);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }

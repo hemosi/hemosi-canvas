@@ -22,7 +22,28 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    /** How reference images are sent to /images/edits. Different gateways accept different shapes. */
+    imageEdit?: ImageEditOptions;
 };
+
+export type ImageEditOptions = {
+    /** multipart: standard multipart/form-data upload. json: JSON body with images as data URLs. */
+    mode: "multipart" | "json";
+    /** Field name for each reference file in multipart mode. Most gateways accept repeated "image". */
+    field: "image" | "image[]";
+    /** Also send output_format / response_format. Some gateways reject unknown parameters. */
+    extraParams: boolean;
+};
+
+export const defaultImageEditOptions: ImageEditOptions = { mode: "multipart", field: "image", extraParams: false };
+
+export function normalizeImageEditOptions(value?: Partial<ImageEditOptions> | null): ImageEditOptions {
+    return {
+        mode: value?.mode === "json" ? "json" : "multipart",
+        field: value?.field === "image[]" ? "image[]" : "image",
+        extraParams: value?.extraParams === true,
+    };
+}
 
 export type AiConfig = {
     channelMode: "remote" | "local";
@@ -320,6 +341,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        imageEdit: normalizeImageEditOptions(channel?.imageEdit),
     };
 }
 
@@ -443,6 +465,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+        imageEdit: normalizeImageEditOptions(channel.imageEdit),
     };
 }
 
