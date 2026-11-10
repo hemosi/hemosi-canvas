@@ -79,6 +79,9 @@ import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu"
 import { CanvasGenerationConfirmModal, buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
 import { applyDraftConfig, isDraftMode } from "@/lib/canvas/canvas-draft";
 import { stripGeneratedResult } from "@/lib/canvas/canvas-node-clone";
+import { buildTemplateFromSelection, instantiateTemplate, templateName, type CanvasTemplate } from "@/lib/canvas/canvas-templates";
+import { findTemplate, useTemplateStore } from "@/stores/use-template-store";
+import { CanvasSaveTemplateModal, CanvasTemplateModal } from "@/components/canvas/canvas-templates";
 import { findFreeRightPosition, quickGrowKinds, quickGrowNodeType, type QuickGrowKind } from "@/lib/canvas/canvas-quick-grow";
 import {
     CanvasNodeType,
@@ -178,7 +181,7 @@ function InfiniteCanvasPage() {
     const nodeRegistryVersion = useNodeRegistryVersion((state) => state.version);
     const params = useParams<{ id: string }>();
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const projectId = params.id || "";
     const localAgentConnected = useAgentStore((state) => state.connected);
     const localAgentActivity = useAgentStore((state) => state.activity);
@@ -279,6 +282,8 @@ function InfiniteCanvasPage() {
     const [quickGrowMenu, setQuickGrowMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
     const [generationConfirmSummary, setGenerationConfirmSummary] = useState<GenerationConfirmSummary | null>(null);
     const generationConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+    const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
+    const [saveTemplateNodeIds, setSaveTemplateNodeIds] = useState<Set<string> | null>(null);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -509,6 +514,24 @@ function InfiniteCanvasPage() {
         // Resume once after the current canvas is restored, not on later config identity changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectLoaded]);
+
+    // /templates "插入到新画布" lands here with ?template=<id>; insert once the canvas has loaded, then drop the param.
+    const pendingTemplateId = searchParams.get("template");
+    useEffect(() => {
+        if (!projectLoaded || !pendingTemplateId) return;
+        const template = findTemplate(pendingTemplateId);
+        if (template) insertTemplate(template);
+        else message.error(t("hemosi.templates.notFound"));
+        setSearchParams(
+            (current) => {
+                const next = new URLSearchParams(current);
+                next.delete("template");
+                return next;
+            },
+            { replace: true },
+        );
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectLoaded, pendingTemplateId]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
@@ -1084,6 +1107,46 @@ function InfiniteCanvasPage() {
         [focusNodePrompt, message, t],
     );
 
+    const openSaveTemplate = useCallback(() => {
+        setContextMenu(null);
+        const ids = new Set(selectedNodeIdsRef.current);
+        if (!ids.size) {
+            message.warning(t("hemosi.templates.nothingSelected"));
+            return;
+        }
+        setSaveTemplateNodeIds(ids);
+    }, [message, t]);
+
+    const saveSelectionAsTemplate = useCallback(
+        (name: string) => {
+            if (!saveTemplateNodeIds) return;
+            const { nodes: templateNodes, connections: templateConnections } = buildTemplateFromSelection(saveTemplateNodeIds, nodesRef.current, connectionsRef.current);
+            setSaveTemplateNodeIds(null);
+            if (!templateNodes.length) {
+                message.warning(t("hemosi.templates.nothingSelected"));
+                return;
+            }
+            useTemplateStore.getState().addTemplate(name, templateNodes, templateConnections);
+            message.success(t("hemosi.templates.saved", { name }));
+        },
+        [message, saveTemplateNodeIds, t],
+    );
+
+    const insertTemplate = useCallback(
+        (template: CanvasTemplate) => {
+            const { nodes: inserted, connections: insertedConnections } = instantiateTemplate(template, getCanvasCenter());
+            if (!inserted.length) return;
+            setNodes((prev) => [...prev, ...inserted]);
+            setConnections((prev) => [...prev, ...insertedConnections]);
+            setSelectedNodeIds(new Set(inserted.map((node) => node.id)));
+            setSelectedConnectionId(null);
+            setDialogNodeId(null);
+            setTemplatePanelOpen(false);
+            message.success(t("hemosi.templates.inserted", { name: templateName(template) }));
+        },
+        [getCanvasCenter, message, t],
+    );
+
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
@@ -1656,7 +1719,7 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore],.ant-modal-wrap")) return;
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
@@ -3539,10 +3602,12 @@ function InfiniteCanvasPage() {
                         canUngroup={canUngroupSelection}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onSaveTemplate={openSaveTemplate}
                     />
                 ) : null}
 
                 <CanvasToolbar
+                    onOpenTemplates={() => setTemplatePanelOpen(true)}
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
                     onFocusSelected={focusSelectedNode}
@@ -3593,6 +3658,7 @@ function InfiniteCanvasPage() {
                         }}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onSaveTemplate={openSaveTemplate}
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 deleteNodes(new Set([contextMenu.nodeId]));
@@ -3655,6 +3721,9 @@ function InfiniteCanvasPage() {
                 >
                     <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
                 </Modal>
+
+                <CanvasTemplateModal open={templatePanelOpen} onClose={() => setTemplatePanelOpen(false)} onInsert={insertTemplate} />
+                <CanvasSaveTemplateModal open={Boolean(saveTemplateNodeIds)} defaultName={t("hemosi.templates.defaultName", { count: useTemplateStore.getState().templates.length + 1 })} onCancel={() => setSaveTemplateNodeIds(null)} onSave={saveSelectionAsTemplate} />
 
                 <CanvasGenerationConfirmModal summary={generationConfirmSummary} onConfirm={(dontAskAgain) => settleGenerationConfirm(true, dontAskAgain)} onCancel={() => settleGenerationConfirm(false)} />
 

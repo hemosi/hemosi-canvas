@@ -1,6 +1,6 @@
-import { FolderKanban, House, ImagePlus, Images, ScrollText, Settings2, Video, type LucideIcon } from "lucide-react";
+import { FolderKanban, House, ImagePlus, Images, LayoutTemplate, ScrollText, Settings2, Video, type LucideIcon } from "lucide-react";
 
-export type NavigationToolSlug = "home" | "canvas" | "image" | "video" | "assets" | "prompts" | "config";
+export type NavigationToolSlug = "home" | "canvas" | "image" | "video" | "assets" | "prompts" | "templates" | "config";
 
 export type NavigationTool = {
     slug: NavigationToolSlug;
@@ -16,6 +16,7 @@ export const navigationTools: NavigationTool[] = [
     { slug: "video", path: "/video", icon: Video },
     { slug: "assets", path: "/assets", icon: Images },
     { slug: "prompts", path: "/prompts", icon: ScrollText },
+    { slug: "templates", path: "/templates", icon: LayoutTemplate },
 ];
 
 // Sidebar bottom group.

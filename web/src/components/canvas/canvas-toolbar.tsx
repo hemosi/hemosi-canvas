@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LocateFixed, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, LayoutTemplate, LocateFixed, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -33,6 +33,7 @@ export function CanvasToolbar({
     onBackgroundModeChange,
     onShowImageInfoChange,
     onFocusSelected,
+    onOpenTemplates,
 }: {
     selectedCount: number;
     canvasTool: "select" | "pan";
@@ -56,6 +57,7 @@ export function CanvasToolbar({
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
     onFocusSelected: () => void;
+    onOpenTemplates?: () => void;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const { t } = useTranslation();
@@ -148,6 +150,11 @@ export function CanvasToolbar({
                 <ToolbarButton id="tool-upload" label={t("canvas.toolbar.upload")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUpload}>
                     <Upload className="size-4.5" />
                 </ToolbarButton>
+                {onOpenTemplates ? (
+                    <ToolbarButton id="tool-templates" label={t("hemosi.templates.open")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onOpenTemplates}>
+                        <LayoutTemplate className="size-4.5" />
+                    </ToolbarButton>
+                ) : null}
                 <Divider theme={theme} />
                 <ToolbarButton
                     id="tool-style"
@@ -371,6 +378,7 @@ function toolLabel(id: string, t: (key: string) => string) {
     if (id === "tool-group") return t("canvas.toolbar.group");
     if (id === "tool-extensions") return t("canvas.toolbar.extensions");
     if (id === "tool-upload") return t("canvas.toolbar.upload");
+    if (id === "tool-templates") return t("hemosi.templates.open");
     if (id === "tool-style") return t("canvas.toolbar.appearance");
     if (id === "tool-delete") return t("canvas.deleteSelected");
     if (id === "tool-clear") return t("canvas.toolbar.clear");
