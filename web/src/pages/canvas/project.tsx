@@ -75,6 +75,8 @@ import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-mana
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
+import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu";
+import { findFreeRightPosition, quickGrowKinds, quickGrowNodeType, type QuickGrowKind } from "@/lib/canvas/canvas-quick-grow";
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
@@ -271,6 +273,7 @@ function InfiniteCanvasPage() {
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [referencePickerNodeId, setReferencePickerNodeId] = useState<string | null>(null);
+    const [quickGrowMenu, setQuickGrowMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -1009,6 +1012,52 @@ function InfiniteCanvasPage() {
         setSelectedConnectionId(null);
         if (next.type !== CanvasNodeType.Group) setDialogNodeId(id);
     }, []);
+
+    const focusNodePrompt = useCallback((nodeId: string) => {
+        let attempts = 0;
+        const tryFocus = () => {
+            const editor = document.querySelector<HTMLElement>(`[data-node-panel="${nodeId}"] [contenteditable="true"], [data-node-panel="${nodeId}"] textarea`);
+            if (editor) {
+                editor.focus();
+                return;
+            }
+            if (attempts++ < 10) window.setTimeout(tryFocus, 40);
+        };
+        window.setTimeout(tryFocus, 40);
+    }, []);
+
+    const closeQuickGrowMenu = useCallback(() => setQuickGrowMenu(null), []);
+
+    const openQuickGrowMenu = useCallback((nodeId: string, x: number, y: number) => {
+        setContextMenu(null);
+        setQuickGrowMenu({ nodeId, x, y });
+    }, []);
+
+    const quickGrowNode = useCallback(
+        (nodeId: string, kind: QuickGrowKind) => {
+            setQuickGrowMenu(null);
+            const source = nodesRef.current.find((node) => node.id === nodeId);
+            if (!source) return;
+            const type = quickGrowNodeType(kind);
+            const spec = getNodeSpec(type);
+            const position = findFreeRightPosition(source, spec, nodesRef.current);
+            const created = createCanvasNode(type, { x: position.x + spec.width / 2, y: position.y + spec.height / 2 });
+            const newNode: CanvasNodeData = kind === "edit" ? { ...created, title: t("hemosi.quickGrow.editTitle") } : created;
+            const connection = normalizeConnection(source.id, newNode.id, [...nodesRef.current, newNode], "source");
+            if (!connection) {
+                message.warning(t("hemosi.quickGrow.connectFailed"));
+                return;
+            }
+            setNodes((prev) => [...prev, newNode]);
+            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            setSelectedNodeIds(new Set([newNode.id]));
+            setSelectedConnectionId(null);
+            setToolbarNodeId(null);
+            setDialogNodeId(newNode.id);
+            focusNodePrompt(newNode.id);
+        },
+        [focusNodePrompt, message, t],
+    );
 
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
@@ -3266,6 +3315,7 @@ function InfiniteCanvasPage() {
                             onViewImage={handleNodeViewImage}
                             onSelectReference={selectNodeReference}
                             onContextMenu={handleNodeContextMenu}
+                            onQuickGrow={referencePickerNodeId ? undefined : openQuickGrowMenu}
                         />
                     ))}
 
@@ -3387,6 +3437,10 @@ function InfiniteCanvasPage() {
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
+
+                {quickGrowMenu && nodeById.get(quickGrowMenu.nodeId) ? (
+                    <CanvasQuickGrowMenu x={quickGrowMenu.x} y={quickGrowMenu.y} kinds={quickGrowKinds(nodeById.get(quickGrowMenu.nodeId)!)} onSelect={(kind) => quickGrowNode(quickGrowMenu.nodeId, kind)} onClose={closeQuickGrowMenu} />
+                ) : null}
 
                 {contextMenu ? (
                     <CanvasNodeContextMenu

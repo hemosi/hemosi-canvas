@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
+import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -14,6 +14,7 @@ import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasN
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useTranslation } from "react-i18next";
+import { canQuickGrow } from "@/lib/canvas/canvas-quick-grow";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
@@ -57,6 +58,7 @@ type CanvasNodeProps = {
     onViewImage?: (node: CanvasNodeData, imageId?: string) => void;
     onSelectReference?: (nodeId: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
+    onQuickGrow?: (nodeId: string, clientX: number, clientY: number) => void;
 };
 
 type NodeContentRendererProps = {
@@ -122,6 +124,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onViewImage,
     onSelectReference,
     onContextMenu,
+    onQuickGrow,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
@@ -445,6 +448,10 @@ export const CanvasNode = React.memo(function CanvasNode({
 
             {!referenceSelectionState && !isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
+
+            {onQuickGrow && !referenceSelectionState && !isConnecting && canQuickGrow(data) && (definition?.hasSourceHandle ?? true) ? (
+                <QuickGrowHandle visible={hovered || isSelected} scale={scale} label={t("hemosi.quickGrow.add")} onOpen={(clientX, clientY) => onQuickGrow(data.id, clientX, clientY)} />
+            ) : null}
 
             {/* Counter-scale the panel so its on-screen size stays constant while the canvas zooms. */}
             {showPanel && !isGroup && renderPanel ? (
@@ -992,6 +999,37 @@ function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "r
             onMouseDown={onMouseDown}
         >
             <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
+        </div>
+    );
+}
+
+// Round "+" on the right edge, beyond the connection dot. Counter-scaled so it keeps a constant on-screen size.
+function QuickGrowHandle({ visible, scale, label, onOpen }: { visible: boolean; scale: number; label: string; onOpen: (clientX: number, clientY: number) => void }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    return (
+        <div
+            className={`pointer-events-none absolute top-1/2 z-40 flex items-center transition-opacity duration-150 ${visible ? "opacity-100" : "opacity-0"}`}
+            // The gap stays inside the connection dot's hit area (24 world px) so hover is not lost on the way to the button.
+            style={{ left: "100%", paddingLeft: Math.max(4, Math.min(22, 24 * scale - 2)), transform: `translateY(-50%) scale(${1 / scale})`, transformOrigin: "left center" }}
+        >
+            <button
+                tabIndex={visible ? 0 : -1}
+                type="button"
+                title={label}
+                aria-label={label}
+                data-quick-grow
+                className={`flex size-7 items-center justify-center rounded-full border shadow-lg transition hover:scale-110 ${visible ? "pointer-events-auto" : "pointer-events-none"}`}
+                style={{ background: theme.toolbar.panel, borderColor: "var(--hemosi-accent)", color: "var(--hemosi-accent)" }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    onOpen(rect.right + 8, rect.top);
+                }}
+            >
+                <Plus className="size-4" strokeWidth={2.5} />
+            </button>
         </div>
     );
 }
