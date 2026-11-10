@@ -686,6 +686,7 @@ export default {
     },
     hemosi: {
         confirm: { title: "Confirm generation", mode: "Type", modes: { image: "Image", video: "Video", text: "Text", audio: "Audio" }, model: "Model", channel: "Channel", prompt: "Prompt", emptyPrompt: "(no prompt)", inputs: "Inputs", images: "{{count}} reference images", videos: "{{count}} reference videos", audios: "{{count}} reference audios", noInputs: "No reference media", size: "Size / ratio", quality: "Quality", resolution: "Resolution", seconds: "Duration", secondsValue: "{{count}} s", count: "Count", countValue: "{{count}}", draft: "Draft mode", draftValue: "On, using the lowest parameters", dontAskAgain: "Don't ask again", dontAskHint: "Turn it back on in Settings › Preferences", confirm: "Generate", cancel: "Cancel" },
+        draft: { label: "Draft", tooltip: "Draft mode: lowest size / low quality (videos: lowest resolution, shortest duration) for a quick preview", badge: "Draft", hdRegenerate: "Regenerate in HD", hdRegenerateTitle: "Rerun the same prompt and references with the node's normal parameters into a new node", notDraft: "This node is not a draft result" },
         quickGrow: { add: "Add downstream node", text: "Text", image: "Image generation", video: "Video generation", edit: "Edit image", editTitle: "Edit image", connectFailed: "This node cannot connect to a new node" },
     },
     locale: {

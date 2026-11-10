@@ -84,6 +84,10 @@ export type CanvasNodeMetadata = {
     videoTaskId?: string;
     videoTaskProvider?: "openai" | "gemini";
     groupId?: string;
+    /** Draft switch on an image/video generation node: generate with the cheapest parameters. */
+    draft?: boolean;
+    /** Result produced in draft mode; shows the 草稿 badge and offers 高清重生成. */
+    draftResult?: boolean;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
 

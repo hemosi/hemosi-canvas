@@ -432,6 +432,12 @@ export const CanvasNode = React.memo(function CanvasNode({
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
+                {data.metadata?.draftResult && (hasImageContent || hasVideoContent) ? (
+                    <span className="pointer-events-none absolute left-3 top-3 z-[55] rounded-md px-2 py-0.5 text-xs font-semibold shadow" style={{ background: "rgba(10,12,14,.72)", color: "var(--hemosi-accent)" }}>
+                        {t("hemosi.draft.badge")}
+                    </span>
+                ) : null}
+
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
                 {referenceSelectionState && (referenceSelectionState !== "available" || hovered) ? (
