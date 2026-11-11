@@ -8,19 +8,21 @@ export type Vec3 = [number, number, number];
 
 export type DirectorMedia = { content: string; storageKey?: string; naturalWidth?: number; naturalHeight?: number; mimeType?: string };
 
-export type DirectorSubjectKind = "person" | "prop" | "vehicle" | "box";
+export type DirectorSubjectKind = "person" | "female" | "prop" | "vehicle" | "box";
 
-export type DirectorSubjectKeyframe = { t: number; position: Vec3; rotationY: number };
+export type DirectorSubjectKeyframe = { t: number; position: Vec3; rotationY: number; pose?: string };
 
 export type DirectorSubject = {
     id: string;
     name: string;
     kind: DirectorSubjectKind;
     color: string;
-    /** 高度（米），person 默认 1.75。 */
+    /** 高度（米），person 默认 1.75，female 默认 1.65。 */
     height: number;
-    /** 动作描述（走、跑、转身…），写进预演提示词。 */
+    /** 动作描述（走、跑、转身、坐下、招手…），写进预演提示词。 */
     action: string;
+    /** 姿态预设（站立、坐姿、招手、奔跑、戒备等）。 */
+    pose?: string;
     /** 起始位姿；有 keyframes 时按关键帧插值。 */
     position: Vec3;
     rotationY: number;
@@ -61,8 +63,8 @@ export type DirectorScene = {
 export type DirectorCameraPose = { position: Vec3; target: Vec3; fov: number };
 
 export const DIRECTOR_ASPECTS: DirectorAspect[] = ["16:9", "9:16", "1:1", "4:3", "2.39:1"];
-export const DIRECTOR_SUBJECT_KINDS: DirectorSubjectKind[] = ["person", "prop", "vehicle", "box"];
-export const DIRECTOR_SUBJECT_KIND_LABEL: Record<DirectorSubjectKind, string> = { person: "人物", prop: "道具", vehicle: "载具", box: "方块" };
+export const DIRECTOR_SUBJECT_KINDS: DirectorSubjectKind[] = ["person", "female", "prop", "vehicle", "box"];
+export const DIRECTOR_SUBJECT_KIND_LABEL: Record<DirectorSubjectKind, string> = { person: "男木偶", female: "女木偶", prop: "道具", vehicle: "载具", box: "方块" };
 export const DIRECTOR_EASINGS: DirectorEasing[] = ["linear", "easeInOut", "easeIn", "easeOut"];
 export const DIRECTOR_EASING_LABEL: Record<DirectorEasing, string> = { linear: "匀速", easeInOut: "缓入缓出", easeIn: "缓入", easeOut: "缓出" };
 
@@ -100,7 +102,8 @@ function color(value: unknown, index: number) {
 function kindOf(value: unknown): DirectorSubjectKind {
     const text = str(value).toLowerCase();
     if (DIRECTOR_SUBJECT_KINDS.includes(text as DirectorSubjectKind)) return text as DirectorSubjectKind;
-    if (/人|character|human|actor|man|woman|girl|boy/.test(text)) return "person";
+    if (/女|woman|girl|female/.test(text)) return "female";
+    if (/男|人|character|human|actor|man|boy/.test(text)) return "person";
     if (/车|car|vehicle|bike|马/.test(text)) return "vehicle";
     return text ? "prop" : "person";
 }

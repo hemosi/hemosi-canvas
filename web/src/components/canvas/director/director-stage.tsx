@@ -102,7 +102,10 @@ function SubjectMesh({ subject, clock, dragging, register, director, selected, o
         group.current.rotation.y = deg(pose.rotationY);
     });
     const h = subject.height;
-    const material = <meshStandardMaterial color={subject.color} emissive={selected && director ? subject.color : "#000"} emissiveIntensity={selected && director ? 0.35 : 0} />;
+    const material = <meshStandardMaterial color={subject.color} emissive={selected && director ? subject.color : "#000"} emissiveIntensity={selected && director ? 0.35 : 0} roughness={0.5} />;
+    const jointMaterial = <meshStandardMaterial color="#333333" metalness={0.2} roughness={0.8} />;
+    const pose = subject.pose || "stand";
+
     return (
         <group
             ref={(object) => {
@@ -116,20 +119,197 @@ function SubjectMesh({ subject, clock, dragging, register, director, selected, o
             }}
         >
             {subject.kind === "person" ? (
-                <>
-                    <mesh position={[0, h * 0.42, 0]} castShadow>
-                        <capsuleGeometry args={[h * 0.14, h * 0.5, 6, 12]} />
-                        {material}
-                    </mesh>
+                /* 男木偶：肩宽较宽、躯干粗壮、关节分明的 3D 人偶结构 */
+                <group position={[0, 0, 0]}>
+                    {/* 头部与面部方向 */ }
                     <mesh position={[0, h * 0.88, 0]} castShadow>
-                        <sphereGeometry args={[h * 0.1, 16, 16]} />
+                        <sphereGeometry args={[h * 0.09, 16, 16]} />
                         {material}
                     </mesh>
-                    <mesh position={[0, h * 0.88, h * 0.09]}>
-                        <boxGeometry args={[h * 0.08, h * 0.03, h * 0.04]} />
+                    <mesh position={[0, h * 0.88, h * 0.08]}>
+                        <boxGeometry args={[h * 0.06, h * 0.025, h * 0.03]} />
                         <meshStandardMaterial color="#111" />
                     </mesh>
-                </>
+                    {/* 颈部 */}
+                    <mesh position={[0, h * 0.77, 0]} castShadow>
+                        <cylinderGeometry args={[h * 0.035, h * 0.035, h * 0.05, 12]} />
+                        {jointMaterial}
+                    </mesh>
+                    {/* 胸腔与躯干 */}
+                    <mesh position={[0, h * 0.64, 0]} castShadow>
+                        <boxGeometry args={[h * 0.22, h * 0.2, h * 0.14]} />
+                        {material}
+                    </mesh>
+                    {/* 腰部关节 */}
+                    <mesh position={[0, h * 0.51, 0]} castShadow>
+                        <sphereGeometry args={[h * 0.05, 12, 12]} />
+                        {jointMaterial}
+                    </mesh>
+                    {/* 胯部骨盆 */}
+                    <mesh position={[0, h * 0.44, 0]} castShadow>
+                        <boxGeometry args={[h * 0.18, h * 0.1, h * 0.13]} />
+                        {material}
+                    </mesh>
+                    {/* 左手臂 */}
+                    <group position={[-h * 0.15, h * 0.7, 0]} rotation={[pose === "wave" ? -Math.PI * 0.75 : pose === "run" ? -0.6 : 0, 0, pose === "wave" ? -0.4 : 0]}>
+                        <mesh position={[0, -h * 0.1, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.03, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.19, 0]}>
+                            <sphereGeometry args={[h * 0.032, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <mesh position={[0, -h * 0.28, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.028, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                    </group>
+                    {/* 右手臂 */}
+                    <group position={[h * 0.15, h * 0.7, 0]} rotation={[pose === "run" ? 0.6 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.1, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.03, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.19, 0]}>
+                            <sphereGeometry args={[h * 0.032, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <mesh position={[0, -h * 0.28, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.028, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                    </group>
+                    {/* 左腿 */}
+                    <group position={[-h * 0.07, h * 0.38, 0]} rotation={[pose === "sit" ? -Math.PI / 2 : pose === "run" ? 0.5 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.16, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.038, h * 0.22, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.29, 0]}>
+                            <sphereGeometry args={[h * 0.035, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <group position={[0, -h * 0.29, 0]} rotation={[pose === "sit" ? Math.PI / 2 : 0, 0, 0]}>
+                            <mesh position={[0, -h * 0.14, 0]} castShadow>
+                                <capsuleGeometry args={[h * 0.034, h * 0.2, 4, 8]} />
+                                {material}
+                            </mesh>
+                        </group>
+                    </group>
+                    {/* 右腿 */}
+                    <group position={[h * 0.07, h * 0.38, 0]} rotation={[pose === "sit" ? -Math.PI / 2 : pose === "run" ? -0.5 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.16, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.038, h * 0.22, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.29, 0]}>
+                            <sphereGeometry args={[h * 0.035, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <group position={[0, -h * 0.29, 0]} rotation={[pose === "sit" ? Math.PI / 2 : 0, 0, 0]}>
+                            <mesh position={[0, -h * 0.14, 0]} castShadow>
+                                <capsuleGeometry args={[h * 0.034, h * 0.2, 4, 8]} />
+                                {material}
+                            </mesh>
+                        </group>
+                    </group>
+                </group>
+            ) : subject.kind === "female" ? (
+                /* 女木偶：身段修长、细腰、骨盆略宽比例 */
+                <group position={[0, 0, 0]}>
+                    {/* 头部 */}
+                    <mesh position={[0, h * 0.88, 0]} castShadow>
+                        <sphereGeometry args={[h * 0.082, 16, 16]} />
+                        {material}
+                    </mesh>
+                    <mesh position={[0, h * 0.88, h * 0.075]}>
+                        <boxGeometry args={[h * 0.05, h * 0.02, h * 0.025]} />
+                        <meshStandardMaterial color="#111" />
+                    </mesh>
+                    {/* 颈部 */}
+                    <mesh position={[0, h * 0.78, 0]} castShadow>
+                        <cylinderGeometry args={[h * 0.028, h * 0.028, h * 0.05, 12]} />
+                        {jointMaterial}
+                    </mesh>
+                    {/* 胸腔 */}
+                    <mesh position={[0, h * 0.65, 0]} castShadow>
+                        <boxGeometry args={[h * 0.17, h * 0.18, h * 0.12]} />
+                        {material}
+                    </mesh>
+                    {/* 纤细腰部 */}
+                    <mesh position={[0, h * 0.52, 0]} castShadow>
+                        <sphereGeometry args={[h * 0.042, 12, 12]} />
+                        {jointMaterial}
+                    </mesh>
+                    {/* 骨盆 */}
+                    <mesh position={[0, h * 0.44, 0]} castShadow>
+                        <boxGeometry args={[h * 0.19, h * 0.1, h * 0.13]} />
+                        {material}
+                    </mesh>
+                    {/* 双臂 */}
+                    <group position={[-h * 0.12, h * 0.7, 0]} rotation={[pose === "wave" ? -Math.PI * 0.75 : pose === "run" ? -0.6 : 0, 0, pose === "wave" ? -0.3 : 0]}>
+                        <mesh position={[0, -h * 0.1, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.024, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.19, 0]}>
+                            <sphereGeometry args={[h * 0.026, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <mesh position={[0, -h * 0.28, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.022, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                    </group>
+                    <group position={[h * 0.12, h * 0.7, 0]} rotation={[pose === "run" ? 0.6 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.1, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.024, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.19, 0]}>
+                            <sphereGeometry args={[h * 0.026, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <mesh position={[0, -h * 0.28, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.022, h * 0.14, 4, 8]} />
+                            {material}
+                        </mesh>
+                    </group>
+                    {/* 双腿 */}
+                    <group position={[-h * 0.065, h * 0.38, 0]} rotation={[pose === "sit" ? -Math.PI / 2 : pose === "run" ? 0.5 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.16, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.032, h * 0.24, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.3, 0]}>
+                            <sphereGeometry args={[h * 0.03, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <group position={[0, -h * 0.3, 0]} rotation={[pose === "sit" ? Math.PI / 2 : 0, 0, 0]}>
+                            <mesh position={[0, -h * 0.14, 0]} castShadow>
+                                <capsuleGeometry args={[h * 0.028, h * 0.2, 4, 8]} />
+                                {material}
+                            </mesh>
+                        </group>
+                    </group>
+                    <group position={[h * 0.065, h * 0.38, 0]} rotation={[pose === "sit" ? -Math.PI / 2 : pose === "run" ? -0.5 : 0, 0, 0]}>
+                        <mesh position={[0, -h * 0.16, 0]} castShadow>
+                            <capsuleGeometry args={[h * 0.032, h * 0.24, 4, 8]} />
+                            {material}
+                        </mesh>
+                        <mesh position={[0, -h * 0.3, 0]}>
+                            <sphereGeometry args={[h * 0.03, 8, 8]} />
+                            {jointMaterial}
+                        </mesh>
+                        <group position={[0, -h * 0.3, 0]} rotation={[pose === "sit" ? Math.PI / 2 : 0, 0, 0]}>
+                            <mesh position={[0, -h * 0.14, 0]} castShadow>
+                                <capsuleGeometry args={[h * 0.028, h * 0.2, 4, 8]} />
+                                {material}
+                            </mesh>
+                        </group>
+                    </group>
+                </group>
             ) : subject.kind === "vehicle" ? (
                 <mesh position={[0, h * 0.4, 0]} castShadow>
                     <boxGeometry args={[h * 1.2, h * 0.8, h * 2.8]} />
@@ -236,13 +416,21 @@ function ShotCamera({ shot, clock }: { shot: DirectorShot; clock: MutableRefObje
 function Gizmo({ objects, selection, onStart, onEnd }: { objects: MutableRefObject<Map<string, THREE.Object3D>>; selection: Selection; onStart: () => void; onEnd: (object: THREE.Object3D) => void }) {
     const key = selection ? (selection.kind === "subject" ? `subject:${selection.id}` : `${selection.kind}:${selection.index}`) : "";
     const [object, setObject] = useState<THREE.Object3D | null>(null);
-    // 物体由 ref 回调登记，提交后才可取；每次渲染后对一下当前选中的物体。
     useEffect(() => {
         const next = key ? objects.current.get(key) || null : null;
         if (next !== object) setObject(next);
     });
     if (!object) return null;
-    return <TransformControls object={object} mode="translate" size={0.8} onMouseDown={onStart} onMouseUp={() => onEnd(object)} />;
+    return (
+        <TransformControls
+            object={object}
+            mode="translate"
+            size={0.8}
+            onMouseDown={onStart}
+            onMouseUp={() => onEnd(object)}
+            onPointerUp={() => onEnd(object)}
+        />
+    );
 }
 
 function ApiBridge({ apiRef }: { apiRef: MutableRefObject<StageApi | null> }) {
@@ -371,7 +559,25 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
         return () => cancelAnimationFrame(frame);
     }, [playing, seek, shot.duration]);
 
-    // 导演台打开时：Esc 关闭；焦点不在导演台内的按键不再传给画布快捷键（避免误删节点）。
+    // 全局指针安全复位：保证鼠标松开、移出区域或失焦时拖动状态必定复位，绝不粘滞卡死
+    useEffect(() => {
+        const handleGlobalPointerUp = () => {
+            if (dragging.current) {
+                dragging.current = false;
+            }
+        };
+        const handleBlur = () => {
+            dragging.current = false;
+        };
+        window.addEventListener("pointerup", handleGlobalPointerUp);
+        window.addEventListener("mouseup", handleGlobalPointerUp);
+        window.addEventListener("blur", handleBlur);
+        return () => {
+            window.removeEventListener("pointerup", handleGlobalPointerUp);
+            window.removeEventListener("mouseup", handleGlobalPointerUp);
+            window.removeEventListener("blur", handleBlur);
+        };
+    }, []);
     const rootRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
@@ -560,8 +766,20 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
         }
     };
 
-    const addSubject = () => {
-        const subject: DirectorSubject = { id: directorId("subject"), name: `主体${scene.subjects.length + 1}`, kind: "person", color: ["#f59e0b", "#22d3ee", "#a855f7", "#10b981"][scene.subjects.length % 4], height: 1.75, action: "", position: [scene.subjects.length * 1.2, 0, 0], rotationY: 0, keyframes: [] };
+    const addSubject = (kind: DirectorSubject["kind"] = "person") => {
+        const isFemale = kind === "female";
+        const subject: DirectorSubject = {
+            id: directorId("subject"),
+            name: `${DIRECTOR_SUBJECT_KIND_LABEL[kind] || "主体"}${scene.subjects.length + 1}`,
+            kind,
+            color: ["#f59e0b", "#22d3ee", "#a855f7", "#10b981", "#ec4899", "#3b82f6"][scene.subjects.length % 6],
+            height: isFemale ? 1.65 : kind === "person" ? 1.75 : 1.0,
+            action: "",
+            pose: "stand",
+            position: [scene.subjects.length * 1.2, 0, 0],
+            rotationY: 0,
+            keyframes: [],
+        };
         commit({ ...scene, subjects: [...scene.subjects, subject] });
         setSelection({ kind: "subject", id: subject.id });
     };
@@ -606,7 +824,12 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                     <FlatButton accent disabled={Boolean(busy)} onClick={() => void record()} title="按选定机位的时长实时渲染并录制，导出为画布上的新视频节点">
                         {busy === "record" ? <Circle className="size-3.5 animate-pulse fill-red-600 text-red-600" /> : <Video className="size-3.5" />} {busy === "record" ? `录制中 ${time.toFixed(1)}s` : "录制运镜→视频节点"}
                     </FlatButton>
-                    <FlatButton disabled={recording} onClick={onClose} title="关闭（Esc）"><X className="size-4" /></FlatButton>
+                    <FlatButton disabled={recording} onClick={onClose} title={recording ? "录制中不能退出，请先停录" : "退出导演台（Esc）"}>
+                        <div className="flex items-center gap-1.5 px-1 py-0.5 font-medium text-stone-700 hover:text-red-600 dark:text-stone-300 dark:hover:text-red-400">
+                            <X className="size-4" />
+                            <span>退出</span>
+                        </div>
+                    </FlatButton>
                 </div>
             </div>
 
@@ -631,7 +854,16 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                         <input ref={panoramaInput} type="file" accept="image/*" className="hidden" onChange={(event) => void uploadPanorama(event)} />
                     </Section>
 
-                    <Section title={`主体 ${scene.subjects.length}`} extra={<FlatButton onClick={addSubject}><Plus className="size-3" />添加</FlatButton>}>
+                    <Section
+                        title={`主体 ${scene.subjects.length}`}
+                        extra={
+                            <div className="flex gap-1">
+                                <FlatButton onClick={() => addSubject("person")} title="添加男木偶"><Plus className="size-3" />男木偶</FlatButton>
+                                <FlatButton onClick={() => addSubject("female")} title="添加女木偶"><Plus className="size-3" />女木偶</FlatButton>
+                                <FlatButton onClick={() => addSubject("prop")} title="添加道具"><Plus className="size-3" />道具</FlatButton>
+                            </div>
+                        }
+                    >
                         {scene.subjects.map((subject) => {
                             const active = selection?.kind === "subject" && selection.id === subject.id;
                             return (
@@ -647,6 +879,20 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                                     {active ? (
                                         <>
                                             <input className={inputClass} style={inputStyle} placeholder="动作：缓步向前、转身…" value={subject.action} onChange={(event) => patchSubject(subject.id, { action: event.target.value })} />
+                                            <div className="flex items-center gap-1">
+                                                <span className="opacity-60">姿态</span>
+                                                <select
+                                                    className={`${inputClass} flex-1`}
+                                                    style={inputStyle}
+                                                    value={subject.pose || "stand"}
+                                                    onChange={(event) => patchSubject(subject.id, { pose: event.target.value })}
+                                                >
+                                                    <option value="stand">站立</option>
+                                                    <option value="sit">坐下</option>
+                                                    <option value="wave">招手</option>
+                                                    <option value="run">奔跑</option>
+                                                </select>
+                                            </div>
                                             <div className="flex items-center gap-1">
                                                 <span className="opacity-60">朝向</span>
                                                 <input type="range" min={-180} max={180} value={subject.rotationY} className="flex-1" onChange={(event) => patchSubject(subject.id, { rotationY: Number(event.target.value), keyframes: subject.keyframes.map((frame) => ({ ...frame, rotationY: Number(event.target.value) })) })} />
@@ -707,6 +953,20 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                         </div>
                     </div>
                         {recording ? <div className="absolute left-5 top-5 rounded px-2 py-0.5 text-xs" style={{ background: "rgba(127,29,29,.85)", color: "#fff" }}>● REC {time.toFixed(1)} / {shot.duration}s</div> : null}
+                    </div>
+
+                    {/* 显眼的操作提示浮层 */}
+                    <div className="pointer-events-none absolute bottom-4 left-6 z-20 flex items-center gap-2 rounded-lg bg-black/75 px-3 py-1.5 text-xs text-stone-200 backdrop-blur-md shadow-lg border border-white/10">
+                        <span className="font-semibold text-amber-400">操作提示：</span>
+                        <span>左键拖拽旋转视角</span>
+                        <span className="text-white/30">|</span>
+                        <span>右键拖拽平移</span>
+                        <span className="text-white/30">|</span>
+                        <span>滚轮缩放</span>
+                        <span className="text-white/30">|</span>
+                        <span>点选主体/机位轴向拖动</span>
+                        <span className="text-white/30">|</span>
+                        <span className="text-stone-300">Esc 退出（录制中无效需先停录）</span>
                     </div>
 
                     <div className="shrink-0 space-y-2 border-t px-3 py-2 text-xs" style={{ ...panel, borderTopColor: theme.toolbar.border }}>
