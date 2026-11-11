@@ -281,14 +281,14 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
                 <div className="flex items-center gap-1">
                     <span className="w-8 shrink-0 opacity-60">图片</span>
                     <ModelPicker config={imageConfig} value={imageConfig.model} capability="image" onChange={(model) => patch({ model })} onMissingConfig={() => openConfigDialog(true)} className="min-w-0 flex-1" />
-                    <CanvasImageSettingsPopover config={imageConfig} buttonClassName="!h-8 !max-w-[120px] !justify-start !rounded-full !px-2" onConfigChange={(key, value) => patch(key === "count" ? {} : { [key]: value })} />
+                    <CanvasImageSettingsPopover config={imageConfig} buttonClassName="!h-8 shrink-0 !justify-start !rounded-full !px-2 inline-flex items-center gap-1" onConfigChange={(key, value) => patch(key === "count" ? {} : { [key]: value })} />
                 </div>
                 <div className="flex items-center gap-1">
                     <span className="w-8 shrink-0 opacity-60">视频</span>
                     <ModelPicker config={videoConfig} value={videoConfig.model} capability="video" onChange={(videoModel) => patch({ videoModel })} onMissingConfig={() => openConfigDialog(true)} className="min-w-0 flex-1" />
                     <CanvasVideoSettingsPopover
                         config={videoConfig}
-                        buttonClassName="!h-8 !max-w-[140px] !justify-start !rounded-full !px-2"
+                        buttonClassName="!h-8 shrink-0 !justify-start !rounded-full !px-2 inline-flex items-center gap-1"
                         onConfigChange={(key, value) => patch(key === "size" ? { videoSize: value } : key === "videoSeconds" ? { seconds: value } : key === "videoGenerateAudio" ? { generateAudio: value } : key === "videoWatermark" ? { watermark: value } : { [key]: value })}
                     />
                 </div>
