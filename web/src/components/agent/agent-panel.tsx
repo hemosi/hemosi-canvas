@@ -46,6 +46,9 @@ export function AgentPanel() {
 
     if (!panelMounted) return null;
 
+    const canvas = useAgentStore((state) => state.canvasContext);
+    const canvasTitle = canvas?.snapshot.title;
+
     return (
         <motion.div
             className="relative z-[70] flex h-full shrink-0"
@@ -63,6 +66,13 @@ export function AgentPanel() {
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
                 <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.panel.resize")} />
+                {/* 顶部标明当前作用画布 */}
+                <div className="flex h-7 shrink-0 items-center justify-between border-b px-3 text-[11px] bg-stone-100/50 dark:bg-stone-900/50" style={{ borderColor: theme.node.stroke }}>
+                    <span className="opacity-50">当前作用画布</span>
+                    <span className="max-w-[200px] truncate font-medium text-amber-600 dark:text-amber-400" title={canvasTitle || "未连接画布"}>
+                        {canvasTitle || "未连接画布"}
+                    </span>
+                </div>
                 <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2 text-xs" style={{ borderColor: theme.node.stroke }}>
                     {(["director", "local"] as const).map((key) => (
                         <button key={key} type="button" className="rounded-md px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" style={tab === key ? { background: theme.toolbar.activeBg, color: theme.node.text } : { color: theme.node.muted }} onClick={() => switchTab(key)}>

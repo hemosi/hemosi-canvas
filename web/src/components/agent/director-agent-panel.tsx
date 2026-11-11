@@ -24,6 +24,7 @@ export function DirectorAgentPanel() {
     const config = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvas = useAgentStore((state) => state.canvasContext);
+    const projectId = canvas?.snapshot.projectId || "";
     const [instruction, setInstruction] = useState("");
     const [scope, setScope] = useState<DirectorScope>("shots");
     const [onlySelected, setOnlySelected] = useState(false);
@@ -32,7 +33,24 @@ export function DirectorAgentPanel() {
     const [videoModel, setVideoModel] = useState(config.videoModel);
     const [thinking, setThinking] = useState(false);
     const [streamed, setStreamed] = useState("");
-    const [pending, setPending] = useState<Pending | null>(null);
+    // 方案按画布独立存
+    const [plansByProject, setPlansByProject] = useState<Record<string, Pending | null>>(() => {
+        try {
+            const raw = localStorage.getItem("hemosi:director-plans");
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    });
+    const pending = projectId ? plansByProject[projectId] || null : null;
+    const setPending = (p: Pending | null) => {
+        if (!projectId) return;
+        setPlansByProject((prev) => {
+            const next = { ...prev, [projectId]: p };
+            localStorage.setItem("hemosi:director-plans", JSON.stringify(next));
+            return next;
+        });
+    };
     const [log, setLog] = useState<string[]>([]);
     const [running, setRunning] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
