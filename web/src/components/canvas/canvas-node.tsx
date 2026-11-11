@@ -476,7 +476,13 @@ export const CanvasNode = React.memo(function CanvasNode({
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {onQuickGrow && !referenceSelectionState && !isConnecting && canQuickGrow(data) && (definition?.hasSourceHandle ?? true) ? (
-                <QuickGrowHandle visible={hovered || isSelected} scale={scale} label={t("hemosi.quickGrow.add")} onOpen={(clientX, clientY) => onQuickGrow(data.id, clientX, clientY)} />
+                <QuickGrowHandle
+                    visible={hovered || isSelected}
+                    scale={scale}
+                    label={t("hemosi.quickGrow.add")}
+                    onOpen={(clientX, clientY) => onQuickGrow(data.id, clientX, clientY)}
+                    onConnectStart={(event) => onConnectStart(event, data.id, "source")}
+                />
             ) : null}
 
             {/* Counter-scale the panel so its on-screen size stays constant while the canvas zooms. */}
@@ -1142,8 +1148,55 @@ function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "r
 }
 
 // Round "+" on the right edge, beyond the connection dot. Counter-scaled so it keeps a constant on-screen size.
-function QuickGrowHandle({ visible, scale, label, onOpen }: { visible: boolean; scale: number; label: string; onOpen: (clientX: number, clientY: number) => void }) {
+function QuickGrowHandle({
+    visible,
+    scale,
+    label,
+    onOpen,
+    onConnectStart,
+}: {
+    visible: boolean;
+    scale: number;
+    label: string;
+    onOpen: (clientX: number, clientY: number) => void;
+    onConnectStart?: (event: React.MouseEvent) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const buttonRef = useRef<HTMLButtonElement>(null);
+
+    const handleMouseDown = (downEvent: React.MouseEvent<HTMLButtonElement>) => {
+        downEvent.stopPropagation();
+        if (downEvent.button !== 0) return;
+
+        const startX = downEvent.clientX;
+        const startY = downEvent.clientY;
+        let isDrag = false;
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+            if (dist > 3) {
+                isDrag = true;
+                window.removeEventListener("mousemove", handleMouseMove);
+                window.removeEventListener("mouseup", handleMouseUp);
+                onConnectStart?.(downEvent);
+            }
+        };
+
+        const handleMouseUp = () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+            if (!isDrag) {
+                const rect = buttonRef.current?.getBoundingClientRect();
+                if (rect) {
+                    onOpen(rect.right + 8, rect.top);
+                }
+            }
+        };
+
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", handleMouseUp);
+    };
+
     return (
         <div
             className={`pointer-events-none absolute top-1/2 z-40 flex items-center transition-opacity duration-150 ${visible ? "opacity-100" : "opacity-0"}`}
@@ -1151,20 +1204,16 @@ function QuickGrowHandle({ visible, scale, label, onOpen }: { visible: boolean; 
             style={{ left: "100%", paddingLeft: Math.max(4, Math.min(22, 24 * scale - 2)), transform: `translateY(-50%) scale(${1 / scale})`, transformOrigin: "left center" }}
         >
             <button
+                ref={buttonRef}
                 tabIndex={visible ? 0 : -1}
                 type="button"
                 title={label}
                 aria-label={label}
                 data-quick-grow
-                className={`flex size-7 items-center justify-center rounded-full border shadow-lg transition hover:scale-110 ${visible ? "pointer-events-auto" : "pointer-events-none"}`}
+                className={`flex size-7 cursor-pointer items-center justify-center rounded-full border shadow-lg transition hover:scale-110 active:scale-95 ${visible ? "pointer-events-auto" : "pointer-events-none"}`}
                 style={{ background: theme.toolbar.panel, borderColor: "var(--hemosi-accent)", color: "var(--hemosi-accent)" }}
-                onMouseDown={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                    event.stopPropagation();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    onOpen(rect.right + 8, rect.top);
-                }}
+                onMouseDown={handleMouseDown}
+                onClick={(event) => event.stopPropagation()}
             >
                 <Plus className="size-4" strokeWidth={2.5} />
             </button>
