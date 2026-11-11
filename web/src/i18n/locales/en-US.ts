@@ -324,6 +324,8 @@ export default {
         },
     },
     navigation: {
+        projects: "Projects",
+        shortcuts: "Shortcuts",
         home: "Home",
         canvas: "Canvas projects",
         image: "Image generation",

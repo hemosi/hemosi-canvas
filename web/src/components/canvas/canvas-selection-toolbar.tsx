@@ -19,6 +19,7 @@ export function CanvasSelectionToolbar({
     onGroup,
     onUngroup,
     onSaveTemplate,
+    actions = [],
 }: {
     nodes: CanvasNodeData[];
     viewport: ViewportTransform;
@@ -28,6 +29,8 @@ export function CanvasSelectionToolbar({
     onGroup: () => void;
     onUngroup: () => void;
     onSaveTemplate?: () => void;
+    /** Batch actions on the selection (批量执行、重试失败、下载、删除、分镜整排操作…). */
+    actions?: { id: string; label: string; title?: string; icon: ReactNode; onClick: () => void }[];
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -38,7 +41,7 @@ export function CanvasSelectionToolbar({
     const top = viewport.y + bounds.top * viewport.k - SELECTION_PAD;
     const width = (bounds.right - bounds.left) * viewport.k + SELECTION_PAD * 2;
     const height = (bounds.bottom - bounds.top) * viewport.k + SELECTION_PAD * 2;
-    const showActions = showToolbar && (canGroup || canUngroup || Boolean(onSaveTemplate));
+    const showActions = showToolbar && (canGroup || canUngroup || Boolean(onSaveTemplate) || actions.length > 0);
 
     return (
         <>
@@ -68,6 +71,9 @@ export function CanvasSelectionToolbar({
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
                     {onSaveTemplate ? <SelectionAction title={t("hemosi.templates.saveAs")} label={t("hemosi.templates.saveAs")} icon={<BookmarkPlus className="size-4" />} onClick={onSaveTemplate} /> : null}
+                    {actions.map((action) => (
+                        <SelectionAction key={action.id} title={action.title || action.label} label={action.label} icon={action.icon} onClick={action.onClick} />
+                    ))}
                 </div>
             ) : null}
         </>

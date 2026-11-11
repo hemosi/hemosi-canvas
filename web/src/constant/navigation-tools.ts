@@ -1,6 +1,6 @@
-import { FolderKanban, House, ImagePlus, Images, LayoutTemplate, ScrollText, Settings2, Video, type LucideIcon } from "lucide-react";
+import { FolderKanban, House, Keyboard, Library, ImagePlus, Images, LayoutTemplate, ScrollText, Settings2, Video, type LucideIcon } from "lucide-react";
 
-export type NavigationToolSlug = "home" | "canvas" | "image" | "video" | "assets" | "prompts" | "templates" | "config";
+export type NavigationToolSlug = "home" | "projects" | "shortcuts" | "canvas" | "image" | "video" | "assets" | "prompts" | "templates" | "config";
 
 export type NavigationTool = {
     slug: NavigationToolSlug;
@@ -11,6 +11,7 @@ export type NavigationTool = {
 // Sidebar main group, in display order.
 export const navigationTools: NavigationTool[] = [
     { slug: "home", path: "/", icon: House },
+    { slug: "projects", path: "/projects", icon: Library },
     { slug: "canvas", path: "/canvas", icon: FolderKanban },
     { slug: "image", path: "/image", icon: ImagePlus },
     { slug: "video", path: "/video", icon: Video },
@@ -20,7 +21,10 @@ export const navigationTools: NavigationTool[] = [
 ];
 
 // Sidebar bottom group.
-export const navigationBottomTools: NavigationTool[] = [{ slug: "config", path: "/config", icon: Settings2 }];
+export const navigationBottomTools: NavigationTool[] = [
+    { slug: "shortcuts", path: "/shortcuts", icon: Keyboard },
+    { slug: "config", path: "/config", icon: Settings2 },
+];
 
 export function getActiveToolSlug(pathname: string): NavigationToolSlug | undefined {
     if (pathname === "/") return "home";

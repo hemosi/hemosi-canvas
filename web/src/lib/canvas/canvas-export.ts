@@ -6,7 +6,8 @@ import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { collectNodeFiles, nodeTextContent } from "@/lib/canvas/canvas-node-ops";
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = i18n.t("canvas.export.defaultProjectName")) {
     const zipFiles: { name: string; data: BlobPart }[] = [];
@@ -31,7 +32,11 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     saveAs(zip, `${safeFileName(fileName)}.zip`);
 }
 
-export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n.t("canvas.export.defaultNodesName")) {
+/**
+ * Download the chosen nodes' results as one zip: original image/video/audio files, texts, and 文本汇总.md.
+ * Shots (and nodes fed directly by a shot) are named by shot number, e.g. S03_镜头 3-图.png, sorted by shot.
+ */
+export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n.t("canvas.export.defaultNodesName"), graph?: { nodes: CanvasNodeData[]; connections: CanvasConnection[] }) {
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const used = new Set<string>();
     const uniqueName = (base: string, ext: string) => {
@@ -41,24 +46,36 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n
         used.add(name);
         return name;
     };
-
-    await Promise.all(
-        nodes.map(async (node) => {
-            const title = node.title || node.type;
-            const storageKey = node.metadata?.storageKey || "";
-            if (storageKey) {
-                const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                if (blob) return void zipFiles.push({ name: uniqueName(title, fileExtension(blob.type, storageKey)), data: blob });
-            }
-            if (node.type === CanvasNodeType.Text) return void zipFiles.push({ name: uniqueName(title, "txt"), data: node.metadata?.content || node.metadata?.prompt || "" });
-            const content = node.metadata?.content;
-            if (content && content.startsWith("data:")) {
-                const blob = await (await fetch(content)).blob();
-                return void zipFiles.push({ name: uniqueName(title, fileExtension(blob.type, storageKey)), data: blob });
-            }
-            zipFiles.push({ name: uniqueName(title, "json"), data: JSON.stringify(node, null, 2) });
-        }),
-    );
+    const shotNoOf = (node: CanvasNodeData) => {
+        if (node.type === HemosiNodeType.Shot) return node.metadata?.shotNo;
+        const upstream = graph?.connections.filter((connection) => connection.toNodeId === node.id).map((connection) => graph.nodes.find((item) => item.id === connection.fromNodeId)).find((item) => item?.type === HemosiNodeType.Shot);
+        return upstream?.metadata?.shotNo;
+    };
+    const ordered = nodes
+        .filter((node) => node.type !== CanvasNodeType.Group)
+        .map((node, index) => ({ node, index, shotNo: shotNoOf(node) }))
+        .sort((a, b) => (a.shotNo ?? Number.MAX_SAFE_INTEGER) - (b.shotNo ?? Number.MAX_SAFE_INTEGER) || a.index - b.index);
+    const summary: string[] = [`# ${fileName}`, ""];
+    for (const { node, shotNo } of ordered) {
+        const prefix = shotNo !== undefined ? `S${String(shotNo).padStart(2, "0")}_` : "";
+        const title = node.title || node.type;
+        const files = await collectNodeFiles(node);
+        const names: string[] = [];
+        for (const file of files) {
+            if (file.ext === "txt" && node.type !== CanvasNodeType.Text) continue; // shot/anchor text goes into the summary
+            const name = uniqueName(`${prefix}${title}${file.base}`, file.ext);
+            names.push(name);
+            zipFiles.push({ name, data: file.data });
+        }
+        const text = nodeTextContent(node);
+        if (!files.length && !text) {
+            const name = uniqueName(`${prefix}${title}`, "json");
+            names.push(name);
+            zipFiles.push({ name, data: JSON.stringify(node, null, 2) });
+        }
+        summary.push(`## ${shotNo !== undefined ? `镜头 ${shotNo} · ` : ""}${title}`, "", text || "（无文字）", "", ...(names.length ? [`文件：${names.join("、")}`, ""] : []));
+    }
+    zipFiles.push({ name: uniqueName("文本汇总", "md"), data: summary.join("\n") });
 
     const zip = await createZip(zipFiles);
     saveAs(zip, `${safeFileName(fileName)}.zip`);

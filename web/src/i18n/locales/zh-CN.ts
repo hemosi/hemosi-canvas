@@ -324,6 +324,8 @@ export default {
         },
     },
     navigation: {
+        projects: "项目",
+        shortcuts: "快捷键",
         home: "首页",
         canvas: "画布项目",
         image: "图片生成",

@@ -11,6 +11,7 @@ import NotFound from "@/pages/not-found";
 import PromptsPage from "@/pages/prompts";
 import TemplatesPage from "@/pages/templates";
 import VideoPage from "@/pages/video";
+import ShortcutsPage from "@/pages/shortcuts";
 
 export const router = createBrowserRouter([
     {
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: <CanvasPage /> },
             { path: "/canvas/:id", element: <CanvasProjectPage /> },
             { path: "/config", element: <ConfigPage /> },
+            { path: "/shortcuts", element: <ShortcutsPage /> },
         ],
     },
     { path: "*", element: <NotFound /> },
