@@ -394,7 +394,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         if (definition.onDoubleClick(pluginContext)) event.stopPropagation();
                         return;
                     }
-                    if (data.type === CanvasNodeType.Image && hasImageContent) {
+                    if ((data.type === CanvasNodeType.Image && hasImageContent) || (data.type === CanvasNodeType.Video && hasVideoContent)) {
                         event.stopPropagation();
                         onViewImage?.(data);
                         return;
@@ -838,31 +838,17 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
     return <VideoWithInfo node={node} />;
 }
 
-/** Video player (play / seek / volume via native controls) with duration and resolution shown on the node. */
+/** Video player (play / seek / volume via native controls). */
 function VideoWithInfo({ node }: { node: CanvasNodeData }) {
-    const [info, setInfo] = useState<{ duration: number; width: number; height: number } | null>(null);
     const meta = node.metadata || {};
-    const duration = info?.duration || (meta.durationMs ? meta.durationMs / 1000 : 0);
-    const width = info?.width || meta.naturalWidth;
-    const height = info?.height || meta.naturalHeight;
     return (
-        <>
-            <video
-                src={meta.content}
-                controls
-                className="h-full w-full rounded-[18px] bg-black object-contain"
-                data-canvas-video={node.id}
-                data-canvas-no-zoom
-                onLoadedMetadata={(event) => setInfo({ duration: event.currentTarget.duration || 0, width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
-            />
-            {duration || width ? (
-                <span className="pointer-events-none absolute left-1/2 top-3 z-[55] -translate-x-1/2 rounded-md px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "rgba(10,12,14,.72)", color: "#e5e7eb" }}>
-                    {duration ? `${duration.toFixed(1)}s` : ""}
-                    {duration && width ? " · " : ""}
-                    {width && height ? `${width}×${height}` : ""}
-                </span>
-            ) : null}
-        </>
+        <video
+            src={meta.content}
+            controls
+            className="h-full w-full rounded-[18px] bg-black object-contain"
+            data-canvas-video={node.id}
+            data-canvas-no-zoom
+        />
     );
 }
 

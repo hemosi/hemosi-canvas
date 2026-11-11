@@ -52,6 +52,7 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
             <div className="space-y-5">
                 <div>
                     <h2 className="text-xl font-semibold">{t("canvas.editors.upscaleTitle")}</h2>
+                    <p className="mt-1 text-xs opacity-60">放大 = 插值把尺寸拉大、不增细节；超分 = AI 补细节</p>
                 </div>
                 <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_360px]">
                     <div className="rounded-xl border p-4">

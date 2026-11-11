@@ -12,7 +12,7 @@ import { defaultConfig, modelNotReadyReason, useConfigStore, useEffectiveConfig 
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
-import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { formatBytes, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -4237,17 +4237,15 @@ function InfiniteCanvasPage() {
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
 
-                <Modal
-                    title={t("canvas.projectPage.imageDetails")}
+                <CanvasMediaPreviewModal
+                    node={previewNode}
+                    content={previewContent}
                     open={Boolean(previewContent)}
-                    centered
-                    onCancel={() => setPreviewNodeId(null)}
-                    footer={null}
-                    width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
-                >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
-                </Modal>
+                    onClose={() => {
+                        setPreviewNodeId(null);
+                        setPreviewImageId(null);
+                    }}
+                />
 
                 <Modal
                     title={t("canvas.projectPage.clearTitle")}
@@ -4342,5 +4340,113 @@ function InfiniteCanvasPage() {
                 <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
         </main>
+    );
+}
+
+function CanvasMediaPreviewModal({
+    node,
+    content,
+    open,
+    onClose,
+}: {
+    node: CanvasNodeData | null;
+    content: string | undefined;
+    open: boolean;
+    onClose: () => void;
+}) {
+    const isVideo = node?.type === CanvasNodeType.Video;
+    const [videoMeta, setVideoMeta] = useState<{ duration: number; width: number; height: number } | null>(null);
+    const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
+
+    useEffect(() => {
+        if (!open) {
+            setVideoMeta(null);
+            setImageMeta(null);
+        }
+    }, [open]);
+
+    const bytes = node?.metadata?.bytes || (content ? getDataUrlByteSize(content) : 0);
+    const videoDuration = videoMeta?.duration || (node?.metadata?.durationMs ? node.metadata.durationMs / 1000 : node?.metadata?.seconds || 0);
+    const videoWidth = videoMeta?.width || node?.metadata?.naturalWidth;
+    const videoHeight = videoMeta?.height || node?.metadata?.naturalHeight;
+
+    const imgWidth = imageMeta?.width || node?.metadata?.naturalWidth;
+    const imgHeight = imageMeta?.height || node?.metadata?.naturalHeight;
+
+    return (
+        <Modal
+            open={open}
+            centered
+            footer={null}
+            onCancel={onClose}
+            width="auto"
+            closable
+            destroyOnHidden
+            styles={{
+                body: {
+                    padding: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                },
+            }}
+        >
+            <div
+                className="flex flex-col items-center gap-3 p-4 rounded-2xl"
+                style={{
+                    background: "rgba(18, 20, 24, 0.96)",
+                    border: "1px solid rgba(255, 255, 255, 0.12)",
+                    boxShadow: "0 24px 64px rgba(0, 0, 0, 0.5)",
+                    color: "#f3f4f6",
+                }}
+            >
+                {isVideo ? (
+                    <video
+                        src={content}
+                        controls
+                        autoPlay
+                        className="max-h-[75vh] max-w-[85vw] rounded-xl bg-black object-contain shadow-2xl"
+                        onLoadedMetadata={(event) =>
+                            setVideoMeta({
+                                duration: event.currentTarget.duration || 0,
+                                width: event.currentTarget.videoWidth,
+                                height: event.currentTarget.videoHeight,
+                            })
+                        }
+                    />
+                ) : (
+                    <img
+                        src={content}
+                        alt={node?.title || "Image"}
+                        className="max-h-[75vh] max-w-[85vw] rounded-xl object-contain shadow-2xl"
+                        onLoad={(event) =>
+                            setImageMeta({
+                                width: event.currentTarget.naturalWidth,
+                                height: event.currentTarget.naturalHeight,
+                            })
+                        }
+                    />
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-4 w-full px-2 pt-1 text-xs text-gray-300">
+                    <span className="font-medium truncate max-w-[280px]" title={node?.title}>{node?.title || (isVideo ? "视频放大播放" : "图片详情")}</span>
+                    <div className="flex items-center gap-3">
+                        {isVideo ? (
+                            <>
+                                {videoDuration ? <span>时长：{Number(videoDuration).toFixed(1)}s</span> : null}
+                                {videoWidth && videoHeight ? <span>分辨率：{videoWidth}×{videoHeight}</span> : null}
+                                {bytes ? <span>文件大小：{formatBytes(bytes)}</span> : null}
+                            </>
+                        ) : (
+                            <>
+                                {imgWidth && imgHeight ? <span>真实像素：{imgWidth} × {imgHeight} px</span> : null}
+                                {bytes ? <span>大小：{formatBytes(bytes)}</span> : null}
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </Modal>
     );
 }

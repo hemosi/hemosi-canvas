@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, SkipForward, Sparkles, Trash2, Camera, Clapperboard, Ungroup, Upload, Video } from "lucide-react";
+import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, SkipForward, Sparkles, Trash2, Camera, Clapperboard, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -172,6 +172,7 @@ export function CanvasNodeHoverToolbar({
     ];
     // Pinned tools always show, outside the user's image quick-tool selection.
     const pinnedTools: ToolbarTool[] = [
+        ...(hasVideo ? [{ id: "viewVideo", title: "放大播放", label: "放大", icon: <Maximize2 className="size-4" />, onClick: () => onViewImage(node) }] : []),
         ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
         ...(hasVideo && onSplitVideoShots ? [{ id: "splitVideoShots", title: "按镜头切换把视频拆成一排分镜节点", label: "拆分镜", icon: <Clapperboard className="size-4" />, onClick: () => onSplitVideoShots(node) }] : []),
         ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
@@ -288,6 +289,7 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label={t("canvas.nodeToolbar.name")} value={node.title || t("canvas.node.untitled")} />
                             <InfoRow label={t("canvas.nodeToolbar.type")} value={node.type === CanvasNodeType.Group ? t("canvas.node.group") : node.type === CanvasNodeType.Config ? t("canvas.configNode.title") : [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio, CanvasNodeType.Text].includes(node.type as CanvasNodeType) ? t(`assets.kinds.${node.type}`) : getNodeDefinition(node.type)?.title || node.type} />
                             <InfoRow label={t("canvas.nodeToolbar.size")} value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
+                            {node.metadata?.naturalWidth && node.metadata?.naturalHeight ? <InfoRow label="真实像素" value={`${Math.round(node.metadata.naturalWidth)} × ${Math.round(node.metadata.naturalHeight)} px`} /> : null}
                             <InfoRow label={t("canvas.nodeToolbar.position")} value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label={t("canvas.nodeToolbar.status")} value={node.metadata?.status || "idle"} />
                             {batchCount > 1 ? <InfoRow label={t("canvas.nodeToolbar.imageGroup")} value={t("canvas.configNode.images", { count: batchCount })} /> : null}
