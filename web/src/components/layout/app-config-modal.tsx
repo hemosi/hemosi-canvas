@@ -296,6 +296,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         <Switch checked={config.confirmBeforeGenerate} onChange={(checked) => updateConfig("confirmBeforeGenerate", checked)} />
                                     </div>
                                 </Form.Item>
+                                <Form.Item className="mb-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span>
+                                            <span className="block text-sm">{t("config.preferences.confirmAgentGenerations")}</span>
+                                            <span className="mt-0.5 block text-xs opacity-60">{t("config.preferences.confirmAgentGenerationsDescription")}</span>
+                                        </span>
+                                        <Switch checked={config.confirmBeforeGenerate && config.confirmAgentGenerations} disabled={!config.confirmBeforeGenerate} onChange={(checked) => updateConfig("confirmAgentGenerations", checked)} />
+                                    </div>
+                                </Form.Item>
                                 <Form.Item label={t("config.preferences.audioInstructions")} className="mb-4">
                                     <Input.TextArea rows={2} value={config.audioInstructions} placeholder={t("config.preferences.audioInstructionsPlaceholder")} onChange={(event) => updateConfig("audioInstructions", event.target.value)} />
                                 </Form.Item>

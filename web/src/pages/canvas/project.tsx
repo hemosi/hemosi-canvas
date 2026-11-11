@@ -290,7 +290,7 @@ function InfiniteCanvasPage() {
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
     const focusAnimRef = useRef<number | null>(null);
-    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
+    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options?: { origin?: "agent" }) => Promise<void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
@@ -330,8 +330,10 @@ function InfiniteCanvasPage() {
     }, []);
 
     // Pre-generation confirm card. Resolves true right away when the user turned confirmation off in settings.
-    const requestGenerationConfirm = useCallback((summary: GenerationConfirmSummary) => {
-        if (!useConfigStore.getState().config.confirmBeforeGenerate) return Promise.resolve(true);
+    // Agent-started runs only confirm when "Agent 发起的生成也确认" is on too (off by default so Agent runs never block).
+    const requestGenerationConfirm = useCallback((summary: GenerationConfirmSummary, origin: "user" | "agent" = "user") => {
+        const { confirmBeforeGenerate, confirmAgentGenerations } = useConfigStore.getState().config;
+        if (!confirmBeforeGenerate || (origin === "agent" && !confirmAgentGenerations)) return Promise.resolve(true);
         generationConfirmResolveRef.current?.(false);
         return new Promise<boolean>((resolve) => {
             generationConfirmResolveRef.current = resolve;
@@ -2508,7 +2510,7 @@ function InfiniteCanvasPage() {
     }, []);
 
     const handleGenerateNode = useCallback(
-        async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
+        async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string, options: { origin?: "agent" } = {}) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
@@ -2527,6 +2529,7 @@ function InfiniteCanvasPage() {
                 const previewCount = mode === "image" ? getGenerationCount(requestConfig.count) : mode === "text" ? getGenerationCount(String(sourceNode?.metadata?.textCount || 1)) : 1;
                 const confirmed = await requestGenerationConfirm(
                     buildGenerationConfirmSummary(requestConfig, mode, { prompt: preview.prompt, images: previewImages, videos: preview.referenceVideos, audioCount: preview.referenceAudios.length, count: previewCount, draft: isDraft }),
+                    options.origin === "agent" ? "agent" : "user",
                 );
                 if (!confirmed) return;
             }
