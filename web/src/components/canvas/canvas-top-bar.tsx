@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Download, GitFork, Home, Images, Menu, Package, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Copy, Download, GitFork, Home, Images, LayoutTemplate, Menu, Package, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -35,6 +35,8 @@ export function CanvasTopBar({
     projectName,
     onOpenProject,
     onFork,
+    onSaveCanvasTemplate,
+    onCloneToNewProject,
     onExportPackage,
     saveState,
 }: {
@@ -62,6 +64,8 @@ export function CanvasTopBar({
     projectName?: string;
     onOpenProject?: () => void;
     onFork?: () => void;
+    onSaveCanvasTemplate?: () => void;
+    onCloneToNewProject?: () => void;
     onExportPackage?: () => void;
     saveState?: { pending: boolean; savedAt: string | null; error: string | null };
 }) {
@@ -112,6 +116,8 @@ export function CanvasTopBar({
                                 { key: "export", icon: <Download className="size-4" />, label: t("canvas.exportCurrent"), onClick: onExportProject },
                                 ...(onExportPackage ? [{ key: "export-package", icon: <Package className="size-4" />, label: "导出项目包（全部画布 + 剧本 + 素材 + 版本）", onClick: onExportPackage }] : []),
                                 ...(onFork ? [{ key: "fork", icon: <GitFork className="size-4" />, label: "Fork 一个分支画布（原画布不动）", onClick: onFork }] : []),
+                                ...(onCloneToNewProject ? [{ key: "clone-project", icon: <Copy className="size-4" />, label: "克隆整张画布为新项目（含提示词与模型）", onClick: onCloneToNewProject }] : []),
+                                ...(onSaveCanvasTemplate ? [{ key: "save-canvas-template", icon: <LayoutTemplate className="size-4" />, label: "整张画布存为模板", onClick: onSaveCanvasTemplate }] : []),
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text={t("canvas.undo")} shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text={t("canvas.redo")} shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },

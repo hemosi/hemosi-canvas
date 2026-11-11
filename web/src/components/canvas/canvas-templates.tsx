@@ -16,7 +16,7 @@ const TYPE_ICONS: Partial<Record<string, typeof Type>> = {
 };
 
 /** Built-in + user templates with insert/delete actions; shared by the canvas 模板 panel and the /templates page. */
-export function CanvasTemplateList({ insertLabel, onInsert }: { insertLabel: string; onInsert: (template: CanvasTemplate) => void }) {
+export function CanvasTemplateList({ insertLabel, onInsert, onClone }: { insertLabel: string; onInsert: (template: CanvasTemplate) => void; onClone?: (template: CanvasTemplate) => void }) {
     const { t, i18n } = useTranslation();
     const { modal, message } = App.useApp();
     const userTemplates = useTemplateStore((state) => state.templates);
@@ -45,7 +45,7 @@ export function CanvasTemplateList({ insertLabel, onInsert }: { insertLabel: str
                 {userTemplates.length ? (
                     <div className="grid gap-3 sm:grid-cols-2">
                         {userTemplates.map((template) => (
-                            <TemplateCard key={template.id} template={template} insertLabel={insertLabel} onInsert={onInsert} onDelete={confirmDelete} />
+                            <TemplateCard key={template.id} template={template} insertLabel={insertLabel} onInsert={onInsert} onClone={onClone} onDelete={confirmDelete} />
                         ))}
                     </div>
                 ) : (
@@ -56,7 +56,7 @@ export function CanvasTemplateList({ insertLabel, onInsert }: { insertLabel: str
                 <h3 className="mb-2 text-sm font-semibold">{t("hemosi.templates.builtinTitle")}</h3>
                 <div className="grid gap-3 sm:grid-cols-2">
                     {builtinTemplates.map((template) => (
-                        <TemplateCard key={template.id} template={template} insertLabel={insertLabel} onInsert={onInsert} />
+                        <TemplateCard key={template.id} template={template} insertLabel={insertLabel} onInsert={onInsert} onClone={onClone} />
                     ))}
                 </div>
             </section>
@@ -64,7 +64,7 @@ export function CanvasTemplateList({ insertLabel, onInsert }: { insertLabel: str
     );
 }
 
-function TemplateCard({ template, insertLabel, onInsert, onDelete }: { template: CanvasTemplate; insertLabel: string; onInsert: (template: CanvasTemplate) => void; onDelete?: (template: CanvasTemplate) => void }) {
+function TemplateCard({ template, insertLabel, onInsert, onClone, onDelete }: { template: CanvasTemplate; insertLabel: string; onInsert: (template: CanvasTemplate) => void; onClone?: (template: CanvasTemplate) => void; onDelete?: (template: CanvasTemplate) => void }) {
     const { t } = useTranslation();
     const description = templateDescription(template);
     const typeCounts = template.nodes.reduce((map, node) => map.set(node.type, (map.get(node.type) || 0) + 1), new Map<string, number>());
@@ -96,6 +96,11 @@ function TemplateCard({ template, insertLabel, onInsert, onDelete }: { template:
                 <Button type="primary" size="small" onClick={() => onInsert(template)}>
                     {insertLabel}
                 </Button>
+                {onClone ? (
+                    <Button size="small" onClick={() => onClone(template)}>
+                        克隆为新项目
+                    </Button>
+                ) : null}
                 {onDelete ? (
                     <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => onDelete(template)}>
                         {t("hemosi.templates.delete")}

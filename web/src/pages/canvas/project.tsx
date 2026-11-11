@@ -1533,6 +1533,26 @@ function InfiniteCanvasPage() {
         navigate(`/canvas/${id}`);
     }, [message, navigate, projectId, t]);
 
+    const saveCanvasAsTemplate = useCallback(() => {
+        if (!nodesRef.current.length) return void message.info("画布是空的，没有可存的节点");
+        setSaveTemplateNodeIds(new Set(nodesRef.current.map((node) => node.id)));
+    }, [message]);
+
+    // Full copy of this canvas (prompts, per-node models, links) in a brand-new project container; the source stays untouched.
+    const cloneCanvasToNewProject = useCallback(() => {
+        void flushCanvasSave();
+        const store = useCanvasStore.getState();
+        const source = store.projects.find((item) => item.id === projectId);
+        if (!source) return;
+        const sourceWs = useWorkspaceStore.getState().workspaces.find((item) => item.id === source.workspaceId);
+        const wsId = useWorkspaceStore.getState().createWorkspace(`${sourceWs?.title || source.title} · 克隆`, { script: sourceWs?.script || "" });
+        const id = store.forkProject(projectId, source.title);
+        if (!id) return;
+        store.updateProject(id, { workspaceId: wsId });
+        message.success("已克隆为新项目，原项目不变");
+        navigate(`/canvas/${id}`);
+    }, [message, navigate, projectId]);
+
     const exportProjectPackage = useCallback(async () => {
         const canvas = useCanvasStore.getState().projects.find((item) => item.id === projectId);
         const ws = useWorkspaceStore.getState().workspaces.find((item) => item.id === canvas?.workspaceId);
@@ -3827,6 +3847,8 @@ function InfiniteCanvasPage() {
                     projectName={workspace?.title}
                     onOpenProject={workspace ? () => navigate(`/projects/${workspace.id}`) : undefined}
                     onFork={forkCurrentCanvas}
+                    onSaveCanvasTemplate={saveCanvasAsTemplate}
+                    onCloneToNewProject={cloneCanvasToNewProject}
                     onExportPackage={exportProjectPackage}
                     saveState={{ pending: savePending, savedAt: saveSavedAt, error: saveError }}
                 />
