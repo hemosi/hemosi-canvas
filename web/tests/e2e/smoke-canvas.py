@@ -46,7 +46,7 @@ async def main():
             await pg.get_by_text(target, exact=False).first.click(); await pg.wait_for_timeout(3000)
         print('url:', pg.url)
         await pg.screenshot(path='/tmp/hemosi-smoke-2-project.png')
-        await pg.mouse.click(1014, 852); await pg.wait_for_timeout(800)
+        await pg.locator('svg.lucide-clapperboard.size-4\\.5').first.locator('xpath=ancestor::button[1]').click(); await pg.wait_for_timeout(800)  # toolbar 分镜 tool (located by icon; toolbar positions shift as tools are added)
         await pg.mouse.click(700, 400); await pg.wait_for_timeout(1200)
         await pg.screenshot(path='/tmp/hemosi-smoke-4-shot.png')
         boxes = await pg.evaluate("Array.from(document.querySelectorAll('svg')).filter(s => (s.getAttribute('class')||'').includes('clapper')).map(s => { const r = s.getBoundingClientRect(); return [s.getAttribute('class'), Math.round(r.x+r.width/2), Math.round(r.y+r.height/2)]; })")
