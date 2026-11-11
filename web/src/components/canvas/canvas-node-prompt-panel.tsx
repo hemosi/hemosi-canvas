@@ -16,6 +16,7 @@ import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
+import { CanvasNodeParamExtras } from "./canvas-node-param-extras";
 import { CanvasDraftToggle } from "./canvas-draft-toggle";
 import { draftParamsFor, showsBuiltinParams } from "@/lib/canvas/canvas-draft";
 
@@ -113,12 +114,14 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                                 onOpenChange={onImageSettingsOpenChange}
                             /> : null}
                             {showDraft ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
+                            {showParams ? <CanvasNodeParamExtras node={node} mode="image" onChange={onConfigChange} /> : null}
                         </>
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             {showParams ? <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} /> : null}
                             {showDraft ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
+                            {showParams ? <CanvasNodeParamExtras node={node} mode="video" onChange={onConfigChange} /> : null}
                         </>
                     ) : mode === "audio" ? (
                         <>

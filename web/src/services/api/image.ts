@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, configSeed, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -667,7 +667,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     const response = await axios.post<GeminiPayload>(
         geminiApiUrl(config, "generateContent"),
         {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
+            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}) } }),
             contents: [{ role: "user", parts }],
         },
         { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
@@ -706,7 +706,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -734,6 +734,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
+                ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}),
                 // gpt-image models reject response_format; they always return b64.
                 ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
                 output_format: IMAGE_OUTPUT_FORMAT,
@@ -768,7 +769,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -796,6 +797,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (quality) optional.quality = quality;
     if (requestSize) optional.size = requestSize;
     if (background) optional.background = background;
+    if (configSeed(config) !== undefined) optional.seed = String(configSeed(config));
     if (editOptions.extraParams) {
         optional.output_format = IMAGE_OUTPUT_FORMAT;
         // gpt-image models reject response_format; they always return b64.

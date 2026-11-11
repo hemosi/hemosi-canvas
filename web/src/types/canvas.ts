@@ -128,6 +128,8 @@ export type CanvasNodeMetadata = {
     shotVideo?: { content: string; storageKey?: string; mimeType?: string; naturalWidth?: number; naturalHeight?: number; durationMs?: number; bytes?: number };
     shotStatus?: { image?: CanvasNodeStatus; video?: CanvasNodeStatus; imageError?: string; videoError?: string };
     videoModel?: string;
+    /** Video size of a shot node (its image size uses `size`). */
+    videoSize?: string;
     /** Material node: an external file archived into the project. */
     material?: boolean;
     sourceFileName?: string;

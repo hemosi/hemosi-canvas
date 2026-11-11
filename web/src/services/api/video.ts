@@ -6,7 +6,7 @@ import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, buildApiUrl, configSeed, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -113,6 +113,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
                 mode: resolveVideoMode(config.videoMode, refs.length),
+                ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}),
             },
             signal: options?.signal,
         }),
@@ -164,6 +165,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
     body.append("watermark", String(boolConfig(config.videoWatermark, false)));
     body.append("mode", mode);
+    if (configSeed(config) !== undefined) body.append("seed", String(configSeed(config)));
     if (mode === "frames") {
         if (images[0]) {
             body.append("first_frame", images[0], "first.png");
@@ -241,6 +243,7 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
                 resolution: normalizeVideoResolution(config.vquality),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 addWatermark: boolConfig(config.videoWatermark, false),
+                ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}),
             },
         }, { headers: geminiVideoHeaders(config), signal: options?.signal })).data, apiText("noVideoTask"));
         if (!created.name) throw new Error(apiText("noVideoTaskId"));

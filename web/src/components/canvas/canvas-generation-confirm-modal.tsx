@@ -26,6 +26,7 @@ export type GenerationConfirmSummary = {
     seconds?: string;
     count: number;
     draft?: boolean;
+    seed?: string;
 };
 
 /** Collect what a generation request is about to send, from the resolved request config and its inputs. */
@@ -48,6 +49,7 @@ export function buildGenerationConfirmSummary(
         seconds: mode === "video" ? config.videoSeconds : undefined,
         count: input.count,
         draft: input.draft,
+        seed: config.seed?.trim() || undefined,
     };
 }
 
@@ -94,6 +96,7 @@ export function CanvasGenerationConfirmModal({ summary, onConfirm, onCancel }: {
                     {summary.quality ? <Row label={t("hemosi.confirm.quality")} value={imageQualityLabel(summary.quality)} /> : null}
                     {summary.resolution ? <Row label={t("hemosi.confirm.resolution")} value={videoResolutionLabel(summary.resolution)} /> : null}
                     {summary.seconds ? <Row label={t("hemosi.confirm.seconds")} value={t("hemosi.confirm.secondsValue", { count: Number(summary.seconds) || 0 })} /> : null}
+                    {summary.seed ? <Row label="种子" value={summary.seed} /> : null}
                     <Row label={t("hemosi.confirm.count")} value={t("hemosi.confirm.countValue", { count: summary.count })} />
                     <div>
                         <div className="mb-1 text-xs opacity-60">{t("hemosi.confirm.prompt")}</div>

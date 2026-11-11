@@ -81,7 +81,15 @@ export type AiConfig = {
     confirmBeforeGenerate: boolean;
     /** Also show the confirm card when the Agent starts a generation (needs confirmBeforeGenerate); on by default, same mechanism as user generations. */
     confirmAgentGenerations: boolean;
+    /** Per-node generation seed (set from node metadata at request time); empty = provider default/random. */
+    seed?: string;
 };
+
+/** Integer seed from a config, or undefined when unset/invalid; requests only send it when set. */
+export function configSeed(config: Pick<AiConfig, "seed">) {
+    const value = Number(config.seed);
+    return config.seed?.trim() && Number.isFinite(value) ? Math.floor(value) : undefined;
+}
 
 export type WebdavSyncConfig = {
     url: string;
