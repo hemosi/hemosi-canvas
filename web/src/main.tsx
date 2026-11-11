@@ -8,8 +8,11 @@ import { RouterProvider } from "react-router-dom";
 import { AppProviders } from "@/components/layout/app-providers";
 import "@/i18n";
 import { router } from "@/router";
+import { applyDesktopProxyDefaults } from "@/lib/desktop-bridge";
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
+
+applyDesktopProxyDefaults();
 
 createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

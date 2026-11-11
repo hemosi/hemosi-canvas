@@ -1,0 +1,69 @@
+{
+  "name": "hemosi-desktop",
+  "productName": "Hemosi",
+  "version": "0.1.0",
+  "description": "Hemosi infinite canvas desktop app (Electron wrapper around web/dist with a built-in forwarding proxy).",
+  "license": "MIT",
+  "author": "hemosi",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check server.js && node test/server.test.js",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "io.github.hemosi.canvas",
+    "productName": "Hemosi",
+    "copyright": "MIT · based on basketikun/infinite-canvas",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "package.json",
+      "icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web-dist"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Hemosi",
+      "artifactName": "Hemosi-Setup-${version}-x64.${ext}"
+    },
+    "publish": null,
+    "artifactName": "Hemosi-${version}-${arch}-portable.${ext}"
+  }
+}
