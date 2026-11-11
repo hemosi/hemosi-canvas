@@ -20,7 +20,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { captureVideoFrameSafe, VideoFrameTaintedError, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
-import { App, Button, Modal } from "antd";
+import { App, Button, Input, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -79,6 +79,8 @@ import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu"
 import { CanvasGenerationConfirmModal, buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
 import { applyDraftConfig, draftParamsFor, isDraftMode } from "@/lib/canvas/canvas-draft";
 import { stripGeneratedResult } from "@/lib/canvas/canvas-node-clone";
+import { CONNECTION_KINDS, CONNECTION_KIND_LABEL, connectionKindOf, connectionKindProblem, inferConnectionKind } from "@/lib/canvas/canvas-connection-kind";
+import { MenuButton } from "@/components/canvas/canvas-context-menu";
 import { connectionsTouching, downloadNodeContent, duplicateNodeWithLinks, toggleNodeCollapsed } from "@/lib/canvas/canvas-node-ops";
 import { buildTemplateFromSelection, instantiateTemplate, templateName, type CanvasTemplate } from "@/lib/canvas/canvas-templates";
 import { findTemplate, useTemplateStore } from "@/stores/use-template-store";
@@ -285,6 +287,7 @@ function InfiniteCanvasPage() {
     const generationConfirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
     const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
     const [saveTemplateNodeIds, setSaveTemplateNodeIds] = useState<Set<string> | null>(null);
+    const [labelEdit, setLabelEdit] = useState<{ connectionId: string; value: string } | null>(null);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -674,7 +677,12 @@ function InfiniteCanvasPage() {
             const { fromNodeId, toNodeId } = connection;
             const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
             if (!exists) {
-                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId }]);
+                const from = nodesRef.current.find((node) => node.id === fromNodeId);
+                const to = nodesRef.current.find((node) => node.id === toNodeId);
+                const kind = from && to ? inferConnectionKind(from, to) : undefined;
+                const problem = from && to && kind ? connectionKindProblem(kind, from, to) : null;
+                if (problem) message.warning(t("p1.link.problem", { problem }));
+                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId, kind }]);
             }
             setContextMenu(null);
         },
@@ -1024,6 +1032,19 @@ function InfiniteCanvasPage() {
         setSelectedConnectionId((current) => (current === connectionId ? null : current));
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
     }, []);
+
+    const setConnectionKind = useCallback(
+        (connectionId: string, kind: CanvasConnection["kind"]) => {
+            const connection = connectionsRef.current.find((item) => item.id === connectionId);
+            const from = nodesRef.current.find((node) => node.id === connection?.fromNodeId);
+            const to = nodesRef.current.find((node) => node.id === connection?.toNodeId);
+            const problem = from && to && kind ? connectionKindProblem(kind, from, to) : null;
+            if (problem) message.warning(t("p1.link.problem", { problem }));
+            setConnections((prev) => prev.map((item) => (item.id === connectionId ? { ...item, kind } : item)));
+            setContextMenu(null);
+        },
+        [message, t],
+    );
 
     const disconnectNodeReference = useCallback((fromNodeId: string, toNodeId: string) => {
         setConnections((prev) => prev.filter((connection) => connection.fromNodeId !== fromNodeId || connection.toNodeId !== toNodeId));
@@ -3520,12 +3541,16 @@ function InfiniteCanvasPage() {
                     onDrop={handleDrop}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {visibleConnections.map(({ connection, from, to }) => (
+                        {visibleConnections.map(({ connection, from, to }) => {
+                            const kind = connectionKindOf(connection, from, to);
+                            return (
                             <ConnectionPath
                                 key={connection.id}
                                 connection={connection}
                                 from={from}
                                 to={to}
+                                label={connection.label ? `${CONNECTION_KIND_LABEL[kind]} · ${connection.label}` : CONNECTION_KIND_LABEL[kind]}
+                                problem={connectionKindProblem(kind, from, to)}
                                 active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
                                 onSelect={() => {
                                     setSelectedConnectionId(connection.id);
@@ -3538,7 +3563,8 @@ function InfiniteCanvasPage() {
                                     setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId: connection.id });
                                 }}
                             />
-                        ))}
+                            );
+                        })}
                         {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
                     </svg>
 
@@ -3748,6 +3774,20 @@ function InfiniteCanvasPage() {
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
                         onSaveTemplate={openSaveTemplate}
+                        connectionItems={
+                            contextMenu.type === "connection" ? (
+                                <>
+                                    {CONNECTION_KINDS.map((kind) => (
+                                        <MenuButton key={kind} icon={<span className="inline-block size-4 text-center">{connectionsRef.current.find((item) => item.id === contextMenu.connectionId)?.kind === kind ? "●" : "○"}</span>} label={t("p1.link.setKind", { kind: CONNECTION_KIND_LABEL[kind] })} onClick={() => setConnectionKind(contextMenu.connectionId, kind)} />
+                                    ))}
+                                    <MenuButton icon={<span className="inline-block size-4 text-center">✎</span>} label={t("p1.link.editLabel")} onClick={() => {
+                                        const current = connectionsRef.current.find((item) => item.id === contextMenu.connectionId);
+                                        setLabelEdit({ connectionId: contextMenu.connectionId, value: current?.label || "" });
+                                        setContextMenu(null);
+                                    }} />
+                                </>
+                            ) : null
+                        }
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 requestDeleteNodes(selectedNodeIdsRef.current.has(contextMenu.nodeId) ? new Set(selectedNodeIdsRef.current) : new Set([contextMenu.nodeId]));
@@ -3813,6 +3853,13 @@ function InfiniteCanvasPage() {
 
                 <CanvasTemplateModal open={templatePanelOpen} onClose={() => setTemplatePanelOpen(false)} onInsert={insertTemplate} />
                 <CanvasSaveTemplateModal open={Boolean(saveTemplateNodeIds)} defaultName={t("hemosi.templates.defaultName", { count: useTemplateStore.getState().templates.length + 1 })} onCancel={() => setSaveTemplateNodeIds(null)} onSave={saveSelectionAsTemplate} />
+
+                <Modal title={t("p1.link.editLabel")} open={Boolean(labelEdit)} centered destroyOnHidden onCancel={() => setLabelEdit(null)} onOk={() => {
+                    if (labelEdit) setConnections((prev) => prev.map((item) => (item.id === labelEdit.connectionId ? { ...item, label: labelEdit.value.trim() || undefined } : item)));
+                    setLabelEdit(null);
+                }}>
+                    <Input autoFocus maxLength={24} value={labelEdit?.value || ""} placeholder={t("p1.link.labelPlaceholder")} onChange={(event) => setLabelEdit((current) => (current ? { ...current, value: event.target.value } : current))} />
+                </Modal>
 
                 <CanvasGenerationConfirmModal summary={generationConfirmSummary} onConfirm={(dontAskAgain) => settleGenerationConfirm(true, dontAskAgain)} onCancel={() => settleGenerationConfirm(false)} />
 

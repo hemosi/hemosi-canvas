@@ -7,6 +7,12 @@ const p1 = {
         deleteLinkedOk: "断开并删除",
         nothingToDownload: "这个节点没有可下载的内容",
     },
+    link: {
+        problem: "连线类型可能不对：{{problem}}",
+        setKind: "标为「{{kind}}」",
+        editLabel: "编辑连线标注",
+        labelPlaceholder: "例如：动作参考 / 主角 / 第二场",
+    },
     menu: {
         duplicate: "复制",
         duplicateWithLinks: "带连线复制",

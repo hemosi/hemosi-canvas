@@ -9,6 +9,8 @@ export function ConnectionPath({
     from,
     to,
     active,
+    label,
+    problem,
     onSelect,
     onContextMenu,
 }: {
@@ -16,6 +18,8 @@ export function ConnectionPath({
     from: CanvasNodeData;
     to: CanvasNodeData;
     active: boolean;
+    label?: string;
+    problem?: string | null;
     onSelect: () => void;
     onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
 }) {
@@ -49,12 +53,23 @@ export function ConnectionPath({
             />
             <path
                 d={pathD}
-                stroke={active ? theme.node.activeStroke : theme.node.muted}
+                stroke={problem ? "#f87171" : active ? theme.node.activeStroke : theme.node.muted}
                 strokeWidth={active ? 3 : 2}
                 strokeOpacity={active ? 1 : 0.82}
+                strokeDasharray={problem ? "6 5" : connection.kind === "continue" ? "2 6" : undefined}
+                strokeLinecap="round"
                 fill="none"
                 style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
             />
+            {label ? (
+                <g transform={`translate(${(startX + endX) / 2}, ${(startY + endY) / 2})`} style={{ pointerEvents: "none" }}>
+                    <title>{problem || label}</title>
+                    <rect x={-(label.length * 6 + 10)} y={-9} width={label.length * 12 + 20} height={18} rx={9} fill={theme.canvas.background} stroke={problem ? "#f87171" : theme.node.muted} strokeOpacity={0.6} />
+                    <text textAnchor="middle" dominantBaseline="central" fontSize={11} fill={problem ? "#f87171" : theme.node.text} opacity={0.85}>
+                        {label}
+                    </text>
+                </g>
+            ) : null}
         </g>
     );
 }
