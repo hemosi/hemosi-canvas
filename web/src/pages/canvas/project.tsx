@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Box, Clapperboard, Copy, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
+import { Anchor, Box, Clapperboard, Copy, Film, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -2108,7 +2108,7 @@ function InfiniteCanvasPage() {
                     setDialogNodeId(videoId);
                 };
                 items.push({ id: "p6-draw-to-video", title: "草图/预演图作为首帧，新建视频节点并连线（走已有视频生成与确认卡）", label: "首帧转视频", icon: <Video className="size-4" />, onClick: () => toVideo("firstFrame") });
-                items.push({ id: "p6-draw-to-video-ref", title: "作为参考图，新建视频节点并连线", label: "参考转视频", icon: <Video className="size-4" />, onClick: () => toVideo("reference") });
+                items.push({ id: "p6-draw-to-video-ref", title: "作为参考图，新建视频节点并连线", label: "参考转视频", icon: <Film className="size-4" />, onClick: () => toVideo("reference") });
             }
             if (node.type === CanvasNodeType.Image && node.metadata?.content) items.push({ id: "p1-set-ref", title: t("p1.toolbar.setRefTitle"), label: t("p1.toolbar.setRef"), icon: <Link2 className="size-4" />, onClick: () => setRefTargetSourceId(node.id) });
             if (node.type === CanvasNodeType.Video && node.metadata?.content) items.push({ id: "p1-ratio-lock", title: t("p1.toolbar.ratioLockTitle"), label: node.metadata?.freeResize ? t("p1.toolbar.freeResize") : t("p1.toolbar.ratioLocked"), icon: <Ratio className="size-4" />, onClick: () => toggleNodeFreeResize(node.id) });

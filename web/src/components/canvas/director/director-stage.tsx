@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { App, Select, Switch } from "antd";
 import { Camera, Circle, Clapperboard, Image as ImageIcon, Loader2, Pause, Play, Plus, Sparkles, Trash2, Upload, Video, X } from "lucide-react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Grid, Html, Line, OrbitControls, PerspectiveCamera, TransformControls } from "@react-three/drei";
+import { Grid, Line, OrbitControls, PerspectiveCamera, TransformControls } from "@react-three/drei";
 import * as THREE from "three";
+import fixWebmDuration from "fix-webm-duration";
 
 import { readDirectorScene, runDirectorAgent, useResolvedImage } from "@/components/canvas/nodes/director-node";
 import {
@@ -28,6 +29,8 @@ import {
     type Vec3,
 } from "@/lib/canvas/director-scene";
 import { drawToVideoOps } from "@/lib/canvas/canvas-draw-to-video";
+import { findFreeRightPosition } from "@/lib/canvas/canvas-quick-grow";
+import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
 import { CanvasNodeType } from "@/types/canvas";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
@@ -60,6 +63,34 @@ function Panorama({ url }: { url: string }) {
         };
     }, [scene, url]);
     return null;
+}
+
+/** 画在 CanvasTexture 上的文字标签（不用 DOM 叠层，避免卸载竞态；只在导演视角显示）。 */
+function Label({ text, position, color = "#ffffff", height = 0.22 }: { text: string; position: Vec3; color?: string; height?: number }) {
+    const { texture, aspect } = useMemo(() => {
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d")!;
+        const font = "500 40px system-ui, sans-serif";
+        context.font = font;
+        const width = Math.ceil(context.measureText(text).width) + 24;
+        canvas.width = width;
+        canvas.height = 56;
+        context.font = font;
+        context.fillStyle = "rgba(10,12,14,.7)";
+        context.fillRect(0, 0, width, 56);
+        context.fillStyle = color;
+        context.textBaseline = "middle";
+        context.fillText(text, 12, 29);
+        const map = new THREE.CanvasTexture(canvas);
+        map.colorSpace = THREE.SRGBColorSpace;
+        return { texture: map, aspect: width / 56 };
+    }, [color, text]);
+    useEffect(() => () => texture.dispose(), [texture]);
+    return (
+        <sprite position={position} scale={[height * aspect, height, 1]} renderOrder={10}>
+            <spriteMaterial map={texture} depthTest={false} transparent />
+        </sprite>
+    );
 }
 
 function SubjectMesh({ subject, clock, dragging, register, director, selected, onSelect }: { subject: DirectorSubject; clock: MutableRefObject<Clock>; dragging: MutableRefObject<boolean>; register: (key: string, object: THREE.Object3D | null) => void; director: boolean; selected: boolean; onSelect: () => void }) {
@@ -110,14 +141,7 @@ function SubjectMesh({ subject, clock, dragging, register, director, selected, o
                     {material}
                 </mesh>
             )}
-            {director ? (
-                <Html position={[0, h + 0.25, 0]} center zIndexRange={[10, 0]}>
-                    <div className="pointer-events-none whitespace-nowrap rounded px-1.5 py-0.5 text-[11px]" style={{ background: "rgba(10,12,14,.7)", color: "#fff" }}>
-                        {subject.name}
-                        {subject.action ? ` · ${subject.action}` : ""}
-                    </div>
-                </Html>
-            ) : null}
+            {director ? <Label text={`${subject.name}${subject.action ? ` · ${subject.action}` : ""}`} position={[0, h + 0.25, 0]} /> : null}
         </group>
     );
 }
@@ -154,9 +178,7 @@ function CameraRig({ shot, register, selection, onSelect }: { shot: DirectorShot
                                 <coneGeometry args={[0.16, 0.25, 4]} />
                                 <meshStandardMaterial color="#9ca3af" />
                             </mesh>
-                            <Html position={[0, 0.3, 0]} center zIndexRange={[10, 0]}>
-                                <div className="pointer-events-none whitespace-nowrap text-[10px]" style={{ color: "#facc15" }}>{frame.t}s</div>
-                            </Html>
+                            <Label text={`${frame.t}s`} position={[0, 0.35, 0]} color="#facc15" height={0.16} />
                         </group>
                         <mesh
                             position={frame.target}
@@ -262,7 +284,8 @@ function useFitBox(ratio: number) {
         const element = ref.current;
         if (!element) return;
         const update = () => {
-            const { width, height } = element.getBoundingClientRect();
+            const width = element.clientWidth;
+            const height = element.clientHeight;
             const w = Math.min(width, height * ratio);
             setSize({ width: Math.floor(w), height: Math.floor(w / ratio) });
         };
@@ -274,10 +297,15 @@ function useFitBox(ratio: number) {
     return { ref, size };
 }
 
+// 导演台从节点里 portal 出来：React 事件会沿组件树冒泡回画布节点（触发选中/拖拽），在根上截断。
+const halt = (event: { stopPropagation: () => void }) => event.stopPropagation();
+const isolate = { onMouseDown: halt, onMouseUp: halt, onPointerDown: halt, onPointerUp: halt, onClick: halt, onDoubleClick: halt, onContextMenu: halt, onWheel: halt, onKeyDown: halt, onKeyUp: halt };
+
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
 function pickRecorderMime() {
-    return ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"].find((type) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) || "";
+    // MP4 优先（播放器能拖进度、各平台通吃），不支持时退回 WebM 并补写时长。
+    return ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((type) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) || "";
 }
 
 // ---------------------------------------------------------------- 导演台
@@ -433,7 +461,7 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
         return blob;
     };
 
-    const placeRight = (offsetY: number, width: number, height: number) => ({ x: ctx.node.position.x + ctx.node.width + 120, y: ctx.node.position.y + offsetY, width, height });
+    const placeRight = (width: number, height: number) => ({ ...findFreeRightPosition(ctx.node, { width, height }, ctx.getNodes()), width, height });
 
     const screenshot = async (toVideo: boolean) => {
         if (busy) return;
@@ -441,9 +469,10 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
         try {
             const image = await uploadImage(await captureShot());
             const media = { content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, mimeType: image.mimeType };
-            commit({ ...scene, preview: media });
+            const withPreview = { ...scene, preview: media };
+            setScene(withPreview);
             const id = `${CanvasNodeType.Image}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            const rect = placeRight(ctx.getDownstream().length * 60, 340, Math.round((340 * image.height) / image.width));
+            const rect = placeRight(340, Math.round((340 * image.height) / image.width));
             const node = {
                 id,
                 type: CanvasNodeType.Image,
@@ -453,7 +482,9 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                 height: rect.height,
                 metadata: { content: image.url, storageKey: image.storageKey, status: "success" as const, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType, prompt: directorShotPrompt(scene, shot), seconds: String(Math.round(shot.duration)) },
             };
-            const ops = [
+            // 场景预览和新节点放在同一批操作里：applyOps 以画布当前快照为底，分开写会被覆盖。
+            const ops: CanvasAgentOp[] = [
+                { type: "update_node", id: ctx.node.id, metadata: { directorScene: withPreview } },
                 { type: "add_node" as const, id, nodeType: CanvasNodeType.Image, title: node.title, position: node.position, width: node.width, height: node.height, metadata: node.metadata },
                 { type: "connect_nodes" as const, fromNodeId: ctx.node.id, toNodeId: id },
             ];
@@ -499,13 +530,15 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
             recorder.stop();
             await stopped;
             capture.getTracks().forEach((track) => track.stop());
-            const blob = new Blob(chunks, { type: mimeType.split(";")[0] });
+            const raw = new Blob(chunks, { type: mimeType.split(";")[0] });
+            const blob = raw.type === "video/webm" ? await fixWebmDuration(raw, shot.duration * 1000, { logger: false }) : raw;
             const file = await uploadMediaFile(blob, "video");
             const width = canvas.width;
             const height = canvas.height;
             const id = `${CanvasNodeType.Video}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-            const rect = placeRight(ctx.getDownstream().length * 60, 420, Math.round((420 * height) / width));
+            const rect = placeRight(420, Math.round((420 * height) / width));
             ctx.applyOps([
+                { type: "update_node", id: ctx.node.id, metadata: { directorScene: scene } },
                 {
                     type: "add_node",
                     id,
@@ -554,7 +587,7 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
     }, []);
 
     return (
-        <div ref={rootRef} className="fixed inset-0 z-[1000] flex flex-col" style={{ background: theme.canvas.background, color: theme.node.text }} onWheel={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+        <div ref={rootRef} className="fixed inset-0 z-[1000] flex flex-col" style={{ background: theme.canvas.background, color: theme.node.text }} {...isolate}>
             <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3 text-sm" style={{ borderColor: theme.toolbar.border }}>
                 <Clapperboard className="size-4" style={{ color: "var(--hemosi-accent)" }} />
                 <input className="w-56 bg-transparent font-medium outline-none" value={scene.title} onChange={(event) => setScene({ ...scene, title: event.target.value })} onBlur={() => { commit(scene); ctx.updateNode({ title: scene.title }); }} />
@@ -640,7 +673,8 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                 </div>
 
                 <div className="flex min-w-0 flex-1 flex-col">
-                    <div ref={boxRef} className="relative grid min-h-0 flex-1 place-items-center p-3">
+                    <div className="relative min-h-0 flex-1">
+                    <div ref={boxRef} className="absolute inset-3 grid place-items-center">
                         <div className="overflow-hidden rounded-md" style={{ width: size.width, height: size.height, outline: mode === "shot" || recording ? "1px solid var(--hemosi-accent)" : undefined }}>
                             {size.width > 0 ? (
                                 <Canvas shadows dpr={[1, 2]} gl={{ preserveDrawingBuffer: true, antialias: true }} camera={{ position: initialCamera.position, fov: 50, near: 0.05, far: 2000 }} onPointerMissed={() => director && setSelection(null)}>
@@ -671,6 +705,7 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                                 </Canvas>
                             ) : null}
                         </div>
+                    </div>
                         {recording ? <div className="absolute left-5 top-5 rounded px-2 py-0.5 text-xs" style={{ background: "rgba(127,29,29,.85)", color: "#fff" }}>● REC {time.toFixed(1)} / {shot.duration}s</div> : null}
                     </div>
 
