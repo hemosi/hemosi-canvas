@@ -3,7 +3,9 @@ import i18n from "@/i18n";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasAudioRole, type CanvasConnection, type CanvasImageRole, type CanvasNodeData } from "@/types/canvas";
+import { connectionKindOf } from "@/lib/canvas/canvas-connection-kind";
+import { anchorPromptBlock, IMAGE_ROLE_LABEL, AUDIO_ROLE_LABEL, orderReferenceInputs } from "@/lib/canvas/canvas-reference-roles";
 import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 
@@ -16,12 +18,22 @@ export type NodeGenerationContext = {
     imageCount: number;
     videoCount: number;
     audioCount: number;
+    /** Roles of referenceImages, same order. */
+    imageRoles?: (CanvasImageRole | undefined)[];
+    /** A first/last frame was marked, so video generation must use first/last-frame mode. */
+    forceFrames?: boolean;
+    /** Videos linked as 续作: their last frame becomes the first frame (resolved in hydrateNodeGenerationContext). */
+    continueVideos?: ReferenceVideo[];
 };
 
-type NodeGenerationResourceInput = {
+export type NodeGenerationResourceInput = {
     nodeId: string;
     type: "text" | "image" | "video" | "audio";
     title: string;
+    /** Text block label override (anchors). */
+    label?: string;
+    role?: CanvasImageRole;
+    audioRole?: CanvasAudioRole;
     text?: string;
     image?: ReferenceImage;
     video?: ReferenceVideo;
@@ -37,22 +49,38 @@ type NodeGenerationGroupInput = {
 
 export type NodeGenerationInput = NodeGenerationResourceInput | NodeGenerationGroupInput;
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
-    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: { mode?: string; extraInputs?: NodeGenerationInput[] } = {}): NodeGenerationContext {
+    const inputs = [...(options.extraInputs || []), ...buildNodeGenerationInputs(nodeId, nodes, connections)];
     const sourceNode = nodes.find((node) => node.id === nodeId);
     if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
         return buildComposerGenerationContext(inputs, prompt);
     }
 
-    const resourceInputs = flattenGenerationInputs(inputs);
+    // The node a run reads its settings from (a config node it feeds, or itself) decides order and on/off of references.
+    const settingsNode = nodes.find((node) => node.id === connections.find((connection) => connection.fromNodeId === nodeId && nodes.find((item) => item.id === connection.toNodeId)?.type === CanvasNodeType.Config)?.toNodeId) || sourceNode;
+    const targetIds = new Set([nodeId, settingsNode?.id].filter(Boolean) as string[]);
+    const linkKind = (fromId: string) => {
+        const connection = connections.find((item) => item.fromNodeId === fromId && targetIds.has(item.toNodeId));
+        return connection ? connectionKindOf(connection, nodes.find((node) => node.id === fromId), nodes.find((node) => node.id === connection.toNodeId)) : undefined;
+    };
+    const resourceInputs = orderReferenceInputs(flattenGenerationInputs(inputs), settingsNode?.metadata, options.mode === "video");
+    const continueVideos = options.mode === "video" ? resourceInputs.filter((input) => input.video && linkKind(input.nodeId) === "continue").map((input) => input.video!) : [];
     let textIndex = 0;
-    const upstreamText = resourceInputs.flatMap((input) => (input.text ? [textBlock(generationLabel("text", textIndex++), input.text)] : [])).join("\n\n");
-    const referenceImages = resourceInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
-    const referenceVideos = resourceInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
-    const referenceAudios = resourceInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
+    const upstreamText = resourceInputs.flatMap((input) => (input.text ? [textBlock(input.label || generationLabel("text", textIndex++), input.text)] : [])).join("\n\n");
+    const imageInputs = resourceInputs.filter((input) => input.image);
+    const referenceImages = imageInputs.map((input) => input.image!);
+    const imageRoles = imageInputs.map((input) => input.role);
+    const referenceVideos = resourceInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video) && !continueVideos.includes(video!));
+    const audioInputs = resourceInputs.filter((input) => input.audio);
+    const referenceAudios = audioInputs.map((input) => input.audio!);
+    const roleNotes = [
+        ...imageInputs.flatMap((input, index) => (input.role && input.role !== "reference" ? [`${imageReferenceLabel(index + continueVideos.length)}：${IMAGE_ROLE_LABEL[input.role]}${input.title ? `（${input.title}）` : ""}`] : [])),
+        ...audioInputs.flatMap((input, index) => (input.audioRole ? [`${generationLabel("audio", index)}：${AUDIO_ROLE_LABEL[input.audioRole]}`] : [])),
+    ];
+    const blocks = [upstreamText, roleNotes.length ? textBlock("参考素材说明", roleNotes.join("\n")) : ""].filter(Boolean).join("\n\n");
 
     return {
-        prompt: upstreamText ? `${prompt}\n\n${upstreamText}` : prompt,
+        prompt: blocks ? `${prompt}\n\n${blocks}` : prompt,
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -60,6 +88,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         imageCount: referenceImages.length,
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
+        imageRoles,
+        forceFrames: continueVideos.length > 0 || imageRoles.some((role) => role === "firstFrame" || role === "lastFrame"),
+        continueVideos,
     };
 }
 
@@ -148,12 +179,14 @@ function flattenGenerationInputs(inputs: NodeGenerationInput[]) {
 }
 
 function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourceInput[] {
+    if (node.type === HemosiNodeType.Anchor) return readAnchorResources(node);
+    if (node.type === HemosiNodeType.Shot) return readShotResources(node);
     const image = readReferenceImage(node);
-    if (image) return [{ nodeId: node.id, type: "image", title: node.title, image }];
+    if (image) return [{ nodeId: node.id, type: "image", title: node.title, image, role: node.metadata?.imageRole }];
     const video = readReferenceVideo(node);
     if (video) return [{ nodeId: node.id, type: "video", title: node.title, video }];
     const audio = readReferenceAudio(node);
-    if (audio) return [{ nodeId: node.id, type: "audio", title: node.title, audio }];
+    if (audio) return [{ nodeId: node.id, type: "audio", title: node.title, audio, audioRole: node.metadata?.audioRole }];
     const resource = getNodeDefinition(node.type)?.resource?.(node);
     if (resource?.kind === "image" && resource.url) return [{ nodeId: node.id, type: "image", title: node.title, image: { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata?.mimeType || "image/png", dataUrl: resource.url, storageKey: node.metadata?.storageKey } }];
     if (resource?.kind === "video" && resource.url) return [{ nodeId: node.id, type: "video", title: node.title, video: { id: node.id, name: `${node.title || node.id}.mp4`, type: node.metadata?.mimeType || "video/mp4", url: resource.url, storageKey: node.metadata?.storageKey } }];
@@ -178,7 +211,39 @@ export function buildNodeResponseMessages(context: NodeGenerationContext): AiTex
 
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
     const { imageToDataUrl } = await import("@/services/image-storage");
-    return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
+    const referenceImages = await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) })));
+    if (!context.continueVideos?.length) return { ...context, referenceImages };
+    // 续作: the linked video's last frame is the first frame of this generation.
+    const { captureVideoFrameSafe } = await import("@/lib/canvas/canvas-video-frame");
+    const frames = await Promise.all(
+        context.continueVideos.map(async (video) => {
+            const blob = await captureVideoFrameSafe(video.url, "last");
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(blob);
+            });
+            return { id: `${video.id}:last`, name: `${video.name}-last.png`, type: "image/png", dataUrl } satisfies ReferenceImage;
+        }),
+    );
+    return { ...context, referenceImages: [...frames, ...referenceImages], imageRoles: [...frames.map(() => "firstFrame" as const), ...(context.imageRoles || [])], imageCount: frames.length + referenceImages.length };
+}
+
+function readAnchorResources(node: CanvasNodeData): NodeGenerationResourceInput[] {
+    const meta = node.metadata || {};
+    const role: CanvasImageRole = meta.anchorKind === "scene" ? "scene" : meta.anchorKind === "style" ? "style" : "character";
+    const block = anchorPromptBlock(node);
+    const images = (meta.anchorImages || []).filter((image) => image.content).map((image, index): NodeGenerationResourceInput => ({ nodeId: `${node.id}#${image.id}`, type: "image", title: `${node.title}${(meta.anchorImages?.length || 0) > 1 ? ` ${index + 1}` : ""}`, role, image: { id: `${node.id}#${image.id}`, name: `${node.title || node.id}-${index + 1}.png`, type: image.mimeType || "image/png", dataUrl: image.content, storageKey: image.storageKey } }));
+    const voice = meta.anchorVoice?.content ? [{ nodeId: `${node.id}#voice`, type: "audio" as const, title: `${node.title} 声线`, audioRole: "voice" as const, audio: { id: `${node.id}#voice`, name: meta.anchorVoice.name || "voice.mp3", type: meta.anchorVoice.mimeType || "audio/mpeg", url: meta.anchorVoice.content, storageKey: meta.anchorVoice.storageKey } }] : [];
+    return [...(block ? [{ nodeId: node.id, type: "text" as const, title: node.title, label: block.label, text: block.text }] : []), ...images, ...voice];
+}
+
+function readShotResources(node: CanvasNodeData): NodeGenerationResourceInput[] {
+    const meta = node.metadata || {};
+    if (meta.shotVideo?.content) return [{ nodeId: node.id, type: "video", title: node.title, video: { id: node.id, name: `${node.title || node.id}.mp4`, type: meta.shotVideo.mimeType || "video/mp4", url: meta.shotVideo.content, storageKey: meta.shotVideo.storageKey, durationMs: meta.shotVideo.durationMs } }];
+    if (meta.shotImage?.content) return [{ nodeId: node.id, type: "image", title: node.title, role: "reference", image: { id: node.id, name: `${node.title || node.id}.png`, type: meta.shotImage.mimeType || "image/png", dataUrl: meta.shotImage.content, storageKey: meta.shotImage.storageKey } }];
+    return [];
 }
 
 function readNodeTextInput(node: CanvasNodeData) {

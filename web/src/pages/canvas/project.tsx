@@ -2582,7 +2582,7 @@ function InfiniteCanvasPage() {
             const requestConfig = isDraft && draftParams ? applyDraftConfig(generationConfig, mode, draftParams) : generationConfig;
 
             {
-                const preview = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt);
+                const preview = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt, { mode });
                 const sourceImages = mode === "image" && effectiveConfig.nodeRegenerateBehavior !== "overwrite" ? sourceNodeReferenceImages(sourceNode || null) : [];
                 const previewImages = [...new Map([...sourceImages, ...preview.referenceImages].map((image) => [image.id, image])).values()];
                 const previewCount = mode === "image" ? getGenerationCount(requestConfig.count) : mode === "text" ? getGenerationCount(String(sourceNode?.metadata?.textCount || 1)) : 1;
@@ -2633,7 +2633,7 @@ function InfiniteCanvasPage() {
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
+                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt, { mode }),
             );
             const effectivePrompt = generationContext.prompt.trim();
             if (runController.signal.aborted) {
@@ -2840,7 +2840,7 @@ function InfiniteCanvasPage() {
                     if (!reuseVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        await completeVideoNodeTask(videoId, requestConfig, effectivePrompt, generationContext.referenceImages, controller.signal, {
+                        await completeVideoNodeTask(videoId, generationContext.forceFrames ? { ...requestConfig, videoMode: "frames" } : requestConfig, effectivePrompt, generationContext.referenceImages, controller.signal, {
                             size: generationConfig.size,
                             seconds: generationConfig.videoSeconds,
                             vquality: generationConfig.vquality,
@@ -3066,7 +3066,7 @@ function InfiniteCanvasPage() {
                 return false;
             }
 
-            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, rawPrompt));
+            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, rawPrompt, { mode: node.type === CanvasNodeType.Video ? "video" : undefined }));
             const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
             if (!prompt) {
                 message.warning(t("canvas.projectPage.retryPromptMissing"));
@@ -3112,7 +3112,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    await completeVideoNodeTask(node.id, requestConfig, prompt, retryImages, controller.signal, {
+                    await completeVideoNodeTask(node.id, context?.forceFrames ? { ...requestConfig, videoMode: "frames" } : requestConfig, prompt, retryImages, controller.signal, {
                         rawPrompt,
                         generationSourceId: sourceNode.id,
                         references: context ? generationReferenceUrls(context) : node.metadata?.references,

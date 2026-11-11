@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import type { ReactNode } from "react";
 import { Check, ChevronRight, Copy, Download, Group, Image as ImageIcon, Loader2, Lock, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, TriangleAlert, Video } from "lucide-react";
 import { nodeStatusBadge } from "@/lib/canvas/canvas-node-ops";
+import { AUDIO_ROLES, AUDIO_ROLE_LABEL, IMAGE_ROLES, IMAGE_ROLE_LABEL } from "@/lib/canvas/canvas-reference-roles";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -11,7 +12,7 @@ import { getNodeDefinition, isBuiltinNodeType } from "@/lib/canvas/node-registry
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeText, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeMetadata, type CanvasNodeText, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useTranslation } from "react-i18next";
@@ -436,6 +437,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
 
                 <NodeStatusCorner node={data} />
+                {!data.metadata?.collapsed && ((hasImageContent && !isBatchRoot) || hasAudioContent) ? <MediaRoleChip node={data} editable={isSelected || hovered} onChange={(patch) => pluginHost?.updateMetadata(data.id, patch)} /> : null}
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
@@ -497,6 +499,31 @@ const STATUS_BADGE_STYLE = {
     error: { label: "失败", color: "#f87171", Icon: TriangleAlert },
     draft: { label: "草稿", color: "var(--hemosi-accent)", Icon: null },
 } as const;
+
+function MediaRoleChip({ node, editable, onChange }: { node: CanvasNodeData; editable: boolean; onChange: (patch: CanvasNodeMetadata) => void }) {
+    const isAudio = node.type === CanvasNodeType.Audio;
+    const value = (isAudio ? node.metadata?.audioRole : node.metadata?.imageRole) || "";
+    const options = isAudio ? AUDIO_ROLES.map((role) => [role, AUDIO_ROLE_LABEL[role]] as const) : IMAGE_ROLES.map((role) => [role, IMAGE_ROLE_LABEL[role]] as const);
+    if (!editable && !value) return null;
+    return (
+        <div className={`absolute bottom-3 left-3 z-[56] ${isAudio ? "bottom-1" : ""}`} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+            <select
+                className="rounded-md border-0 px-1.5 py-0.5 text-[10px] font-semibold outline-none"
+                style={{ background: "rgba(10,12,14,.72)", color: value ? "var(--hemosi-accent)" : "#e5e7eb" }}
+                value={value}
+                title={isAudio ? "音频类型：配音 / BGM / 音效" : "身份标记：连给生成时按身份生效"}
+                onChange={(event) => onChange(isAudio ? { audioRole: (event.target.value || undefined) as never } : { imageRole: (event.target.value || undefined) as never })}
+            >
+                <option value="">{isAudio ? "标记类型" : "标记身份"}</option>
+                {options.map(([role, label]) => (
+                    <option key={role} value={role}>
+                        {label}
+                    </option>
+                ))}
+            </select>
+        </div>
+    );
+}
 
 function NodeStatusCorner({ node }: { node: CanvasNodeData }) {
     const badge = nodeStatusBadge(node);
