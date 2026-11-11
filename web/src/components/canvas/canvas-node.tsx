@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
+import { Check, ChevronRight, Copy, Download, Group, Image as ImageIcon, Loader2, Lock, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, TriangleAlert, Video } from "lucide-react";
+import { nodeStatusBadge } from "@/lib/canvas/canvas-node-ops";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -284,7 +285,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             startTop: data.position.y,
             startWidth: data.width,
             startHeight: data.height,
-            keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video || Boolean(definition?.keepAspectRatio?.(data)),
+            keepRatio: ((data.type === CanvasNodeType.Image || data.type === CanvasNodeType.Video) && !data.metadata?.freeResize) || (data.type !== CanvasNodeType.Image && data.type !== CanvasNodeType.Video && Boolean(definition?.keepAspectRatio?.(data))),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
         window.addEventListener("mousemove", handleResizeMove);
@@ -404,6 +405,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                         } as React.CSSProperties
                     }
                 >
+                    {data.metadata?.collapsed ? (
+                        <CollapsedContent node={data} theme={theme} icon={definition?.icon} />
+                    ) : (
                     <NodeContent
                         node={data}
                         theme={theme}
@@ -428,7 +432,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewBatchImage={(imageId) => onViewImage?.(data, imageId)}
                         groupChildCount={groupChildCount}
                     />
+                    )}
                 </div>
+
+                <NodeStatusCorner node={data} />
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
@@ -446,10 +453,14 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {!referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
+                {!referenceSelectionState && !data.metadata?.locked && !data.metadata?.collapsed ? (
+                    <>
+                        <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                    </>
+                ) : null}
             </div>
 
             {!referenceSelectionState && !isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
@@ -468,6 +479,46 @@ export const CanvasNode = React.memo(function CanvasNode({
         </div>
     );
 });
+
+function CollapsedContent({ node, theme, icon }: { node: CanvasNodeData; theme: NodeContentRendererProps["theme"]; icon?: ReactNode }) {
+    const meta = node.metadata || {};
+    const line = node.type === "shot" ? `#${meta.shotNo ?? "?"}  ${(meta.shotDescription || meta.prompt || "").split("\n")[0]}` : (meta.content && node.type === CanvasNodeType.Text ? meta.content.split("\n")[0] : node.title);
+    return (
+        <div className="flex h-full w-full items-center gap-2 px-4 text-xs" style={{ color: theme.node.text }}>
+            <span className="shrink-0" style={{ color: theme.node.muted }}>{icon}</span>
+            <span className="min-w-0 flex-1 truncate font-medium">{line || node.title}</span>
+        </div>
+    );
+}
+
+const STATUS_BADGE_STYLE = {
+    loading: { label: "生成中", color: "var(--hemosi-accent)", Icon: Loader2 },
+    success: { label: "成功", color: "#34d399", Icon: Check },
+    error: { label: "失败", color: "#f87171", Icon: TriangleAlert },
+    draft: { label: "草稿", color: "var(--hemosi-accent)", Icon: null },
+} as const;
+
+function NodeStatusCorner({ node }: { node: CanvasNodeData }) {
+    const badge = nodeStatusBadge(node);
+    const locked = Boolean(node.metadata?.locked);
+    if (!badge && !locked) return null;
+    const style = badge ? STATUS_BADGE_STYLE[badge] : null;
+    return (
+        <div className="pointer-events-none absolute right-3 top-3 z-[56] flex items-center gap-1" data-node-status={badge || undefined}>
+            {locked ? (
+                <span className="grid size-5 place-items-center rounded-md" style={{ background: "rgba(10,12,14,.72)", color: "#e5e7eb" }} title="已锁定">
+                    <Lock className="size-3" />
+                </span>
+            ) : null}
+            {style && badge !== "draft" ? (
+                <span className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: "rgba(10,12,14,.72)", color: style.color }}>
+                    {style.Icon ? <style.Icon className={`size-3 ${badge === "loading" ? "animate-spin" : ""}`} /> : null}
+                    {style.label}
+                </span>
+            ) : null}
+        </div>
+    );
+}
 
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);

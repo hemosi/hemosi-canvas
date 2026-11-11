@@ -1,14 +1,48 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, BookmarkPlus, GalleryHorizontalEnd, GalleryHorizontal, Group, Plus, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, Copy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { ContextMenuState } from "@/types/canvas";
+import type { CanvasNodeData, ContextMenuState } from "@/types/canvas";
 import type { VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 
-export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, canUngroup, onClose, onCaptureVideoFrame, onDuplicate, onGroup, onUngroup, onDelete, onSaveTemplate }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void; onSaveTemplate?: () => void }) {
+export function CanvasNodeContextMenu({
+    menu,
+    node,
+    canCaptureVideoFrame,
+    canGroup,
+    canUngroup,
+    onClose,
+    onCaptureVideoFrame,
+    onDuplicate,
+    onGroup,
+    onUngroup,
+    onDelete,
+    onSaveTemplate,
+    onToggleLock,
+    onToggleCollapse,
+    onDownload,
+    connectionItems,
+}: {
+    menu: ContextMenuState;
+    node?: CanvasNodeData | null;
+    canCaptureVideoFrame: boolean;
+    canGroup?: boolean;
+    canUngroup?: boolean;
+    onClose: () => void;
+    onCaptureVideoFrame: (position: VideoFramePosition) => void;
+    onDuplicate: (withConnections: boolean) => void;
+    onGroup?: () => void;
+    onUngroup?: () => void;
+    onDelete: () => void;
+    onSaveTemplate?: () => void;
+    onToggleLock?: () => void;
+    onToggleCollapse?: () => void;
+    onDownload?: () => void;
+    connectionItems?: ReactNode;
+}) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -38,14 +72,19 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
             ) : null}
             {menu.type === "node" && canGroup ? <MenuButton icon={<Group className="size-4" />} label={t("canvas.nodeToolbar.group")} onClick={onGroup} /> : null}
             {menu.type === "node" && canUngroup ? <MenuButton icon={<Ungroup className="size-4" />} label={t("canvas.nodeToolbar.ungroup")} onClick={onUngroup} /> : null}
-            {menu.type === "node" ? <MenuButton icon={<Plus className="size-4" />} label={t("canvas.controls.duplicate")} onClick={onDuplicate} /> : null}
+            {menu.type === "node" ? <MenuButton icon={<Copy className="size-4" />} label={t("p1.menu.duplicate")} onClick={() => onDuplicate(false)} /> : null}
+            {menu.type === "node" ? <MenuButton icon={<Link2 className="size-4" />} label={t("p1.menu.duplicateWithLinks")} onClick={() => onDuplicate(true)} /> : null}
+            {menu.type === "node" && onToggleLock ? <MenuButton icon={node?.metadata?.locked ? <LockOpen className="size-4" /> : <Lock className="size-4" />} label={t(node?.metadata?.locked ? "p1.menu.unlock" : "p1.menu.lock")} onClick={onToggleLock} /> : null}
+            {menu.type === "node" && onToggleCollapse && node?.type !== "group" ? <MenuButton icon={node?.metadata?.collapsed ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />} label={t(node?.metadata?.collapsed ? "p1.menu.expand" : "p1.menu.collapse")} onClick={onToggleCollapse} /> : null}
+            {menu.type === "node" && onDownload ? <MenuButton icon={<Download className="size-4" />} label={t("p1.menu.download")} onClick={onDownload} /> : null}
             {menu.type === "node" && onSaveTemplate ? <MenuButton icon={<BookmarkPlus className="size-4" />} label={t("hemosi.templates.saveAs")} onClick={onSaveTemplate} /> : null}
+            {menu.type === "connection" ? connectionItems : null}
             <MenuButton icon={<Trash2 className="size-4" />} label={t("canvas.controls.delete")} onClick={onDelete} danger />
         </div>
     );
 }
 
-function MenuButton({ icon, label, onClick, danger = false }: { icon: ReactNode; label: string; onClick?: () => void; danger?: boolean }) {
+export function MenuButton({ icon, label, onClick, danger = false }: { icon: ReactNode; label: string; onClick?: () => void; danger?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (

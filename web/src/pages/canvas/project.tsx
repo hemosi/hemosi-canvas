@@ -79,6 +79,7 @@ import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu"
 import { CanvasGenerationConfirmModal, buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
 import { applyDraftConfig, draftParamsFor, isDraftMode } from "@/lib/canvas/canvas-draft";
 import { stripGeneratedResult } from "@/lib/canvas/canvas-node-clone";
+import { connectionsTouching, downloadNodeContent, duplicateNodeWithLinks, toggleNodeCollapsed } from "@/lib/canvas/canvas-node-ops";
 import { buildTemplateFromSelection, instantiateTemplate, templateName, type CanvasTemplate } from "@/lib/canvas/canvas-templates";
 import { findTemplate, useTemplateStore } from "@/stores/use-template-store";
 import { CanvasSaveTemplateModal, CanvasTemplateModal } from "@/components/canvas/canvas-templates";
@@ -916,8 +917,10 @@ function InfiniteCanvasPage() {
 
     const deleteNodes = useCallback(
         (ids: Set<string>) => {
-            if (!ids.size) return;
-            const allIds = new Set(ids);
+            const lockedIds = [...ids].filter((id) => nodesRef.current.find((node) => node.id === id)?.metadata?.locked);
+            if (lockedIds.length) message.warning(t("p1.node.lockedSkip", { count: lockedIds.length }));
+            const allIds = new Set([...ids].filter((id) => !lockedIds.includes(id)));
+            if (!allIds.size) return;
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
                 return next.map((node) => {
@@ -943,7 +946,48 @@ function InfiniteCanvasPage() {
             setContextMenu((current) => (current?.type === "node" && allIds.has(current.nodeId) ? null : current));
             cleanupCanvasFiles({ projectId, nodes: nodesRef.current.filter((node) => !allIds.has(node.id)), chatSessions });
         },
-        [chatSessions, cleanupCanvasFiles, projectId],
+        [chatSessions, cleanupCanvasFiles, message, projectId, t],
+    );
+
+    // Deleting nodes that still have links asks first and names the links that will be cut.
+    const requestDeleteNodes = useCallback(
+        (ids: Set<string>) => {
+            if (!ids.size) return;
+            const cut = connectionsTouching(ids, connectionsRef.current);
+            if (!cut.length) return deleteNodes(ids);
+            const titleOf = (id: string) => nodesRef.current.find((node) => node.id === id)?.title || id;
+            modal.confirm({
+                title: t("p1.node.deleteLinkedTitle", { count: ids.size }),
+                content: (
+                    <div className="text-xs">
+                        <p className="mb-2">{t("p1.node.deleteLinkedBody", { count: cut.length })}</p>
+                        <ul className="max-h-48 list-disc overflow-auto pl-5 opacity-80">
+                            {cut.slice(0, 20).map((connection) => (
+                                <li key={connection.id}>{titleOf(connection.fromNodeId)} → {titleOf(connection.toNodeId)}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ),
+                okText: t("p1.node.deleteLinkedOk"),
+                okButtonProps: { danger: true },
+                cancelText: t("common.cancel"),
+                onOk: () => deleteNodes(ids),
+            });
+        },
+        [deleteNodes, modal, t],
+    );
+
+    const updateNodeById = useCallback((nodeId: string, update: (node: CanvasNodeData) => CanvasNodeData) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? update(node) : node)));
+    }, []);
+    const toggleNodeLock = useCallback((nodeId: string) => updateNodeById(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, locked: !node.metadata?.locked } })), [updateNodeById]);
+    const toggleNodeCollapse = useCallback((nodeId: string) => updateNodeById(nodeId, toggleNodeCollapsed), [updateNodeById]);
+    const downloadAnyNode = useCallback(
+        async (node: CanvasNodeData) => {
+            const count = await downloadNodeContent(node).catch(() => 0);
+            if (!count) message.warning(t("p1.node.nothingToDownload"));
+        },
+        [message, t],
     );
 
     const groupSelection = useCallback(() => {
@@ -1043,18 +1087,12 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles({ projectId, nodes: [], chatSessions: [] });
     }, [cleanupCanvasFiles, deselectCanvas, projectId]);
 
-    const duplicateNode = useCallback((nodeId: string) => {
+    const duplicateNode = useCallback((nodeId: string, withConnections = false) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
         if (!source) return;
 
-        const id = `${source.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const next: CanvasNodeData = {
-            ...source,
-            id,
-            title: `${source.title} Copy`,
-            position: { x: source.position.x + 36, y: source.position.y + 36 },
-        };
-        const referenceConnections = connectionsRef.current.filter((connection) => connection.toNodeId === nodeId).map((connection) => ({ ...connection, id: nanoid(), toNodeId: id }));
+        const { node: next, connections: referenceConnections } = duplicateNodeWithLinks(source, connectionsRef.current, withConnections);
+        const id = next.id;
 
         setNodes((prev) => [...prev, next]);
         setConnections((prev) => [...prev, ...referenceConnections]);
@@ -1428,7 +1466,7 @@ function InfiniteCanvasPage() {
                 });
             }
         });
-        const initialSelectedNodes = new Map(currentNodes.filter((node) => dragIds.has(node.id)).map((node): [string, { x: number; y: number }] => [node.id, { x: node.position.x, y: node.position.y }]));
+        const initialSelectedNodes = new Map(currentNodes.filter((node) => dragIds.has(node.id) && !node.metadata?.locked).map((node): [string, { x: number; y: number }] => [node.id, { x: node.position.x, y: node.position.y }]));
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
@@ -1779,7 +1817,7 @@ function InfiniteCanvasPage() {
 
             if (event.key === "Delete" || event.key === "Backspace") {
                 if (selectedNodeIdsRef.current.size) {
-                    deleteNodes(new Set(selectedNodeIdsRef.current));
+                    requestDeleteNodes(new Set(selectedNodeIdsRef.current));
                 } else if (selectedConnectionId) {
                     deleteConnection(selectedConnectionId);
                 }
@@ -1804,7 +1842,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
+    }, [copySelectedNodes, deleteConnection, requestDeleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -3627,7 +3665,7 @@ function InfiniteCanvasPage() {
                     onContinueFromLastFrame={(node) => void continueVideoFromLastFrame(node)}
                     onReshoot={(node) => void rerunIntoNewNode(node, "reshoot")}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
-                    onDelete={(node) => deleteNodes(new Set([node.id]))}
+                    onDelete={(node) => requestDeleteNodes(new Set([node.id]))}
                     onUngroup={(node) => ungroupSelection(new Set([node.id]))}
                 />
 
@@ -3663,7 +3701,7 @@ function InfiniteCanvasPage() {
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
-                    onDelete={() => deleteNodes(new Set(selectedNodeIds))}
+                    onDelete={() => requestDeleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
                     onCanvasToolChange={setCanvasTool}
                     onBackgroundModeChange={setBackgroundMode}
@@ -3689,9 +3727,22 @@ function InfiniteCanvasPage() {
                             if (contextMenu.type !== "node") return;
                             void captureVideoNodeFrame(contextMenu.nodeId, position);
                         }}
-                        onDuplicate={() => {
+                        onDuplicate={(withConnections) => {
                             if (contextMenu.type !== "node") return;
-                            duplicateNode(contextMenu.nodeId);
+                            duplicateNode(contextMenu.nodeId, withConnections);
+                            setContextMenu(null);
+                        }}
+                        node={contextMenuNode}
+                        onToggleLock={() => {
+                            if (contextMenu.type === "node") toggleNodeLock(contextMenu.nodeId);
+                            setContextMenu(null);
+                        }}
+                        onToggleCollapse={() => {
+                            if (contextMenu.type === "node") toggleNodeCollapse(contextMenu.nodeId);
+                            setContextMenu(null);
+                        }}
+                        onDownload={() => {
+                            if (contextMenuNode) void downloadAnyNode(contextMenuNode);
                             setContextMenu(null);
                         }}
                         onGroup={groupSelection}
@@ -3699,7 +3750,7 @@ function InfiniteCanvasPage() {
                         onSaveTemplate={openSaveTemplate}
                         onDelete={() => {
                             if (contextMenu.type === "node") {
-                                deleteNodes(new Set([contextMenu.nodeId]));
+                                requestDeleteNodes(selectedNodeIdsRef.current.has(contextMenu.nodeId) ? new Set(selectedNodeIdsRef.current) : new Set([contextMenu.nodeId]));
                             } else {
                                 deleteConnection(contextMenu.connectionId);
                             }

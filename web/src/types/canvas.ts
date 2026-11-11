@@ -18,6 +18,9 @@ export enum CanvasNodeType {
     Group = "group",
 }
 
+/** Hemosi node types registered through the node registry (rendered by their own Content component). */
+export const HemosiNodeType = { Shot: "shot", Anchor: "anchor" } as const;
+
 // Node types are open strings: built-ins use CanvasNodeType and plugins use "<pluginId>:<name>".
 export type CanvasNodeTypeId = CanvasNodeType | (string & {});
 
@@ -93,7 +96,68 @@ export type CanvasNodeMetadata = {
     /** Node whose upstream inputs fed the generation that produced this node (config/text source, or the node itself). */
     generationSourceId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
+    /** Folded to a title bar; expandedHeight restores the size. */
+    collapsed?: boolean;
+    expandedHeight?: number;
+    /** Locked nodes cannot be dragged, resized or deleted until unlocked. */
+    locked?: boolean;
+    /** Identity of an image when it feeds a generation. */
+    imageRole?: CanvasImageRole;
+    /** Kind of an audio node. */
+    audioRole?: CanvasAudioRole;
+    /** Order of upstream reference node ids on this generation node (ids not listed keep connection order after these). */
+    refOrder?: string[];
+    /** Upstream reference node ids switched off for this node's generation. */
+    refDisabled?: string[];
+    /** Generation seed; empty = random. */
+    seed?: string;
+    /** Earlier results of this node, newest last. */
+    versions?: CanvasNodeVersion[];
+    /** Text node history, newest last. */
+    textVersions?: CanvasTextVersion[];
+    /** Anchor node. */
+    anchorKind?: CanvasAnchorKind;
+    anchorText?: string;
+    anchorImages?: CanvasNodeImage[];
+    anchorVoice?: { content: string; storageKey?: string; mimeType?: string; name?: string };
+    /** Storyboard shot node. */
+    shotNo?: number;
+    shotDescription?: string;
+    shotRefs?: CanvasShotRef[];
+    shotImage?: CanvasNodeImage;
+    shotVideo?: { content: string; storageKey?: string; mimeType?: string; naturalWidth?: number; naturalHeight?: number; durationMs?: number; bytes?: number };
+    shotStatus?: { image?: CanvasNodeStatus; video?: CanvasNodeStatus; imageError?: string; videoError?: string };
+    videoModel?: string;
+    /** Material node: an external file archived into the project. */
+    material?: boolean;
+    sourceFileName?: string;
 };
+
+export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";
+export type CanvasAudioRole = "voice" | "bgm" | "sfx";
+export type CanvasAnchorKind = "character" | "scene" | "style";
+
+export type CanvasShotRef = CanvasNodeImage & { enabled: boolean; role?: CanvasImageRole };
+
+export type CanvasNodeVersion = {
+    id: string;
+    createdAt: string;
+    kind: "image" | "video" | "audio" | "text";
+    content: string;
+    storageKey?: string;
+    mimeType?: string;
+    naturalWidth?: number;
+    naturalHeight?: number;
+    bytes?: number;
+    durationMs?: number;
+    prompt?: string;
+    model?: string;
+    draft?: boolean;
+};
+
+export type CanvasTextVersion = { id: string; createdAt: string; content: string };
+
+export type CanvasConnectionKind = "reference" | "input" | "continue";
 
 export type CanvasNodeData = {
     id: string;
@@ -109,6 +173,9 @@ export type CanvasConnection = {
     id: string;
     fromNodeId: string;
     toNodeId: string;
+    /** Semantic of the link; inferred from the node types when missing. */
+    kind?: CanvasConnectionKind;
+    label?: string;
 };
 
 export type CanvasAssistantReference = {
