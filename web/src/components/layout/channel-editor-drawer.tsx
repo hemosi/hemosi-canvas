@@ -3,7 +3,7 @@ import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, normalizeImageEditOptions, type ImageEditOptions, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { API_CALL_FORMATS, API_FORMAT_LABELS, OFFICIAL_CHANNEL_PRESETS, defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, normalizeImageEditOptions, type ImageEditOptions, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -14,10 +14,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
-    const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
-        { label: "OpenAI", value: "openai" },
-        { label: "Gemini", value: "gemini" },
-    ];
+    const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = API_CALL_FORMATS.map((value) => ({ label: API_FORMAT_LABELS[value], value }));
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
     useEffect(() => {
@@ -82,6 +79,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    {OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat) ? <span className="mt-1 block text-xs text-stone-500">Key 在哪里拿：{OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat)!.keyHint}。Key 只存在本机浏览器，请求由前端直连官方接口。</span> : null}
                 </label>
             </div>
 

@@ -1,8 +1,10 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, configSeed, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { OFFICIAL_CHANNEL_PRESETS, buildApiUrl, configSeed, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
+import { requestBflImage } from "./official-providers";
+import { requestAnthropicText } from "./anthropic";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -654,6 +656,18 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
     return { content, toolCalls };
 }
 
+/** FLUX 2 on BFL's official API: one task per image; size follows the node's ratio/size. */
+async function requestBflImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const size = parseImageDimensions(resolveRequestSize(config.size) || "") || undefined;
+    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const results = await Promise.all(Array.from({ length: count }, () => requestBflImage(config, withSystemPrompt(config, prompt), size, images, options)));
+    return results.map((dataUrl) => ({ id: nanoid(), dataUrl }));
+}
+
+function assertImageFormat(config: AiConfig) {
+    if (config.apiFormat !== "openai" && config.apiFormat !== "gemini") throw new Error(`渠道协议「${config.apiFormat}」不能生成图片，请为本节点换一个图片模型`);
+}
+
 async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, options));
     return (await Promise.all(requests)).flat();
@@ -706,7 +720,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}) },
+                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}), ...(config.camera ? { camera: config.camera } : {}), ...(config.lighting ? { lighting: config.lighting } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -714,6 +728,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
+    if (requestConfig.apiFormat === "bfl") return requestBflImages(requestConfig, prompt, [], n, options);
+    assertImageFormat(requestConfig);
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
@@ -769,7 +785,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}) },
+                params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, ...(background ? { background } : {}), ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}), ...(config.camera ? { camera: config.camera } : {}), ...(config.lighting ? { lighting: config.lighting } : {}) },
                 signal: options?.signal,
             });
             return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -777,6 +793,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
+    if (requestConfig.apiFormat === "bfl") return requestBflImages(requestConfig, requestPrompt, references, n, options);
+    assertImageFormat(requestConfig);
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
@@ -845,6 +863,12 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         }
     }
     try {
+        if (requestConfig.apiFormat === "anthropic") {
+            const answer = (await requestAnthropicText(requestConfig, withSystemMessage(requestConfig, messages) as AiTextMessage[], onDelta, options)) || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        }
+        if (requestConfig.apiFormat !== "openai" && requestConfig.apiFormat !== "gemini") throw new Error(`渠道协议「${requestConfig.apiFormat}」不能生成文本，请换一个文本模型`);
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || apiText("noContent");
             if (answer === apiText("noContent")) onDelta(answer);
@@ -863,6 +887,8 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+    // These official APIs have no model-list endpoint usable from the browser: offer the vendor's current model IDs.
+    if (config.apiFormat !== "openai" && config.apiFormat !== "gemini") return OFFICIAL_CHANNEL_PRESETS.filter((preset) => preset.apiFormat === config.apiFormat).flatMap((preset) => preset.models.map((model) => model.name));
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });

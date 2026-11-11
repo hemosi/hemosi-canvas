@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { App } from "antd";
 
-import { buildNodeGenerationContext, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
+import { buildNodeGenerationContext, hydrateNodeGenerationContext, withCinematography, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
 import { shotGenerationConfig } from "@/components/canvas/nodes/hemosi-nodes";
 import { applyDraftConfig } from "@/lib/canvas/canvas-draft";
@@ -12,7 +12,7 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { createVideoGenerationTask, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { uploadImage } from "@/services/image-storage";
 import { useGenerationLogStore } from "@/stores/canvas/use-generation-log-store";
-import type { AiConfig } from "@/stores/use-config-store";
+import { modelNotReadyReason, type AiConfig } from "@/stores/use-config-store";
 import { HemosiNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 type Deps = {
@@ -43,7 +43,7 @@ function prepareShotRun(node: CanvasNodeData, kind: ShotKind, nodes: CanvasNodeD
     const context = buildNodeGenerationContext(node.id, nodes, connections, prompt, { mode: kind, extraInputs });
     const base = shotGenerationConfig(config, node, kind);
     const draft = Boolean(meta.draft);
-    const requestConfig = { ...(draft ? applyDraftConfig(base, kind) : base), count: "1", ...(kind === "video" && context.forceFrames ? { videoMode: "frames" } : {}) };
+    const requestConfig = withCinematography({ ...(draft ? applyDraftConfig(base, kind) : base), count: "1", ...(kind === "video" && context.forceFrames ? { videoMode: "frames" } : {}) }, context);
     return { prompt, context, base, requestConfig, draft };
 }
 
@@ -62,6 +62,7 @@ export function useShotGeneration({ projectId, nodesRef, connectionsRef, setNode
                 return false;
             }
             if (!isAiConfigReady(base, base.model)) {
+                message.error(`镜头 ${node.metadata?.shotNo ?? ""}：${modelNotReadyReason(base, base.model)}`);
                 openConfigDialog(true);
                 return false;
             }
@@ -140,7 +141,10 @@ export function useShotGeneration({ projectId, nodesRef, connectionsRef, setNode
             if (!shots.length) return;
             const first = shots[0];
             const { context, requestConfig, draft, prompt } = prepareShotRun(first, kind, nodesRef.current, connectionsRef.current, effectiveConfig);
-            if (!isAiConfigReady(requestConfig, requestConfig.model)) return openConfigDialog(true);
+            if (!isAiConfigReady(requestConfig, requestConfig.model)) {
+                message.error(modelNotReadyReason(requestConfig, requestConfig.model));
+                return openConfigDialog(true);
+            }
             const others = shots.length > 1 ? `\n\n…另有 ${shots.length - 1} 个镜头，各自使用自己的提示词、参考图与参数（镜头 ${shots.map((shot) => shot.metadata?.shotNo ?? "?").join("、")}）` : "";
             const summary = buildGenerationConfirmSummary(requestConfig, kind, { prompt: `${prompt ? context.prompt : "（首个镜头无提示词）"}${others}`, images: context.referenceImages, videos: context.referenceVideos, audioCount: context.referenceAudios.length, count: shots.length, draft });
             if (!(await requestGenerationConfirm(summary, origin))) return;

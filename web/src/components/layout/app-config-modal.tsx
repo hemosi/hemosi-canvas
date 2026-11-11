@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, Modal, Progress, Radio, Select, Switch, Tabs } from "antd";
+import { App, Button, Dropdown, Form, Input, Modal, Progress, Radio, Select, Switch, Tabs } from "antd";
 import type { TFunction } from "i18next";
 import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -16,7 +16,7 @@ import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent }
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { API_FORMAT_LABELS, OFFICIAL_CHANNEL_PRESETS, createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -99,6 +99,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     const addChannel = () => {
         const channel = createModelChannel({ name: t("config.channels.numberedName", { count: config.channels.length + 1 }) });
+        updateChannels([...config.channels, channel]);
+        setEditingChannelId(channel.id);
+    };
+
+    /** Add (or open, when already added) one official vendor channel; only the Key is left for the user. */
+    const addOfficialChannel = (presetId: string) => {
+        const preset = OFFICIAL_CHANNEL_PRESETS.find((item) => item.id === presetId);
+        if (!preset) return;
+        if (config.channels.some((channel) => channel.id === preset.id)) return setEditingChannelId(preset.id);
+        const channel = createModelChannel({ id: preset.id, name: preset.name, apiFormat: preset.apiFormat, models: preset.models });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
     };
@@ -190,9 +200,14 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                             <div>
                                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                     <div className="text-xs text-stone-500">{t("config.channels.description")}</div>
-                                    <Button type="primary" icon={<Plus className="size-4" />} onClick={addChannel}>
-                                        {t("config.channels.add")}
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Dropdown trigger={["click"]} menu={{ items: OFFICIAL_CHANNEL_PRESETS.map((preset) => ({ key: preset.id, label: `${preset.name}${config.channels.some((channel) => channel.id === preset.id) ? "（已添加）" : ""}` })), onClick: ({ key }) => addOfficialChannel(key) }}>
+                                            <Button icon={<Plus className="size-4" />}>添加官方渠道</Button>
+                                        </Dropdown>
+                                        <Button type="primary" icon={<Plus className="size-4" />} onClick={addChannel}>
+                                            {t("config.channels.add")}
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div className="space-y-2">
                                     {config.channels.map((channel) => (
@@ -436,8 +451,7 @@ function normalizeImageCount(value: string) {
 }
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {
-    if (apiFormat === "gemini") return "Gemini";
-    return "OpenAI";
+    return API_FORMAT_LABELS[apiFormat] || "OpenAI";
 }
 
 function formatWebdavTime(value: string, locale: AppLocale) {

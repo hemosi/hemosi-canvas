@@ -4,8 +4,12 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import type { CameraSettings, LightingSettings } from "@/types/cinematography";
 
-export type ApiCallFormat = "openai" | "gemini";
+/** openai / gemini: generic protocols. The rest are official vendor APIs with their own request/poll shapes (see services/api/official-providers.ts). */
+export type ApiCallFormat = "openai" | "gemini" | "anthropic" | "bfl" | "kling" | "runway" | "ark";
+export const API_CALL_FORMATS: ApiCallFormat[] = ["openai", "gemini", "anthropic", "bfl", "kling", "runway", "ark"];
+export const API_FORMAT_LABELS: Record<ApiCallFormat, string> = { openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic（文本）", bfl: "BFL FLUX（图片）", kling: "可灵 Kling（视频）", runway: "Runway（视频）", ark: "火山方舟 Seedance（视频）" };
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -83,6 +87,9 @@ export type AiConfig = {
     confirmAgentGenerations: boolean;
     /** Per-node generation seed (set from node metadata at request time); empty = provider default/random. */
     seed?: string;
+    /** Per-node camera / resolved lighting for this request (prompt block is already in the prompt; vendors with native params also get them). */
+    camera?: CameraSettings;
+    lighting?: LightingSettings;
 };
 
 /** Integer seed from a config, or undefined when unset/invalid; requests only send it when set. */
@@ -108,7 +115,27 @@ export type ChannelCredentialsImportResult = {
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+/** Official base URLs per protocol; the user only fills the Key. */
+export const OFFICIAL_BASE_URLS: Record<ApiCallFormat, string> = {
+    openai: "https://api.openai.com",
+    gemini: "https://generativelanguage.googleapis.com",
+    anthropic: "https://api.anthropic.com",
+    bfl: "https://api.bfl.ai",
+    kling: "https://api-singapore.klingai.com",
+    runway: "https://api.dev.runwayml.com",
+    ark: "https://ark.cn-beijing.volces.com",
+};
+
+/** One-click official channels (Key left empty for the user). Model names are each vendor's current official IDs. */
+export const OFFICIAL_CHANNEL_PRESETS: Array<{ id: string; name: string; apiFormat: ApiCallFormat; models: ChannelModel[]; keyHint: string }> = [
+    { id: "official-openai", name: "OpenAI 官方", apiFormat: "openai", keyHint: "platform.openai.com → API keys（sk-…）", models: [{ name: "gpt-image-2.6-sunburst", capability: "image" }, { name: "gpt-image-2.6-flare", capability: "image" }, { name: "gpt-5.5", capability: "text" }] },
+    { id: "official-gemini", name: "Google Gemini 官方", apiFormat: "gemini", keyHint: "aistudio.google.com → Get API key", models: [{ name: "gemini-3-pro-image", capability: "image" }, { name: "gemini-omni-1.2-flash", capability: "video" }, { name: "gemini-3.8-flash", capability: "text" }] },
+    { id: "official-anthropic", name: "Anthropic 官方", apiFormat: "anthropic", keyHint: "console.anthropic.com → API Keys（sk-ant-…）", models: [{ name: "claude-opus-5-5", capability: "text" }, { name: "claude-sonnet-5-5", capability: "text" }] },
+    { id: "official-bfl", name: "Black Forest Labs 官方（FLUX）", apiFormat: "bfl", keyHint: "dashboard.bfl.ai → API Keys（请求头 x-key）", models: [{ name: "flux-2-max", capability: "image" }, { name: "flux-2-pro-preview", capability: "image" }] },
+    { id: "official-kling", name: "可灵 Kling 官方", apiFormat: "kling", keyHint: "kling.ai 开发者控制台 → API Key（国内账号把地址改成 https://api-beijing.klingai.com）", models: [{ name: "kling-4.0", capability: "video" }] },
+    { id: "official-runway", name: "Runway 官方", apiFormat: "runway", keyHint: "dev.runwayml.com → API Keys", models: [{ name: "gen4.5", capability: "video" }] },
+    { id: "official-ark", name: "火山方舟官方（Seedance）", apiFormat: "ark", keyHint: "console.volcengine.com/ark → API Key 管理；先在「开通管理」开通 Seedance 2.5", models: [{ name: "doubao-seedance-2-5-260628", capability: "video" }] },
+];
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
 
@@ -240,6 +267,17 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
 /** The user script (if any) attached to a model; empty string means use the system default call. */
 export function resolveModelScript(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.script?.trim() || "";
+}
+
+/** Why a model cannot run right now (empty string = ready). Shown verbatim to the user; generation never swaps in another model. */
+export function modelNotReadyReason(config: AiConfig, model: string) {
+    const name = modelOptionName(model || "");
+    if (!name) return "还没有选模型：请在本节点选择一个模型";
+    const match = findChannelModel(config, model);
+    if (!match) return `模型「${name}」不在任何渠道里（渠道可能已删除）。请为本节点换一个模型，或在 设置→模型渠道 里重新添加`;
+    if (!match.channel.baseUrl.trim()) return `渠道「${match.channel.name}」没有填接口地址，请在 设置→模型渠道 填写`;
+    if (!match.channel.apiKey.trim()) return `渠道「${match.channel.name}」还没填 API Key，模型「${name}」不可用。请在 设置→模型渠道→${match.channel.name} 填 Key，或为本节点换模型`;
+    return "";
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -511,12 +549,11 @@ function normalizeChannels(config: AiConfig) {
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
-    if (apiFormat === "gemini") return GEMINI_BASE_URL;
-    return OPENAI_BASE_URL;
+    return OFFICIAL_BASE_URLS[apiFormat] || OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" ? apiFormat : "openai";
+    return API_CALL_FORMATS.includes(apiFormat as ApiCallFormat) ? (apiFormat as ApiCallFormat) : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

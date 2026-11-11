@@ -8,6 +8,7 @@ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } fro
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, configSeed, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { createOfficialVideoTask, officialVideoProviderOf, pollOfficialVideoTask, type OfficialVideoProvider } from "./official-providers";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -19,7 +20,7 @@ type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "gemini" | "plugin" | OfficialVideoProvider; model: string };
 type GeminiInlineData = { bytesBase64Encoded: string; mimeType: string };
 type GeminiVideoOperation = {
     name?: string;
@@ -75,6 +76,13 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
+    const official = officialVideoProviderOf(requestConfig);
+    if (official) {
+        const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const id = await createOfficialVideoTask(official, requestConfig, prompt, { images, mode: resolveVideoMode(requestConfig.videoMode, images.length) }, options);
+        return { id, provider: official, model: selectedModel };
+    }
+    if (requestConfig.apiFormat === "anthropic" || requestConfig.apiFormat === "bfl") throw new Error(`渠道协议「${requestConfig.apiFormat}」不能生成视频，请为本节点换一个视频模型`);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
@@ -87,6 +95,11 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "gemini") return pollGeminiVideoTask(requestConfig, task, options);
+    if (task.provider === "kling" || task.provider === "runway" || task.provider === "ark" || task.provider === "omni") {
+        const state = await pollOfficialVideoTask(task.provider, requestConfig, task.id, options);
+        if (state.status !== "completed") return state;
+        return { status: "completed", result: state.blob ? { blob: state.blob } : await videoResultFromUrl(state.url || "", options) };
+    }
     return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
@@ -114,6 +127,8 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 watermark: boolConfig(config.videoWatermark, false),
                 mode: resolveVideoMode(config.videoMode, refs.length),
                 ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}),
+                ...(config.camera ? { camera: config.camera } : {}),
+                ...(config.lighting ? { lighting: config.lighting } : {}),
             },
             signal: options?.signal,
         }),

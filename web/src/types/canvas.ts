@@ -1,3 +1,4 @@
+import type { CameraSettings, LightingSettings } from "./cinematography";
 export type Position = {
     x: number;
     y: number;
@@ -85,7 +86,7 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     videoTaskId?: string;
-    videoTaskProvider?: "openai" | "gemini";
+    videoTaskProvider?: "openai" | "gemini" | "kling" | "runway" | "ark" | "omni";
     groupId?: string;
     /** Draft switch on an image/video generation node: generate with the cheapest parameters. */
     draft?: boolean;
@@ -111,6 +112,10 @@ export type CanvasNodeMetadata = {
     refDisabled?: string[];
     /** Generation seed; empty = random. */
     seed?: string;
+    /** Camera settings for this node's generations (written into the request prompt / native params). */
+    camera?: CameraSettings;
+    /** Lighting setup on a node, a group (whole scene) or a scene anchor; shots inherit node → group → scene anchor. */
+    lighting?: LightingSettings;
     /** Earlier results of this node, newest last. */
     versions?: CanvasNodeVersion[];
     /** Text node history, newest last. */

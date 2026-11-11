@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { videoResolutionLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { cameraSummary, lightingSummary } from "@/lib/canvas/canvas-cinematography";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasGenerationMode } from "@/types/canvas";
@@ -27,6 +28,8 @@ export type GenerationConfirmSummary = {
     count: number;
     draft?: boolean;
     seed?: string;
+    camera?: string;
+    lighting?: string;
 };
 
 /** Collect what a generation request is about to send, from the resolved request config and its inputs. */
@@ -50,6 +53,8 @@ export function buildGenerationConfirmSummary(
         count: input.count,
         draft: input.draft,
         seed: config.seed?.trim() || undefined,
+        camera: mode === "image" || mode === "video" ? cameraSummary(config.camera) || undefined : undefined,
+        lighting: mode === "image" || mode === "video" ? lightingSummary(config.lighting) || undefined : undefined,
     };
 }
 
@@ -97,6 +102,8 @@ export function CanvasGenerationConfirmModal({ summary, onConfirm, onCancel }: {
                     {summary.resolution ? <Row label={t("hemosi.confirm.resolution")} value={videoResolutionLabel(summary.resolution)} /> : null}
                     {summary.seconds ? <Row label={t("hemosi.confirm.seconds")} value={t("hemosi.confirm.secondsValue", { count: Number(summary.seconds) || 0 })} /> : null}
                     {summary.seed ? <Row label="种子" value={summary.seed} /> : null}
+                    {summary.camera ? <Row label="摄像机" value={summary.camera} /> : null}
+                    {summary.lighting ? <Row label="灯光" value={summary.lighting} /> : null}
                     <Row label={t("hemosi.confirm.count")} value={t("hemosi.confirm.countValue", { count: summary.count })} />
                     <div>
                         <div className="mb-1 text-xs opacity-60">{t("hemosi.confirm.prompt")}</div>

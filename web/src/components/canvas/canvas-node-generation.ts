@@ -8,6 +8,9 @@ import { connectionKindOf } from "@/lib/canvas/canvas-connection-kind";
 import { anchorPromptBlock, IMAGE_ROLE_LABEL, AUDIO_ROLE_LABEL, orderReferenceInputs } from "@/lib/canvas/canvas-reference-roles";
 import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { cinematographyPromptBlock, hasCamera, resolveNodeLighting, type ResolvedLighting } from "@/lib/canvas/canvas-cinematography";
+import type { CameraSettings, LightingSettings } from "@/types/cinematography";
+import type { AiConfig } from "@/stores/use-config-store";
 
 export type NodeGenerationContext = {
     prompt: string;
@@ -24,7 +27,16 @@ export type NodeGenerationContext = {
     forceFrames?: boolean;
     /** Videos linked as 续作: their last frame becomes the first frame (resolved in hydrateNodeGenerationContext). */
     continueVideos?: ReferenceVideo[];
+    /** Camera of the generating node and the lighting it resolved to (already written into prompt). */
+    camera?: CameraSettings;
+    lighting?: LightingSettings;
+    lightingSource?: ResolvedLighting["source"];
 };
+
+/** Carry the context's camera/lighting onto the request config so the confirm card shows them and vendor adapters can send native params. */
+export function withCinematography<T extends AiConfig>(config: T, context: Pick<NodeGenerationContext, "camera" | "lighting">): T {
+    return { ...config, camera: context.camera, lighting: context.lighting };
+}
 
 export type NodeGenerationResourceInput = {
     nodeId: string;
@@ -50,6 +62,16 @@ type NodeGenerationGroupInput = {
 export type NodeGenerationInput = NodeGenerationResourceInput | NodeGenerationGroupInput;
 
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: { mode?: string; extraInputs?: NodeGenerationInput[] } = {}): NodeGenerationContext {
+    const context = buildBaseGenerationContext(nodeId, nodes, connections, prompt, options);
+    if (options.mode !== "image" && options.mode !== "video") return context;
+    const source = nodes.find((node) => node.id === nodeId);
+    const camera = hasCamera(source?.metadata?.camera) ? source!.metadata!.camera : undefined;
+    const resolved = resolveNodeLighting(nodeId, nodes, connections);
+    const block = cinematographyPromptBlock(camera, resolved.lighting);
+    return { ...context, prompt: block ? `${context.prompt}\n\n${block}` : context.prompt, camera, lighting: resolved.lighting, lightingSource: resolved.source };
+}
+
+function buildBaseGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: { mode?: string; extraInputs?: NodeGenerationInput[] }): NodeGenerationContext {
     const inputs = [...(options.extraInputs || []), ...buildNodeGenerationInputs(nodeId, nodes, connections)];
     const sourceNode = nodes.find((node) => node.id === nodeId);
     if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
