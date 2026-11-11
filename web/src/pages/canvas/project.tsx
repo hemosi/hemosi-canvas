@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Clapperboard, Copy, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
+import { Anchor, Box, Clapperboard, Copy, Film, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -73,6 +73,8 @@ import {
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { registerHemosiNodes } from "@/components/canvas/nodes/hemosi-nodes";
+import { DIRECTOR_NODE_TYPE, registerDirectorNodes } from "@/components/canvas/nodes/director-node";
+import { canDrawToVideo, drawToVideoOps } from "@/lib/canvas/canvas-draw-to-video";
 import { downstreamNodeCount, nextShotNo, renumberShotRows, setShotHost, shotRowMembers, splitScript } from "@/lib/canvas/canvas-shot-actions";
 import { useShotGeneration } from "@/pages/canvas/hooks/use-shot-generation";
 import { useGenerationTracker } from "@/pages/canvas/hooks/use-generation-tracker";
@@ -124,6 +126,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 // Register built-in nodes in the shared registry once when the module loads.
 registerBuiltinNodes();
 registerHemosiNodes();
+registerDirectorNodes();
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -2165,12 +2168,21 @@ function InfiniteCanvasPage() {
                 items.push({ id: "p1-group-run", title: t("p1.group.runTitle"), label: t("p1.group.run"), icon: <Play className="size-4" />, onClick: () => batchExecuteRef.current?.(members) });
                 items.push({ id: "p1-group-copy", title: t("p1.group.copyTitle"), label: t("p1.group.copy"), icon: <Copy className="size-4" />, onClick: () => { copySelectedNodesRef.current?.(); pasteCopiedNodesRef.current?.(); } });
             }
+            if (canDrawToVideo(node)) {
+                const toVideo = (role: "firstFrame" | "reference") => {
+                    const { ops, videoId } = drawToVideoOps(node, nodesRef.current, role);
+                    applyAgentOps(ops);
+                    setDialogNodeId(videoId);
+                };
+                items.push({ id: "p6-draw-to-video", title: "草图/预演图作为首帧，新建视频节点并连线（走已有视频生成与确认卡）", label: "首帧转视频", icon: <Video className="size-4" />, onClick: () => toVideo("firstFrame") });
+                items.push({ id: "p6-draw-to-video-ref", title: "作为参考图，新建视频节点并连线", label: "参考转视频", icon: <Film className="size-4" />, onClick: () => toVideo("reference") });
+            }
             if (node.type === CanvasNodeType.Image && node.metadata?.content) items.push({ id: "p1-set-ref", title: t("p1.toolbar.setRefTitle"), label: t("p1.toolbar.setRef"), icon: <Link2 className="size-4" />, onClick: () => setRefTargetSourceId(node.id) });
             if (node.type === CanvasNodeType.Video && node.metadata?.content) items.push({ id: "p1-ratio-lock", title: t("p1.toolbar.ratioLockTitle"), label: node.metadata?.freeResize ? t("p1.toolbar.freeResize") : t("p1.toolbar.ratioLocked"), icon: <Ratio className="size-4" />, onClick: () => toggleNodeFreeResize(node.id) });
             if (versions || (node.type === CanvasNodeType.Text && node.metadata?.textVersions?.length)) items.push({ id: "p1-versions", title: t("p1.versions.title"), label: t("p1.versions.button", { count: versions || node.metadata?.textVersions?.length || 0 }), icon: <History className="size-4" />, onClick: () => setVersionsNodeId(node.id) });
             return items;
         },
-        [splitTextToShots, t, toggleNodeFreeResize],
+        [applyAgentOps, splitTextToShots, t, toggleNodeFreeResize],
     );
 
     const handleNodeContentChange = useCallback((nodeId: string, content: string) => {
@@ -4120,6 +4132,7 @@ function InfiniteCanvasPage() {
                     extraButtons={[
                         { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
                         { id: "tool-anchor", label: "锚点（角色/场景/风格）", icon: <Anchor className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Anchor) },
+                        { id: "tool-scene3d", label: "3D 场景（导演台）", icon: <Box className="size-4.5" />, onClick: () => createNode(DIRECTOR_NODE_TYPE) },
                         { id: "tool-search", label: "搜索节点 (Ctrl+F)", icon: <Search className="size-4.5" />, active: searchOpen, onClick: () => setSearchOpen((value) => !value) },
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },
                         { id: "tool-queue", label: queueCount ? `生成队列 · ${queueCount} 项` : "生成队列 / 记录", icon: <span className="relative"><ListChecks className="size-4.5" />{queueCount ? <span className="absolute -right-1.5 -top-1.5 grid min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-bold" style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}>{queueCount}</span> : null}</span>, active: queueOpen, onClick: () => setQueueOpen((value) => !value) },

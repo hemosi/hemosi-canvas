@@ -138,6 +138,8 @@ export type CanvasNodeMetadata = {
     /** Material node: an external file archived into the project. */
     material?: boolean;
     sourceFileName?: string;
+    /** 3D 场景节点（导演台）：主体、机位运镜、全景底图。 */
+    directorScene?: import("@/lib/canvas/director-scene").DirectorScene;
 };
 
 export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";

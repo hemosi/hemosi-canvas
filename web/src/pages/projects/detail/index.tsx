@@ -5,6 +5,7 @@ import { ArrowLeft, Clapperboard, Download, GitFork, Music2, Plus, Trash2, Uploa
 import dayjs from "dayjs";
 
 import { registerHemosiNodes } from "@/components/canvas/nodes/hemosi-nodes";
+import { registerDirectorNodes } from "@/components/canvas/nodes/director-node";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { buildShotRow, splitScript } from "@/lib/canvas/canvas-shot-actions";
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
@@ -16,6 +17,7 @@ import { useWorkspaceStore, type WorkspaceMaterial } from "@/stores/canvas/use-w
 import { CanvasNodeType, HemosiNodeType } from "@/types/canvas";
 
 registerHemosiNodes();
+registerDirectorNodes();
 
 type MaterialView = { key: string; kind: WorkspaceMaterial["kind"]; name: string; storageKey: string; source: string; materialId?: string; canvasId?: string };
 
