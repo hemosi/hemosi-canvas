@@ -514,7 +514,7 @@ export default {
             confirmBeforeGenerate: "生成前确认参数",
             confirmBeforeGenerateDescription: "画布节点发起生成前，先弹出确认卡片核对模型、渠道、输入和参数。",
             confirmAgentGenerations: "Agent 发起的生成也确认",
-            confirmAgentGenerationsDescription: "默认关闭：Agent 在画布上发起的生成直接运行，不弹确认卡、不阻塞。需先打开「生成前确认参数」。",
+            confirmAgentGenerationsDescription: "默认开启：Agent 在画布上发起的生成与手动生成走同一张确认卡，确认后才花钱；关掉后 Agent 生成直接运行。需先打开「生成前确认参数」。",
             audioVoice: "默认音频声音",
             audioFormat: "默认音频格式",
             audioSpeed: "默认音频语速",

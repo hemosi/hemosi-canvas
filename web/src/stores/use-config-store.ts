@@ -79,7 +79,7 @@ export type AiConfig = {
     autoFocusOnSelect: boolean;
     /** Show the pre-generation confirm card before a canvas node fires a generation request. */
     confirmBeforeGenerate: boolean;
-    /** Also show the confirm card when the Agent starts a generation (needs confirmBeforeGenerate); off so Agent runs don't block. */
+    /** Also show the confirm card when the Agent starts a generation (needs confirmBeforeGenerate); on by default, same mechanism as user generations. */
     confirmAgentGenerations: boolean;
 };
 
@@ -151,7 +151,7 @@ export const defaultConfig: AiConfig = {
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
     confirmBeforeGenerate: true,
-    confirmAgentGenerations: false,
+    confirmAgentGenerations: true,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -312,7 +312,7 @@ export const useConfigStore = create<ConfigStore>()(
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
                         confirmBeforeGenerate: config.confirmBeforeGenerate !== false,
-                        confirmAgentGenerations: config.confirmAgentGenerations === true,
+                        confirmAgentGenerations: config.confirmAgentGenerations !== false,
                     },
                 };
             },

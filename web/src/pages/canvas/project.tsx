@@ -330,7 +330,7 @@ function InfiniteCanvasPage() {
     }, []);
 
     // Pre-generation confirm card. Resolves true right away when the user turned confirmation off in settings.
-    // Agent-started runs only confirm when "Agent 发起的生成也确认" is on too (off by default so Agent runs never block).
+    // Agent-started runs use the same card; "Agent 发起的生成也确认" (on by default) can opt them out.
     const requestGenerationConfirm = useCallback((summary: GenerationConfirmSummary, origin: "user" | "agent" = "user") => {
         const { confirmBeforeGenerate, confirmAgentGenerations } = useConfigStore.getState().config;
         if (!confirmBeforeGenerate || (origin === "agent" && !confirmAgentGenerations)) return Promise.resolve(true);

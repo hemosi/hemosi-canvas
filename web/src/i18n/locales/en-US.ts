@@ -514,7 +514,7 @@ export default {
             confirmBeforeGenerate: "Confirm before generating",
             confirmBeforeGenerateDescription: "Show a confirm card with model, channel, inputs and parameters before a canvas node starts generating.",
             confirmAgentGenerations: "Also confirm Agent-started generations",
-            confirmAgentGenerationsDescription: "Off by default: generations the Agent starts on the canvas run without a confirm card so they never block. Requires \"Confirm before generating\".",
+            confirmAgentGenerationsDescription: "On by default: generations the Agent starts on the canvas show the same confirm card as manual ones before spending. Turn off to let Agent runs go straight through. Requires \"Confirm before generating\".",
             audioVoice: "Default audio voice",
             audioFormat: "Default audio format",
             audioSpeed: "Default audio speed",
