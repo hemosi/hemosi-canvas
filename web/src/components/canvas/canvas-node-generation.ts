@@ -63,6 +63,13 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
+/** The upstream text block plain (non-composer) generation appends after the node's own prompt; "" when there is none. */
+export function buildUpstreamTextBlock(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const resourceInputs = flattenGenerationInputs(buildNodeGenerationInputs(nodeId, nodes, connections));
+    let textIndex = 0;
+    return resourceInputs.flatMap((input) => (input.text ? [textBlock(generationLabel("text", textIndex++), input.text)] : [])).join("\n\n");
+}
+
 function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
     const selectedInputs: NodeGenerationResourceInput[] = [];

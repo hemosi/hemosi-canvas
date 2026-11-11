@@ -164,6 +164,40 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
     return null;
 }
 
+/**
+ * Where a rerun (retry / 重拍 / 高清重生成) should collect its inputs from, and the node's own raw prompt.
+ * Uses the stored generationSourceId/rawPrompt when present so upstream text is recomposed instead of duplicated.
+ * Older nodes without them: an upstream config node, else an upstream prompt node whose prompt starts the composed
+ * prompt, else the node itself with the trailing upstream text block stripped.
+ */
+export function resolveGenerationSource(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[], upstreamText: (sourceId: string) => string) {
+    const meta = node.metadata || {};
+    const stored = meta.generationSourceId ? nodes.find((item) => item.id === meta.generationSourceId) : undefined;
+    if (stored) {
+        const rawPrompt = meta.rawPrompt ?? (stored.type === CanvasNodeType.Config ? stored.metadata?.prompt : undefined) ?? stripUpstreamText(meta.prompt || "", upstreamText(stored.id));
+        return { source: stored, rawPrompt: rawPrompt || "" };
+    }
+    const config = findRetrySourceNode(node.id, nodes, connections);
+    if (config) return { source: config, rawPrompt: meta.rawPrompt ?? config.metadata?.prompt ?? "" };
+    const composed = meta.prompt || "";
+    if (meta.rawPrompt === undefined && composed) {
+        const promptSource = connections
+            .filter((connection) => connection.toNodeId === node.id)
+            .map((connection) => nodes.find((item) => item.id === connection.fromNodeId))
+            .find((item) => item && item.type !== CanvasNodeType.Image && item.type !== CanvasNodeType.Video && item.type !== CanvasNodeType.Audio && item.metadata?.prompt?.trim() && composed.startsWith(item.metadata.prompt.trim()));
+        if (promptSource) return { source: promptSource, rawPrompt: promptSource.metadata!.prompt!.trim() };
+    }
+    return { source: node, rawPrompt: meta.rawPrompt ?? stripUpstreamText(composed, upstreamText(node.id)) };
+}
+
+function stripUpstreamText(prompt: string, upstream: string) {
+    if (!upstream) return prompt;
+    const suffix = `\n\n${upstream}`;
+    let next = prompt;
+    while (next.endsWith(suffix)) next = next.slice(0, -suffix.length);
+    return next;
+}
+
 export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
     if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
     return [

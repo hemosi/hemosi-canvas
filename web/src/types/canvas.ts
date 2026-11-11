@@ -88,6 +88,10 @@ export type CanvasNodeMetadata = {
     draft?: boolean;
     /** Result produced in draft mode; shows the 草稿 badge and offers 高清重生成. */
     draftResult?: boolean;
+    /** The user's own prompt for the generation that produced this node, before upstream text was appended. */
+    rawPrompt?: string;
+    /** Node whose upstream inputs fed the generation that produced this node (config/text source, or the node itself). */
+    generationSourceId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };
 
