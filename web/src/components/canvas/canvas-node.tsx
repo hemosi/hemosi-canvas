@@ -1,3 +1,6 @@
+import { CanvasCinematographyButton } from "./canvas-cinematography-popover";
+import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
+import { lightingSummary } from "@/lib/canvas/canvas-cinematography";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Check, ChevronRight, Copy, Download, Group, Image as ImageIcon, Loader2, Lock, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, TriangleAlert, Video } from "lucide-react";
@@ -589,6 +592,10 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
                 <span className="shrink-0 text-[11px] font-normal" style={{ color: theme.node.muted }}>
                     {t("canvas.node.nodeCount", { count: groupChildCount })}
                 </span>
+                <span className="pointer-events-auto shrink-0" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    <CanvasCinematographyButton sections="lighting" lighting={node.metadata?.lighting} onLightingChange={(lighting) => getShotHost()?.updateMetadata(node.id, { lighting })} />
+                </span>
+                {node.metadata?.lighting ? <span className="shrink-0 truncate text-[11px] font-normal" style={{ color: theme.node.muted }}>整组灯光：{lightingSummary(node.metadata.lighting)}</span> : null}
             </div>
         </div>
     );

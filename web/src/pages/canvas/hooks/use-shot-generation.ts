@@ -138,20 +138,22 @@ export function useShotGeneration({ projectId, nodesRef, connectionsRef, setNode
     const runShots = useCallback(
         async (nodeIds: string[], kind: ShotKind, origin?: "user" | "agent") => {
             const shots = nodeIds.map((id) => nodesRef.current.find((node) => node.id === id)).filter((node): node is CanvasNodeData => node?.type === HemosiNodeType.Shot);
-            if (!shots.length) return;
+            if (!shots.length) return { ok: 0, failed: 0 };
             const first = shots[0];
             const { context, requestConfig, draft, prompt } = prepareShotRun(first, kind, nodesRef.current, connectionsRef.current, effectiveConfig);
             if (!isAiConfigReady(requestConfig, requestConfig.model)) {
                 message.error(modelNotReadyReason(requestConfig, requestConfig.model));
-                return openConfigDialog(true);
+                openConfigDialog(true);
+                return { ok: 0, failed: shots.length, canceled: true };
             }
             const others = shots.length > 1 ? `\n\n…另有 ${shots.length - 1} 个镜头，各自使用自己的提示词、参考图与参数（镜头 ${shots.map((shot) => shot.metadata?.shotNo ?? "?").join("、")}）` : "";
             const summary = buildGenerationConfirmSummary(requestConfig, kind, { prompt: `${prompt ? context.prompt : "（首个镜头无提示词）"}${others}`, images: context.referenceImages, videos: context.referenceVideos, audioCount: context.referenceAudios.length, count: shots.length, draft });
-            if (!(await requestGenerationConfirm(summary, origin))) return;
+            if (!(await requestGenerationConfirm(summary, origin))) return { ok: 0, failed: 0, canceled: true };
             const results = await Promise.all(shots.map((shot) => runShot(shot.id, kind, { skipConfirm: true })));
             const failed = results.filter((ok) => !ok).length;
             if (failed) message.warning(`${shots.length - failed} 个成功，${failed} 个失败；失败原因见生成队列，改参后可一键重跑`);
             else message.success(`${shots.length} 个镜头已生成`);
+            return { ok: shots.length - failed, failed };
         },
         [connectionsRef, effectiveConfig, isAiConfigReady, message, nodesRef, openConfigDialog, requestGenerationConfirm, runShot],
     );

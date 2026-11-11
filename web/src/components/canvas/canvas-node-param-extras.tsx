@@ -6,9 +6,10 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useGenerationPresetStore, type GenerationPreset } from "@/stores/use-generation-preset-store";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasCinematographyButton } from "./canvas-cinematography-popover";
 
 /** Seed input and parameter presets for one generation node; changes only touch this node. */
-export function CanvasNodeParamExtras({ node, mode, onChange }: { node: CanvasNodeData; mode: GenerationPreset["mode"]; onChange: (nodeId: string, patch: CanvasNodeMetadata) => void }) {
+export function CanvasNodeParamExtras({ node, mode, onChange, inheritedLighting, onSplitAngles }: { node: CanvasNodeData; mode: GenerationPreset["mode"]; onChange: (nodeId: string, patch: CanvasNodeMetadata) => void; inheritedLighting?: string; onSplitAngles?: (angles: string[]) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const presets = useGenerationPresetStore((state) => state.presets).filter((preset) => preset.mode === mode);
     const addPreset = useGenerationPresetStore((state) => state.addPreset);
@@ -74,6 +75,7 @@ export function CanvasNodeParamExtras({ node, mode, onChange }: { node: CanvasNo
                     />
                 </span>
             </Tooltip>
+            <CanvasCinematographyButton camera={node.metadata?.camera} lighting={node.metadata?.lighting} inheritedLighting={inheritedLighting} onCameraChange={(camera) => onChange(node.id, { camera })} onLightingChange={(lighting) => onChange(node.id, { lighting })} onSplitAngles={onSplitAngles} />
             <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content}>
                 <Tooltip title="参数预设">
                     <Button type="text" className="!h-10 !w-10 !min-w-10 !rounded-full !p-0" style={{ color: theme.node.text }} icon={<Bookmark className="size-3.5" />} />

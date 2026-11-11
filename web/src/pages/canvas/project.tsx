@@ -392,6 +392,7 @@ function InfiniteCanvasPage() {
                 },
                 openVersions: setVersionsNodeId,
                 downstreamCount: (nodeId) => downstreamNodeCount(nodeId, nodesRef.current, connectionsRef.current),
+                updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
             }),
         [runShot],
     );
@@ -930,6 +931,7 @@ function InfiniteCanvasPage() {
     }, [connections, nodeById]);
     const referenceConnectedNodeIds = useMemo(() => new Set([referencePickerNodeId, ...(referencePickerNodeId ? connectedNodesByNodeId.get(referencePickerNodeId)?.flatMap((node) => node.type === CanvasNodeType.Group ? [node.id, ...getGroupResourceNodes(node.id, nodes).map((child) => child.id)] : [node.id]) || [] : [])].filter((id): id is string => Boolean(id))), [connectedNodesByNodeId, nodes, referencePickerNodeId]);
     const { applyAgentOps } = useAgentBridge({
+        runShots,
         projectId,
         title: currentProject?.title,
         nodes,

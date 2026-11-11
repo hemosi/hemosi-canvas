@@ -8,6 +8,8 @@ import { CanvasDraftToggle } from "@/components/canvas/canvas-draft-toggle";
 import { CanvasImageSettingsPopover } from "@/components/canvas/canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "@/components/canvas/canvas-video-settings-popover";
 import { CanvasNodeParamExtras } from "@/components/canvas/canvas-node-param-extras";
+import { LightingEditor } from "@/components/canvas/canvas-cinematography-popover";
+import { CAMERA_ANGLES, lightingSummary, multiAngleCameras, resolveNodeLighting } from "@/lib/canvas/canvas-cinematography";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
 import { ANCHOR_KINDS, ANCHOR_KIND_LABEL, IMAGE_ROLES, IMAGE_ROLE_LABEL } from "@/lib/canvas/canvas-reference-roles";
@@ -149,6 +151,13 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
                     )}
                 </Field>
             ) : null}
+            {kind === "scene" ? (
+                <Field label="场景灯光（连到的分镜共用，跨镜头一致）">
+                    <div {...stop}>
+                        <LightingEditor value={meta.lighting} onChange={(lighting) => ctx.updateMetadata({ lighting })} />
+                    </div>
+                </Field>
+            ) : null}
             <input ref={imageInput} type="file" accept="image/*" multiple className="hidden" onChange={(event) => void addImages(event)} />
             <input ref={voiceInput} type="file" accept="audio/*" className="hidden" onChange={(event) => void addVoice(event)} />
         </div>
@@ -285,7 +294,25 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
                 </div>
                 <div className="flex items-center gap-1">
                     <CanvasDraftToggle className="h-8" checked={Boolean(meta.draft)} onChange={(draft) => patch({ draft })} />
-                    <CanvasNodeParamExtras node={ctx.node} mode="shot" onChange={(_, value) => patch(value)} />
+                    <CanvasNodeParamExtras
+                        node={ctx.node}
+                        mode="shot"
+                        onChange={(_, value) => patch(value)}
+                        inheritedLighting={lightingSummary(resolveNodeLighting(ctx.node.id, ctx.getNodes(), ctx.getConnections()).lighting)}
+                        onSplitAngles={(angles) =>
+                            ctx.applyOps(
+                                multiAngleCameras(meta.camera, angles).map((camera, index) => ({
+                                    type: "add_node" as const,
+                                    nodeType: ctx.node.type,
+                                    title: `${ctx.node.title} · ${CAMERA_ANGLES.find((item) => item.value === camera.angle)?.label || camera.angle}`,
+                                    position: { x: ctx.node.position.x + (index + 1) * (ctx.node.width + 40), y: ctx.node.position.y + ctx.node.height + 60 },
+                                    width: ctx.node.width,
+                                    height: ctx.node.height,
+                                    metadata: { shotNo: meta.shotNo, shotDescription: meta.shotDescription, prompt: meta.prompt, shotRefs: meta.shotRefs, model: meta.model, videoModel: meta.videoModel, size: meta.size, videoSize: meta.videoSize, seconds: meta.seconds, lighting: meta.lighting, camera },
+                                })),
+                            )
+                        }
+                    />
                 </div>
             </div>
             <div className="flex gap-1.5">

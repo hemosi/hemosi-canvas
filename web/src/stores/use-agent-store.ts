@@ -24,7 +24,14 @@ export type AgentModel = {
 };
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline";
 export type AgentPendingApproval = { requestId: string; method: string; threadId?: string; turnId?: string; itemId?: string; reason?: string; command?: unknown; cwd?: string; grantRoot?: string; networkApprovalContext?: unknown; permissions?: unknown; deciding?: AgentApprovalDecision };
-export type AgentCanvasContext = { snapshot: CanvasAgentSnapshot; applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot; undoOps: () => CanvasAgentSnapshot | null; canUndo: boolean };
+export type AgentCanvasContext = {
+    snapshot: CanvasAgentSnapshot;
+    applyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot;
+    undoOps: () => CanvasAgentSnapshot | null;
+    canUndo: boolean;
+    /** Batch-run shots: one generation confirm card for the whole batch (same card as manual runs), then each shot runs. */
+    runShots?: (nodeIds: string[], kind: "image" | "video", origin?: "user" | "agent") => Promise<{ ok: number; failed: number; canceled?: boolean }>;
+};
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentTokenUsage = { input: number; cached: number; output: number };
 export type AgentBootstrapStatus = { key: string; text: string; detail: string; status: "running" | "ready" | "error" };

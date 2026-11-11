@@ -9,6 +9,8 @@ export type ShotHost = {
     selectRow: (nodeId: string) => void;
     openVersions: (nodeId: string) => void;
     downstreamCount: (nodeId: string) => number;
+    /** Patch any node's metadata (used by builtin nodes such as groups that have no plugin context). */
+    updateMetadata: (nodeId: string, patch: CanvasNodeData["metadata"]) => void;
 };
 
 let host: ShotHost | null = null;

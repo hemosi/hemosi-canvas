@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 
 import { LocalAgentPanel } from "./local-agent-panel";
+import { DirectorAgentPanel } from "./director-agent-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -14,6 +15,11 @@ export function AgentPanel() {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const width = useAgentStore((state) => state.width);
     const [resizing, setResizing] = useState(false);
+    const [tab, setTab] = useState<"director" | "local">(() => (localStorage.getItem("canvas-agent-tab") === "local" ? "local" : "director"));
+    const switchTab = (next: "director" | "local") => {
+        localStorage.setItem("canvas-agent-tab", next);
+        setTab(next);
+    };
     const panelMounted = useAgentStore((state) => state.panelMounted);
     const panelOpen = useAgentStore((state) => state.panelOpen);
     const panelClosing = useAgentStore((state) => state.panelClosing);
@@ -57,7 +63,17 @@ export function AgentPanel() {
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
                 <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.panel.resize")} />
-                <LocalAgentPanel embedded />
+                <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2 text-xs" style={{ borderColor: theme.node.stroke }}>
+                    {(["director", "local"] as const).map((key) => (
+                        <button key={key} type="button" className="rounded-md px-2 py-1 hover:bg-black/5 dark:hover:bg-white/10" style={tab === key ? { background: theme.toolbar.activeBg, color: theme.node.text } : { color: theme.node.muted }} onClick={() => switchTab(key)}>
+                            {key === "director" ? "导演 Agent（官方 Key）" : "本地 Agent（Codex / Claude Code）"}
+                        </button>
+                    ))}
+                </div>
+                {tab === "director" ? <DirectorAgentPanel /> : null}
+                <div className={tab === "local" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+                    <LocalAgentPanel embedded />
+                </div>
             </motion.aside>
         </motion.div>
     );
