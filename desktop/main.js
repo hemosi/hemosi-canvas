@@ -4,8 +4,28 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
-const { app, BrowserWindow, Menu, shell } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require("electron");
 const { createAppServer, listen, PROXY_PREFIX } = require("./server");
+
+// 便携模式与自定义数据路径
+function setupUserDataPath() {
+    const exeDir = path.dirname(app.getPath("exe"));
+    const portableDataDir = path.join(exeDir, "HemosiData");
+    if (fs.existsSync(portableDataDir)) {
+        app.setPath("userData", portableDataDir);
+        return;
+    }
+    const customPathFile = path.join(app.getPath("userData"), "custom-data-path.txt");
+    if (fs.existsSync(customPathFile)) {
+        try {
+            const customPath = fs.readFileSync(customPathFile, "utf-8").trim();
+            if (customPath && fs.existsSync(customPath)) {
+                app.setPath("userData", customPath);
+            }
+        } catch {}
+    }
+}
+setupUserDataPath();
 
 const PREFERRED_PORT = 23230;
 app.setName("Hemosi");
@@ -77,6 +97,38 @@ if (!app.requestSingleInstanceLock()) {
         const port = await listen(server, PREFERRED_PORT);
         if (port !== PREFERRED_PORT) console.warn(`[hemosi] port ${PREFERRED_PORT} busy, using ${port}; data saved under the default port is not visible this session.`);
         baseUrl = `http://127.0.0.1:${port}`;
+        ipcMain.handle("get-data-path", () => {
+            const current = app.getPath("userData");
+            const exeDir = path.dirname(app.getPath("exe"));
+            const isPortable = current === path.join(exeDir, "HemosiData");
+            return { current, isPortable };
+        });
+
+        ipcMain.handle("select-data-directory", async () => {
+            const res = await dialog.showOpenDialog(mainWindow, {
+                properties: ["openDirectory", "createDirectory"],
+                title: "选择数据存放文件夹",
+            });
+            if (res.canceled || !res.filePaths[0]) return null;
+            return res.filePaths[0];
+        });
+
+        ipcMain.handle("set-data-directory", async (_, targetDir) => {
+            if (!targetDir || !fs.existsSync(targetDir)) return { success: false, error: "目录不存在" };
+            const oldPath = app.getPath("userData");
+            // 将迁移标记写入旧目录
+            const customPathFile = path.join(oldPath, "custom-data-path.txt");
+            fs.writeFileSync(customPathFile, targetDir, "utf-8");
+            
+            // 复制旧数据到新目录
+            try {
+                fs.cpSync(oldPath, targetDir, { recursive: true, force: false });
+            } catch (err) {
+                console.error("迁移旧数据失败:", err);
+            }
+            return { success: true, targetDir };
+        });
+
         createWindow();
         app.on("activate", () => {
             if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -1,10 +1,11 @@
-import { Alert, Button, Progress, Spin } from "antd";
+import { Alert, Button, message, Progress, Spin } from "antd";
 import type { TFunction } from "i18next";
-import { Database, HardDrive, Layers3, RefreshCw } from "lucide-react";
+import { Database, FolderEdit, HardDrive, Layers3, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { readLocalStorageUsage, type LocalStorageUsage } from "@/services/local-storage-usage";
+import { isDesktopApp } from "@/lib/desktop-bridge";
 
 const storeLabelKeys: Record<string, string> = {
     app_state: "appState",
@@ -22,18 +23,36 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
     const [usage, setUsage] = useState<LocalStorageUsage | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [desktopPathInfo, setDesktopPathInfo] = useState<{ current: string; isPortable: boolean } | null>(null);
 
     const refresh = useCallback(async () => {
         setLoading(true);
         setError("");
         try {
             setUsage(await readLocalStorageUsage());
+            if (isDesktopApp() && window.hemosiDesktop?.getDataPath) {
+                const info = await window.hemosiDesktop.getDataPath();
+                setDesktopPathInfo(info);
+            }
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : t("config.localStorage.readFailed"));
         } finally {
             setLoading(false);
         }
     }, [t]);
+
+    const handleChangeLocation = async () => {
+        if (!window.hemosiDesktop?.selectDataDirectory || !window.hemosiDesktop?.setDataDirectory) return;
+        const selected = await window.hemosiDesktop.selectDataDirectory();
+        if (!selected) return;
+        const res = await window.hemosiDesktop.setDataDirectory(selected);
+        if (res.success) {
+            message.success("数据目录已更改，重启应用后将自动把旧数据搬过去！");
+            void refresh();
+        } else {
+            message.error(res.error || "更改失败");
+        }
+    };
 
     useEffect(() => {
         if (active && !usage) void refresh();
@@ -44,6 +63,34 @@ export function ConfigLocalStorage({ active }: { active: boolean }) {
 
     return (
         <div className="space-y-3">
+            {/* 桌面端数据存放位置及更改 */}
+            <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-900/40">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                            <FolderEdit className="size-4 text-amber-500" />
+                            数据存放位置
+                            {desktopPathInfo?.isPortable ? <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-normal text-amber-600 dark:text-amber-400">便携模式 (HemosiData)</span> : null}
+                        </div>
+                        <div className="mt-1 text-xs text-stone-500">
+                            {desktopPathInfo ? (
+                                <span className="font-mono text-stone-700 dark:text-stone-300">{desktopPathInfo.current}</span>
+                            ) : (
+                                "浏览器网页版数据存储于当前浏览器本地数据库（IndexedDB）。如需便携或存放到指定盘符，请使用桌面版并在程序旁建 HemosiData 文件夹。"
+                            )}
+                        </div>
+                    </div>
+                    {isDesktopApp() && (
+                        <Button size="small" type="primary" onClick={() => void handleChangeLocation()}>
+                            更改位置…
+                        </Button>
+                    )}
+                </div>
+                <div className="mt-2 text-[11px] text-stone-400">
+                    选好文件夹后，重启时自动把旧数据搬过去；程序旁建 HemosiData 文件夹即自动进入便携模式。
+                </div>
+            </section>
+
             <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>

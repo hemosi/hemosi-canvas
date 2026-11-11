@@ -600,7 +600,7 @@ export default {
         },
         webdav: {
             title: "WebDAV 同步",
-            description: "同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key。开启本地代理时经本机代理转发，否则浏览器直连 WebDAV。",
+            description: "填网盘地址和账号可把画布、素材、生成记录备份到网盘、换电脑拉回；API Key 不会上传；留空不影响使用（例：坚果云、NAS）。开启本地代理时经本机代理转发，否则浏览器直连 WebDAV。",
             lastSynced: "上次同步 {{time}}",
             neverSynced: "尚未同步",
             url: "WebDAV 地址",

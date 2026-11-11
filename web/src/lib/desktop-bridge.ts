@@ -3,7 +3,14 @@ import { useConfigStore } from "@/stores/use-config-store";
 declare global {
     interface Window {
         /** Set by the Electron preload (desktop/preload.js) when running inside the Hemosi desktop app. */
-        hemosiDesktop?: { platform: string; version: string; proxyUrl: string };
+        hemosiDesktop?: {
+            platform: string;
+            version: string;
+            proxyUrl: string;
+            getDataPath?: () => Promise<{ current: string; isPortable: boolean }>;
+            selectDataDirectory?: () => Promise<string | null>;
+            setDataDirectory?: (targetDir: string) => Promise<{ success: boolean; targetDir?: string; error?: string }>;
+        };
     }
 }
 
