@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Hemosi",
-        description: "Hemosi: a local-first AI canvas workspace",
+        title: "HemosiTV",
+        description: "HemosiTV: a local-first AI canvas workspace",
     },
     theme: { toggle: "Toggle theme" },
     common: {
@@ -44,7 +44,7 @@ export default {
         returns: { image: "Text-to-image and image editing use different APIs; distinguish them by whether images is empty. Return an image URL or data URL, an array of them, or [{ dataUrl }] / [{ url }] / [{ b64_json }].", video: "Poll inside the script and return { url }, { blob }, or a video URL string.", audio: "Return a Blob, base64/data URL string, or { b64_json } / { data } / { url }.", text: "Push streaming output with onDelta(text), then return the complete text string." },
         templates: { openai: "OpenAI format", gemini: "Gemini format" },
         authoring: {
-            intro: "Write a model request script for Hemosi. Capability: {{capability}}. Target model: {{model}}.",
+            intro: "Write a model request script for HemosiTV. Capability: {{capability}}. Target model: {{model}}.",
             shape: "Write an async function whose parameter list names the variables you use, and unpack params into fields such as size, quality, and count. Do not import modules or use Markdown fences. Send the request and return the result inside the function. The runtime injects matching locals, so finish with return await functionName({ the same arguments }).",
             returnTitle: "Return requirements",
             variablesTitle: "Available variables",
@@ -261,7 +261,7 @@ export default {
             select: "Select {{name}}", stats: "{{nodes}} nodes · {{connections}} connections", updated: "Updated {{date}}", saveName: "Save name", cancelRename: "Cancel rename", export: "Export", rename: "Rename", delete: "Delete",
             deleteTitle: "Delete canvases?", deleteDescription: "This will delete {{count}} canvases along with their nodes and connections.",
         },
-        export: { defaultProjectName: "Hemosi Canvas", defaultNodesName: "Canvas elements", item: "Element" },
+        export: { defaultProjectName: "HemosiTV Canvas", defaultNodesName: "Canvas elements", item: "Element" },
         createMenu: {
             fromNode: "Generate from this node", close: "Close", text: "Generate text", textDescription: "Scripts, ad copy, and brand content", image: "Generate image", video: "Generate video", audio: "Audio reference", config: "Configuration node", configDescription: "Model, size, count, and input order", select: "Select a node",
         },
@@ -355,7 +355,7 @@ export default {
         darkTheme: "Switch to dark theme",
     },
     home: {
-        heroEyebrow: "Hemosi studio",
+        heroEyebrow: "HemosiTV studio",
         heroTitle: "Start creating",
         heroSubtitle: "Chain image generation, video, prompts and assets on one infinite canvas.",
         newCanvas: "New canvas",
@@ -372,7 +372,7 @@ export default {
     },
     config: {
         title: "Settings & Preferences",
-        about: "About: Hemosi is modified from <link>basketikun/infinite-canvas</link> (MIT).",
+        about: "About: HemosiTV is modified from <link>basketikun/infinite-canvas</link> (MIT).",
         invalidFile: "The settings file format is invalid",
         description: "Providers, model selection, sync, and local storage",
         modalDescription: "Providers, default models, sync, and local storage",
@@ -397,7 +397,7 @@ export default {
         },
         localStorage: {
             title: "IndexedDB storage usage",
-            description: "View browser data saved by Hemosi, grouped by object store.",
+            description: "View browser data saved by HemosiTV, grouped by object store.",
             indexedDbUsage: "IndexedDB usage",
             siteUsage: "Total site usage",
             quota: "Available quota",
@@ -406,7 +406,7 @@ export default {
             quotaHint: "Allocated dynamically by the browser",
             quotaUnavailable: "Quota estimation is unavailable in this browser",
             quotaProgress: "Site quota usage",
-            mainDatabase: "Hemosi data",
+            mainDatabase: "HemosiTV data",
             records: "{{count}} records",
             refresh: "Refresh usage",
             readFailed: "Failed to read local storage",

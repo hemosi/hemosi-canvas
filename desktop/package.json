@@ -1,6 +1,6 @@
 {
   "name": "hemosi-desktop",
-  "productName": "Hemosi",
+  "productName": "HemosiTV",
   "version": "0.21.1",
   "description": "Hemosi infinite canvas desktop app (Electron wrapper around web/dist with a built-in forwarding proxy).",
   "license": "MIT",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "io.github.hemosi.canvas",
-    "productName": "Hemosi",
+    "productName": "HemosiTV",
     "copyright": "MIT · based on basketikun/infinite-canvas",
     "directories": {
       "output": "release",
@@ -60,10 +60,10 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Hemosi",
-      "artifactName": "Hemosi-Setup-${version}-x64.${ext}"
+      "shortcutName": "HemosiTV",
+      "artifactName": "HemosiTV-Setup-${version}-x64.${ext}"
     },
     "publish": null,
-    "artifactName": "Hemosi-${version}-${arch}-portable.${ext}"
+    "artifactName": "HemosiTV-${version}-${arch}-portable.${ext}"
   }
 }

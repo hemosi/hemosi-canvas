@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="88" alt="Hemosi logo">
+  <img src="web/public/logo.svg" width="88" alt="HemosiTV logo">
 </p>
 
-<h1 align="center">Hemosi</h1>
+<h1 align="center">HemosiTV</h1>
 
-Hemosi 是一个本地优先的 AI 创作工作台：在无限画布上编排图片、文字、视频节点，配合生图 / 视频生成、提示词库和素材库，把一次次生成串成连续的创作流程。界面参考剪映桌面版的布局，默认深色主题。
+HemosiTV 是一个本地优先的 AI 创作工作台：在无限画布上编排图片、文字、视频节点，配合生图 / 视频生成、提示词库和素材库，把一次次生成串成连续的创作流程。界面参考剪映桌面版的布局，默认深色主题。
 
 数据默认保存在浏览器本地（IndexedDB / localStorage），模型接口在「模型配置」里填你自己的地址和密钥。
 
@@ -35,10 +35,10 @@ npm run dev
 ### 从 Actions 下载
 
 1. 打开仓库的 [Actions › Desktop (Windows)](https://github.com/hemosi/hemosi-canvas/actions/workflows/desktop.yml)。每次改动 `web/` 或 `desktop/` 推到 main 都会自动构建，也可以点 **Run workflow** 手动跑。
-2. 点进最新一次绿色（成功）的运行，页面底部 **Artifacts** 里下载 `Hemosi-windows-x64`（需要登录 GitHub）。
+2. 点进最新一次绿色（成功）的运行，页面底部 **Artifacts** 里下载 `HemosiTV-windows-x64`（需要登录 GitHub）。
 3. 解压后有两个文件：
-   - `Hemosi-Setup-<版本>-x64.exe`：安装版，可选安装目录，装完有桌面快捷方式；
-   - `Hemosi-<版本>-x64-portable.zip`：免安装版，解压后双击 `Hemosi.exe`。
+   - `HemosiTV-Setup-<版本>-x64.exe`：安装版，可选安装目录，装完有桌面快捷方式；
+   - `HemosiTV-<版本>-x64-portable.zip`：免安装版，解压后双击 `HemosiTV.exe`。
 4. 安装包没有代码签名，Windows 可能弹「已保护你的电脑」，点「更多信息 › 仍要运行」。
 
 数据保存在桌面版自己的浏览器存储里（固定端口 23230 对应的本地页面），和你在浏览器里打开网页版的数据是分开的；需要搬数据可以用设置里的导出 / 导入。

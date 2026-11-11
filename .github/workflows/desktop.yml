@@ -55,7 +55,7 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Hemosi-windows-x64
+          name: HemosiTV-windows-x64
           path: |
             desktop/release/*.exe
             desktop/release/*.zip

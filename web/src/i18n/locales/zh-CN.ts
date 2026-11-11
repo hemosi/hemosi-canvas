@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Hemosi",
-        description: "Hemosi：本地优先的 AI 画布创作工作台",
+        title: "HemosiTV",
+        description: "HemosiTV：本地优先的 AI 画布创作工作台",
     },
     theme: { toggle: "切换主题" },
     common: {
@@ -44,7 +44,7 @@ export default {
         returns: { image: "文生图（images 为空）和图生图（images 有参考图）接口不同，脚本需自行区分；返回图片 URL 或 dataURL 字符串，也可返回它们的数组，或 [{ dataUrl }] / [{ url }] / [{ b64_json }]", video: "脚本内部完成轮询，返回 { url } 或 { blob } 或视频 URL 字符串", audio: "返回 Blob，或 base64 / dataURL 字符串，或 { b64_json } / { data } / { url }", text: "用 onDelta(text) 推送流式，最终 return 完整文本字符串" },
         templates: { openai: "OpenAI 规范", gemini: "Gemini 规范" },
         authoring: {
-            intro: "请为 Hemosi 画布编写一段模型调用脚本。能力类型：{{capability}}。目标模型：{{model}}。",
+            intro: "请为 HemosiTV 画布编写一段模型调用脚本。能力类型：{{capability}}。目标模型：{{model}}。",
             shape: "请写成一个 async function，把用到的变量写在参数列表里，并把 params 拆成 size、quality、count 等字段，方便对照。不要 import，不要 Markdown 代码围栏。函数内发请求并 return 结果；因为运行时会注入同名局部变量，最后需要 return await 函数名({ 同样的参数 })。",
             returnTitle: "返回要求",
             variablesTitle: "可用变量",
@@ -261,7 +261,7 @@ export default {
             select: "选择 {{name}}", stats: "{{nodes}} 个节点 · {{connections}} 条连线", updated: "更新于 {{date}}", saveName: "保存名称", cancelRename: "取消重命名", export: "导出", rename: "重命名", delete: "删除",
             deleteTitle: "删除画布？", deleteDescription: "将删除 {{count}} 个画布，里面的节点和连线也会一起移除。",
         },
-        export: { defaultProjectName: "Hemosi 画布", defaultNodesName: "画布元素", item: "元素" },
+        export: { defaultProjectName: "HemosiTV 画布", defaultNodesName: "画布元素", item: "元素" },
         createMenu: {
             fromNode: "引用该节点生成", close: "关闭", text: "文本生成", textDescription: "脚本、广告词、品牌文案", image: "图片生成", video: "视频生成", audio: "音频参考", config: "配置节点", configDescription: "模型、尺寸、数量和输入顺序", select: "选择节点",
         },
@@ -355,7 +355,7 @@ export default {
         darkTheme: "切换到深色主题",
     },
     home: {
-        heroEyebrow: "Hemosi 创作台",
+        heroEyebrow: "HemosiTV 创作台",
         heroTitle: "开始创作",
         heroSubtitle: "在无限画布上串起生图、视频、提示词和素材，一张画布完成整条创作链路。",
         newCanvas: "新建画布",
@@ -372,7 +372,7 @@ export default {
     },
     config: {
         title: "配置与用户偏好",
-        about: "关于：Hemosi 基于 <link>basketikun/infinite-canvas</link>（MIT）修改。",
+        about: "关于：HemosiTV 基于 <link>basketikun/infinite-canvas</link>（MIT）修改。",
         invalidFile: "配置文件格式不正确",
         description: "渠道聚合、模型选择、同步与本地存储",
         modalDescription: "渠道聚合、默认模型、同步与本地存储",
@@ -397,7 +397,7 @@ export default {
         },
         localStorage: {
             title: "IndexedDB 存储使用情况",
-            description: "查看 Hemosi 在浏览器中保存的数据量，并按对象仓库统计内容体积。",
+            description: "查看 HemosiTV 在浏览器中保存的数据量，并按对象仓库统计内容体积。",
             indexedDbUsage: "IndexedDB 占用",
             siteUsage: "站点总占用",
             quota: "可用配额",
@@ -406,7 +406,7 @@ export default {
             quotaHint: "由浏览器动态分配",
             quotaUnavailable: "当前浏览器不提供配额估算",
             quotaProgress: "站点配额使用率",
-            mainDatabase: "Hemosi 主数据",
+            mainDatabase: "HemosiTV 主数据",
             records: "{{count}} 条",
             refresh: "刷新统计",
             readFailed: "读取本地存储失败",

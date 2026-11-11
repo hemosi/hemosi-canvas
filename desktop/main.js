@@ -8,6 +8,7 @@ const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require("electron")
 const { createAppServer, listen, PROXY_PREFIX } = require("./server");
 
 // 便携模式与自定义数据路径
+app.setName("Hemosi");
 function setupUserDataPath() {
     const exeDir = path.dirname(app.getPath("exe"));
     const portableDataDir = path.join(exeDir, "HemosiData");
@@ -28,7 +29,6 @@ function setupUserDataPath() {
 setupUserDataPath();
 
 const PREFERRED_PORT = 23230;
-app.setName("Hemosi");
 if (process.platform === "win32") app.setAppUserModelId("io.github.hemosi.canvas");
 
 let mainWindow = null;
@@ -51,7 +51,7 @@ function createWindow() {
         height: 900,
         minWidth: 1024,
         minHeight: 640,
-        title: "Hemosi",
+        title: "HemosiTV",
         icon: iconPath(),
         backgroundColor: "#0f1012",
         autoHideMenuBar: true,
