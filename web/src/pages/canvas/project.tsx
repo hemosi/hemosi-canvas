@@ -1276,6 +1276,51 @@ function InfiniteCanvasPage() {
         [message, t],
     );
 
+    // 视频拆分镜: scene-change detection -> one shot per cut, mid-shot keyframe as its reference, time range in the description.
+    const splitVideoToShots = useCallback(
+        async (nodeId: string) => {
+            setContextMenu(null);
+            const source = nodesRef.current.find((node) => node.id === nodeId);
+            const url = source?.metadata?.content;
+            if (source?.type !== CanvasNodeType.Video || !url) return void message.error("这个视频节点还没有视频");
+            const key = `split-video-${nodeId}`;
+            message.loading({ key, content: "正在分析镜头切换…", duration: 0 });
+            try {
+                const { splitVideoIntoShots } = await import("@/lib/canvas/canvas-video-shots");
+                const segments = await splitVideoIntoShots(url, (ratio) => message.loading({ key, content: `正在分析镜头切换… ${Math.round(ratio * 100)}%`, duration: 0 }));
+                const spec = getNodeSpec(HemosiNodeType.Shot);
+                const startNo = nextShotNo(nodesRef.current);
+                const gap = 40;
+                const x0 = source.position.x + source.width + 160;
+                const y0 = source.position.y;
+                const shots: CanvasNodeData[] = [];
+                for (const [index, segment] of segments.entries()) {
+                    const image = await uploadImage(segment.keyframe);
+                    const ref = { id: nanoid(), status: "success" as const, content: image.url, storageKey: image.storageKey, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/png", enabled: true, role: "reference" as const };
+                    const description = `原片 ${segment.start.toFixed(1)}s–${segment.end.toFixed(1)}s（${(segment.end - segment.start).toFixed(1)} 秒）`;
+                    const created = createCanvasNode(HemosiNodeType.Shot, { x: x0 + index * (spec.width + gap) + spec.width / 2, y: y0 + spec.height / 2 }, { shotNo: startNo + index, shotDescription: description, shotRefs: [ref], shotImage: { ...ref } });
+                    shots.push({ ...created, title: `镜头 ${startNo + index}` });
+                }
+                const withShots = [...nodesRef.current, ...shots];
+                const links = shots.map((shot) => ({ id: nanoid(), fromNodeId: source.id, toNodeId: shot.id }));
+                const rect = getGroupWrapRect(shots);
+                const groupNode = createCanvasNode(CanvasNodeType.Group, { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+                const grouped = applyGroupSelection(new Set(shots.map((shot) => shot.id)), withShots, [...connectionsRef.current, ...links], { ...groupNode, title: `${source.title || "视频"} · 拆分镜`, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height });
+                const nextNodes = grouped ? grouped.nodes : withShots;
+                const nextConnections = grouped ? grouped.connections : [...connectionsRef.current, ...links];
+                nodesRef.current = nextNodes;
+                connectionsRef.current = nextConnections;
+                setNodes(nextNodes);
+                setConnections(nextConnections);
+                setSelectedNodeIds(new Set(shots.map((shot) => shot.id)));
+                message.success({ key, content: `拆出 ${shots.length} 个镜头（镜头 ${startNo}–${startNo + shots.length - 1}）` });
+            } catch (error) {
+                message.error({ key, content: error instanceof DOMException && error.name === "SecurityError" ? "视频跨域读不到，打开设置里的本地代理后重试" : `拆分镜失败：${error instanceof Error ? error.message : String(error)}` });
+            }
+        },
+        [message],
+    );
+
     const [refTargetSourceId, setRefTargetSourceId] = useState<string | null>(null);
     // Toolbar items are built before these callbacks exist in the file; refs keep them current.
     const batchExecuteRef = useRef<((ids: string[]) => void) | null>(null);
@@ -4023,6 +4068,7 @@ function InfiniteCanvasPage() {
                     onRetry={(node) => void handleRetryNode(node)}
                     onHdRegenerate={(node) => void rerunIntoNewNode(node, "hd")}
                     onCaptureFrame={(node) => void captureVideoNodeFrame(node.id, "current")}
+                    onSplitVideoShots={(node) => void splitVideoToShots(node.id)}
                     onContinueFromLastFrame={(node) => void continueVideoFromLastFrame(node)}
                     onReshoot={(node) => void rerunIntoNewNode(node, "reshoot")}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}

@@ -37,6 +37,7 @@ type CanvasNodeHoverToolbarProps = {
     onRetry: (node: CanvasNodeData) => void;
     onHdRegenerate?: (node: CanvasNodeData) => void;
     onCaptureFrame?: (node: CanvasNodeData) => void;
+    onSplitVideoShots?: (node: CanvasNodeData) => void;
     onContinueFromLastFrame?: (node: CanvasNodeData) => void;
     onReshoot?: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
@@ -81,6 +82,7 @@ export function CanvasNodeHoverToolbar({
     onRetry,
     onHdRegenerate,
     onCaptureFrame,
+    onSplitVideoShots,
     onContinueFromLastFrame,
     onReshoot,
     onToggleFreeResize,
@@ -171,6 +173,7 @@ export function CanvasNodeHoverToolbar({
     // Pinned tools always show, outside the user's image quick-tool selection.
     const pinnedTools: ToolbarTool[] = [
         ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
+        ...(hasVideo && onSplitVideoShots ? [{ id: "splitVideoShots", title: "按镜头切换把视频拆成一排分镜节点", label: "拆分镜", icon: <Clapperboard className="size-4" />, onClick: () => onSplitVideoShots(node) }] : []),
         ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
         ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
         // Video result toolbar: 截帧 / 用末帧续拍 / 重拍 / 下载, in that order.
