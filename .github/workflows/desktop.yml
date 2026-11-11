@@ -27,10 +27,11 @@ jobs:
         with:
           node-version: 22
 
-      # web/package-lock.json is not kept in sync (the project uses bun), so npm install instead of npm ci.
+      # web/package-lock.json is not kept in sync (the project uses bun) and only pins Linux native binaries
+      # (rollup / lightningcss / tailwind oxide), so resolve fresh without it to get the Windows natives.
       - name: Install web dependencies
         working-directory: web
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-package-lock --no-audit --no-fund
 
       - name: Build web
         working-directory: web

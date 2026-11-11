@@ -49,7 +49,7 @@ npm run dev
 
 ```bash
 cd web
-npm install --legacy-peer-deps
+npm install --legacy-peer-deps --no-package-lock   # 不读旧 lock，Windows 原生依赖才装得上（或用 bun install）
 npm run build
 
 cd ../desktop
