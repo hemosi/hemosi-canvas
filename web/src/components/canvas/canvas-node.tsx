@@ -6,7 +6,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision } from "@/services/image-storage";
-import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { getNodeDefinition, isBuiltinNodeType } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -432,7 +432,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
-                {data.metadata?.draftResult && (hasImageContent || hasVideoContent) ? (
+                {data.metadata?.draftResult && (hasImageContent || hasVideoContent || (!isBuiltinNodeType(data.type) && Boolean(data.metadata?.content))) ? (
                     <span className="pointer-events-none absolute left-3 top-3 z-[55] rounded-md px-2 py-0.5 text-xs font-semibold shadow" style={{ background: "rgba(10,12,14,.72)", color: "var(--hemosi-accent)" }}>
                         {t("hemosi.draft.badge")}
                     </span>

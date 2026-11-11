@@ -17,6 +17,7 @@ import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 import { CanvasDraftToggle } from "./canvas-draft-toggle";
+import { draftParamsFor, showsBuiltinParams } from "@/lib/canvas/canvas-draft";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -48,6 +49,9 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);
+    // Built-in image/video nodes always get 草稿; plugin nodes only when they expose size/quality/resolution/duration.
+    const showDraft = (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || Boolean(modeOverride)) && Boolean(draftParamsFor(node, mode));
+    const showParams = showsBuiltinParams(node);
 
     // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
     useEffect(() => {
@@ -100,21 +104,21 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     {mode === "image" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasImageSettingsPopover
+                            {showParams ? <CanvasImageSettingsPopover
                                 config={config}
                                 placement="topLeft"
                                 buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
-                            />
-                            {node.type === CanvasNodeType.Image ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
+                            /> : null}
+                            {showDraft ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
                         </>
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
-                            {node.type === CanvasNodeType.Video ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
+                            {showParams ? <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[220px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} /> : null}
+                            {showDraft ? <CanvasDraftToggle className="h-10" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
                         </>
                     ) : mode === "audio" ? (
                         <>

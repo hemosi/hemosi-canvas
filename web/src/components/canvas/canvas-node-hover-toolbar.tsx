@@ -4,7 +4,7 @@ import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { getNodeDefinition } from "@/lib/canvas/node-registry";
+import { getNodeDefinition, isBuiltinNodeType } from "@/lib/canvas/node-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -172,7 +172,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
         // Video result toolbar: 截帧 / 用末帧续拍 / 重拍 / 下载, in that order.
         ...(hasVideo ? [{ id: "download", title: t("canvas.nodeToolbar.downloadVideo"), label: t("hemosi.videoTools.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
-        ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
+        ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo || (!isBuiltinNodeType(node.type) && Boolean(node.metadata?.content) && Boolean(getNodeDefinition(node.type)?.useBuiltinPanel?.writeBackToSelf))) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
     ];
     const toolbarTools = hasImage ? [...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...pinnedTools, ...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];

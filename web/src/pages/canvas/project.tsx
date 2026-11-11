@@ -77,7 +77,7 @@ import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
 import { CanvasQuickGrowMenu } from "@/components/canvas/canvas-quick-grow-menu";
 import { CanvasGenerationConfirmModal, buildGenerationConfirmSummary, type GenerationConfirmSummary } from "@/components/canvas/canvas-generation-confirm-modal";
-import { applyDraftConfig, isDraftMode } from "@/lib/canvas/canvas-draft";
+import { applyDraftConfig, draftParamsFor, isDraftMode } from "@/lib/canvas/canvas-draft";
 import { stripGeneratedResult } from "@/lib/canvas/canvas-node-clone";
 import { buildTemplateFromSelection, instantiateTemplate, templateName, type CanvasTemplate } from "@/lib/canvas/canvas-templates";
 import { findTemplate, useTemplateStore } from "@/stores/use-template-store";
@@ -2516,8 +2516,9 @@ function InfiniteCanvasPage() {
                 return;
             }
 
-            const isDraft = isDraftMode(mode) && Boolean(sourceNode?.metadata?.draft);
-            const requestConfig = isDraft ? applyDraftConfig(generationConfig, mode) : generationConfig;
+            const draftParams = draftParamsFor(sourceNode, mode);
+            const isDraft = Boolean(draftParams) && Boolean(sourceNode?.metadata?.draft);
+            const requestConfig = isDraft && draftParams ? applyDraftConfig(generationConfig, mode, draftParams) : generationConfig;
 
             {
                 const preview = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt);
@@ -2543,12 +2544,13 @@ function InfiniteCanvasPage() {
                     const fullPrompt = (builtinPanel.promptPrefix || "") + scene;
                     const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, fullPrompt));
                     const refs = context.referenceImages;
+                    // Plugin nodes honour 草稿 for the size/quality params they expose (see draftParamsFor).
                     const image = refs.length
-                        ? await requestEdit({ ...generationConfig, count: "1" }, context.prompt, refs, { signal: controller.signal }).then((items) => items[0])
-                        : await requestGeneration({ ...generationConfig, count: "1" }, context.prompt, { signal: controller.signal }).then((items) => items[0]);
+                        ? await requestEdit({ ...requestConfig, count: "1" }, context.prompt, refs, { signal: controller.signal }).then((items) => items[0])
+                        : await requestGeneration({ ...requestConfig, count: "1" }, context.prompt, { signal: controller.signal }).then((items) => items[0]);
                     const uploaded = await uploadImage(image.dataUrl, { signal: controller.signal });
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, rawPrompt: scene, generationSourceId: nodeId, model: generationConfig.model, draftResult: isDraft, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
                     setDialogNodeId(null);
                 } catch (error) {
@@ -3021,7 +3023,7 @@ function InfiniteCanvasPage() {
             const retryMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image";
             // Retrying a draft result stays a draft; the stored metadata keeps the normal params.
             const retryDraft = isDraftMode(retryMode) && Boolean(node.metadata?.draftResult);
-            const requestConfig = retryDraft ? { ...applyDraftConfig(generationConfig, retryMode), count: "1" } : generationConfig;
+            const requestConfig = retryDraft ? { ...applyDraftConfig(generationConfig, retryMode, draftParamsFor(paramsNode, retryMode) || undefined), count: "1" } : generationConfig;
             const retryConfirmed = await requestGenerationConfirm(
                 buildGenerationConfirmSummary(requestConfig, retryMode, { prompt, images: useReferenceImages ? retryImages : [], videos: context?.referenceVideos, audioCount: context?.referenceAudios.length, count: 1, draft: retryDraft }),
             );
@@ -3146,7 +3148,9 @@ function InfiniteCanvasPage() {
     // hd: drop the draft flag so the copy uses the node's normal params; reshoot: keep everything as it was.
     const rerunIntoNewNode = useCallback(
         async (node: CanvasNodeData, kind: "hd" | "reshoot") => {
-            if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video) return;
+            const pluginPanel = getNodeDefinition(node.type)?.useBuiltinPanel;
+            const isPluginWriteBack = !isBuiltinType(node.type) && Boolean(pluginPanel?.writeBackToSelf);
+            if (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && !isPluginWriteBack) return;
             if (!node.metadata?.prompt?.trim()) {
                 message.warning(t("canvas.projectPage.retryPromptMissing"));
                 return;
@@ -3176,6 +3180,11 @@ function InfiniteCanvasPage() {
             setConnections(nextConnections);
             setSelectedNodeIds(new Set([copy.id]));
             setSelectedConnectionId(null);
+            if (isPluginWriteBack && pluginPanel) {
+                // Plugin nodes that write results to themselves rerun through the normal generate path on the copy.
+                await handleGenerateNode(copy.id, pluginPanel.mode, node.metadata?.rawPrompt || node.metadata?.prompt || "");
+                return;
+            }
             const started = await handleRetryNode(copy);
             if (started === false) {
                 setNodes((prev) => prev.filter((item) => item.id !== copy.id));
@@ -3183,7 +3192,7 @@ function InfiniteCanvasPage() {
                 setSelectedNodeIds(new Set([node.id]));
             }
         },
-        [handleRetryNode, message, t],
+        [handleGenerateNode, handleRetryNode, message, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {

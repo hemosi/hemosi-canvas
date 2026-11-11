@@ -262,7 +262,12 @@ export type CanvasBuiltinPanelConfig = {
     promptPrefix?: string;
     // true(默认)时生成结果写回本节点自身 metadata.content;false 则按内置逻辑生成到下游新节点
     writeBackToSelf?: boolean;
+    // 面板里显示哪些内置参数;缺省 = 该生成类型的全部参数。[] 表示不显示参数设置。
+    // 「草稿」开关只在包含 size / quality / resolution / duration 之一时显示,草稿也只改这些参数。
+    params?: CanvasBuiltinPanelParam[];
 };
+
+export type CanvasBuiltinPanelParam = "size" | "quality" | "resolution" | "duration";
 
 export type CanvasNodeDefinition = {
     type: string; // 建议 "<pluginId>:<name>",全局唯一

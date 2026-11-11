@@ -95,7 +95,12 @@ export type CanvasBuiltinPanelConfig = {
     mode: "image" | "video" | "text" | "audio";
     promptPrefix?: string;
     writeBackToSelf?: boolean;
+    // Built-in params the panel shows for this node; omitted = all params of the mode, [] = no settings.
+    // The 草稿 switch only appears when one of size/quality/resolution/duration is listed, and draft only changes those.
+    params?: CanvasBuiltinPanelParam[];
 };
+
+export type CanvasBuiltinPanelParam = "size" | "quality" | "resolution" | "duration";
 
 // Shared node definition used by both built-in and plugin nodes.
 export type CanvasNodeDefinition = {
