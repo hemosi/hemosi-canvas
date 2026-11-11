@@ -99,7 +99,7 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
-            label: "我的资产",
+            label: "素材库",
             emptyData: { assets: [] },
             localData: async () => ({ assets: useAssetStore.getState().assets }),
             mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
@@ -353,7 +353,7 @@ function domainPath(domain: DomainKey, path: string) {
 
 function domainLabel(domain: DomainKey) {
     if (domain === "canvas") return "画布";
-    if (domain === "assets") return "我的资产";
+    if (domain === "assets") return "素材库";
     if (domain === "image-workbench") return "生图工作台";
     return "视频创作台";
 }
