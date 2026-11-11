@@ -23,6 +23,7 @@ export function CanvasToolbar({
     onAddText,
     onAddConfig,
     onAddGroup,
+    extraButtons = [],
     onAddExtensionNode,
     onUndo,
     onRedo,
@@ -47,6 +48,8 @@ export function CanvasToolbar({
     onAddText: () => void;
     onAddConfig: () => void;
     onAddGroup: () => void;
+    /** Extra dock buttons appended after 分组 (分镜、锚点、搜索、整理、队列、快捷键…). */
+    extraButtons?: { id: string; label: string; icon: ReactNode; onClick: () => void; active?: boolean }[];
     onAddExtensionNode: (type: string) => void;
     onUndo: () => void;
     onRedo: () => void;
@@ -77,7 +80,7 @@ export function CanvasToolbar({
     const dockStyle = { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item, boxShadow: colorTheme === "dark" ? "0 18px 45px rgba(0,0,0,.32)" : "0 16px 40px rgba(28,25,23,.12)" };
     const hoverStyle = { background: theme.toolbar.itemHover, color: theme.toolbar.activeText };
     const activeStyle = { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
-    const tip = hovered ? toolLabel(hovered, t) : "";
+    const tip = hovered ? extraButtons.find((button) => button.id === hovered)?.label || toolLabel(hovered, t) : "";
 
     // Close extension-node and canvas-appearance popovers when clicking outside the toolbar and its panels.
     useEffect(() => {
@@ -127,6 +130,11 @@ export function CanvasToolbar({
                 <ToolbarButton id="tool-group" label={t("canvas.toolbar.group")} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddGroup}>
                     <Group className="size-4.5" />
                 </ToolbarButton>
+                {extraButtons.map((button) => (
+                    <ToolbarButton key={button.id} id={button.id} label={button.label} active={button.active} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={button.onClick}>
+                        {button.icon}
+                    </ToolbarButton>
+                ))}
                 {extensionDefs.length ? (
                     <ToolbarButton
                         id="tool-extensions"

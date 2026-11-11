@@ -107,3 +107,34 @@ export async function downloadNodeContent(node: CanvasNodeData) {
     files.forEach((file) => saveAs(typeof file.data === "string" ? new Blob([file.data], { type: "text/plain;charset=utf-8" }) : file.data, `${safeName(node.title || node.type)}${file.base}.${file.ext}`));
     return files.length;
 }
+
+const textSelections = new Map<string, { text: string; at: number }>();
+/** Remember the text selected in a text node right before its editor closed (toolbar clicks close the editor first). */
+export function rememberTextSelection(nodeId: string, text: string) {
+    textSelections.set(nodeId, { text, at: Date.now() });
+}
+export function takeTextSelection(nodeId: string) {
+    const entry = textSelections.get(nodeId);
+    textSelections.delete(nodeId);
+    return entry && Date.now() - entry.at < 15_000 ? entry.text : "";
+}
+
+/** Keep the previous text as a version when an edit starts more than 30 s after the last saved version. */
+export function withTextVersion(node: CanvasNodeData, nextContent: string): CanvasNodeData["metadata"] {
+    const meta = node.metadata || {};
+    const previous = meta.content || "";
+    const versions = meta.textVersions || [];
+    const last = versions[versions.length - 1];
+    const stale = !last || Date.now() - new Date(last.createdAt).getTime() > 30_000;
+    if (!previous.trim() || previous === nextContent || !stale || last?.content === previous) return { ...meta, content: nextContent };
+    return { ...meta, content: nextContent, textVersions: [...versions, { id: nanoid(), createdAt: new Date().toISOString(), content: previous }] };
+}
+
+export function restoreTextVersion(node: CanvasNodeData, versionId: string): CanvasNodeData {
+    const meta = node.metadata || {};
+    const version = meta.textVersions?.find((item) => item.id === versionId);
+    if (!version) return node;
+    const current = meta.content || "";
+    const versions = [...(meta.textVersions || []).filter((item) => item.id !== versionId), ...(current.trim() ? [{ id: nanoid(), createdAt: new Date().toISOString(), content: current }] : [])];
+    return { ...node, metadata: { ...meta, content: version.content, textVersions: versions, texts: meta.texts?.map((text) => (text.id === meta.primaryTextId ? { ...text, content: version.content } : text)) } };
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Group, Video } from "lucide-react";
+import { Anchor, Clapperboard, Group, History, Link2, Ratio, Rows3, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -71,6 +71,9 @@ import {
 } from "@/lib/canvas/canvas-generation-helpers";
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
+import { registerHemosiNodes } from "@/components/canvas/nodes/hemosi-nodes";
+import { downstreamNodeCount, nextShotNo, renumberShotRows, setShotHost, shotRowMembers, splitScript } from "@/lib/canvas/canvas-shot-actions";
+import { useShotGeneration } from "@/pages/canvas/hooks/use-shot-generation";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
@@ -81,13 +84,17 @@ import { applyDraftConfig, draftParamsFor, isDraftMode } from "@/lib/canvas/canv
 import { stripGeneratedResult } from "@/lib/canvas/canvas-node-clone";
 import { CONNECTION_KINDS, CONNECTION_KIND_LABEL, connectionKindOf, connectionKindProblem, inferConnectionKind } from "@/lib/canvas/canvas-connection-kind";
 import { MenuButton } from "@/components/canvas/canvas-context-menu";
-import { connectionsTouching, downloadNodeContent, duplicateNodeWithLinks, toggleNodeCollapsed } from "@/lib/canvas/canvas-node-ops";
+import { deleteVersion, restoreVersion, withPreviousVersion } from "@/lib/canvas/canvas-node-versions";
+import { CanvasNodeVersionsModal } from "@/components/canvas/canvas-node-versions-modal";
+import { isGenerationTarget } from "@/lib/canvas/canvas-connection-kind";
+import { connectionsTouching, downloadNodeContent, duplicateNodeWithLinks, restoreTextVersion, takeTextSelection, toggleNodeCollapsed, withTextVersion } from "@/lib/canvas/canvas-node-ops";
 import { buildTemplateFromSelection, instantiateTemplate, templateName, type CanvasTemplate } from "@/lib/canvas/canvas-templates";
 import { findTemplate, useTemplateStore } from "@/stores/use-template-store";
 import { CanvasSaveTemplateModal, CanvasTemplateModal } from "@/components/canvas/canvas-templates";
 import { findFreeRightPosition, quickGrowKinds, quickGrowNodeType, type QuickGrowKind } from "@/lib/canvas/canvas-quick-grow";
 import {
     CanvasNodeType,
+    HemosiNodeType,
     type CanvasAssistantImage,
     type CanvasAssistantSession,
     type CanvasConnection,
@@ -107,6 +114,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 // Register built-in nodes in the shared registry once when the module loads.
 registerBuiltinNodes();
+registerHemosiNodes();
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -150,7 +158,7 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
         width: videoSize.width,
         height: videoSize.height,
         position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 },
-        metadata: { ...item.metadata, ...videoMetadata(video), ...extra },
+        metadata: withPreviousVersion(item, { ...item.metadata, ...videoMetadata(video), ...extra }),
     };
 }
 
@@ -354,6 +362,23 @@ function InfiniteCanvasPage() {
     }, []);
 
     useEffect(() => () => generationConfirmResolveRef.current?.(false), []);
+
+    const { runShot, runShots } = useShotGeneration({ projectId, nodesRef, connectionsRef, setNodes, effectiveConfig, isAiConfigReady, openConfigDialog, requestGenerationConfirm, startGenerationRequest, finishGenerationRequest });
+    const [versionsNodeId, setVersionsNodeId] = useState<string | null>(null);
+    useEffect(
+        () =>
+            setShotHost({
+                generate: (nodeId, kind) => runShot(nodeId, kind),
+                selectRow: (nodeId) => {
+                    const row = shotRowMembers(nodeId, nodesRef.current);
+                    setSelectedNodeIds(new Set(row.map((node) => node.id)));
+                    setDialogNodeId(null);
+                },
+                openVersions: setVersionsNodeId,
+                downstreamCount: (nodeId) => downstreamNodeCount(nodeId, nodesRef.current, connectionsRef.current),
+            }),
+        [runShot],
+    );
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
@@ -902,7 +927,7 @@ function InfiniteCanvasPage() {
                           count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count),
                       }
                     : undefined;
-            const newNode = createCanvasNode(type, targetPosition, configMetadata);
+            const newNode = createCanvasNode(type, targetPosition, type === HemosiNodeType.Shot ? { shotNo: nextShotNo(nodesRef.current) } : configMetadata);
 
             setNodes((prev) => [...prev, newNode]);
             setSelectedNodeIds(new Set([newNode.id]));
@@ -1167,6 +1192,38 @@ function InfiniteCanvasPage() {
         },
         [focusNodePrompt, message, t],
     );
+
+    // 文本拆分镜: the selected part of a script (or all of it) becomes a row of empty shots, one per paragraph/line, grouped as one scene.
+    const splitTextToShots = useCallback(
+        (nodeId: string, by: "paragraph" | "line") => {
+            const source = nodesRef.current.find((node) => node.id === nodeId);
+            if (!source) return;
+            const selected = takeTextSelection(nodeId);
+            const parts = splitScript(selected || source.metadata?.content || source.metadata?.prompt || "", by);
+            if (!parts.length) return void message.warning(t("p1.shot.nothingToSplit"));
+            const spec = getNodeSpec(HemosiNodeType.Shot);
+            const startNo = nextShotNo(nodesRef.current);
+            const gap = 40;
+            const x0 = source.position.x + source.width + 160;
+            const y0 = source.position.y;
+            const shots = parts.map((text, index) => {
+                const created = createCanvasNode(HemosiNodeType.Shot, { x: x0 + index * (spec.width + gap) + spec.width / 2, y: y0 + spec.height / 2 }, { shotNo: startNo + index, shotDescription: text, shotRefs: [] });
+                return { ...created, title: `镜头 ${startNo + index}` };
+            });
+            const withShots = [...nodesRef.current, ...shots];
+            const rect = getGroupWrapRect(shots);
+            const groupNode = createCanvasNode(CanvasNodeType.Group, { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+            const grouped = applyGroupSelection(new Set(shots.map((shot) => shot.id)), withShots, connectionsRef.current, { ...groupNode, title: `${source.title || t("p1.shot.scene")} · ${t("p1.shot.scene")}`, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height });
+            setNodes(grouped ? grouped.nodes : withShots);
+            if (grouped) setConnections(grouped.connections);
+            setSelectedNodeIds(new Set(shots.map((shot) => shot.id)));
+            setDialogNodeId(null);
+            message.success(t("p1.shot.split", { count: shots.length, from: startNo, to: startNo + shots.length - 1 }));
+        },
+        [message, t],
+    );
+
+    const [refTargetSourceId, setRefTargetSourceId] = useState<string | null>(null);
 
     const openSaveTemplate = useCallback(() => {
         setContextMenu(null);
@@ -1527,13 +1584,17 @@ function InfiniteCanvasPage() {
                     return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
                 });
                 const targetGroup = findGroupDropTarget(movedIds, moved);
-                if (targetGroup) return snapNodesIntoGroup(movedIds, moved, targetGroup);
-                return moved.map((node) => {
-                    if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
-                    const groupId = findContainingGroupId(node, moved);
-                    if (node.metadata?.groupId === groupId) return node;
-                    return { ...node, metadata: { ...node.metadata, groupId } };
-                });
+                if (targetGroup) return renumberShotRows(movedIds, snapNodesIntoGroup(movedIds, moved, targetGroup));
+                // Dragging a shot within its row renumbers the row left to right.
+                return renumberShotRows(
+                    movedIds,
+                    moved.map((node) => {
+                        if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
+                        const groupId = findContainingGroupId(node, moved);
+                        if (node.metadata?.groupId === groupId) return node;
+                        return { ...node, metadata: { ...node.metadata, groupId } };
+                    }),
+                );
             });
         }
 
@@ -1899,11 +1960,27 @@ function InfiniteCanvasPage() {
         );
     }, []);
 
+    const hemosiToolbarItems = useCallback(
+        (node: CanvasNodeData) => {
+            const items: { id: string; title: string; label: string; icon: ReactNode; onClick: () => void }[] = [];
+            const versions = node.metadata?.versions?.length || 0;
+            if (node.type === CanvasNodeType.Text) {
+                items.push({ id: "p1-split-paragraph", title: t("p1.shot.splitParagraphTitle"), label: t("p1.shot.splitParagraph"), icon: <Clapperboard className="size-4" />, onClick: () => splitTextToShots(node.id, "paragraph") });
+                items.push({ id: "p1-split-line", title: t("p1.shot.splitLineTitle"), label: t("p1.shot.splitLine"), icon: <Rows3 className="size-4" />, onClick: () => splitTextToShots(node.id, "line") });
+            }
+            if (node.type === CanvasNodeType.Image && node.metadata?.content) items.push({ id: "p1-set-ref", title: t("p1.toolbar.setRefTitle"), label: t("p1.toolbar.setRef"), icon: <Link2 className="size-4" />, onClick: () => setRefTargetSourceId(node.id) });
+            if (node.type === CanvasNodeType.Video && node.metadata?.content) items.push({ id: "p1-ratio-lock", title: t("p1.toolbar.ratioLockTitle"), label: node.metadata?.freeResize ? t("p1.toolbar.freeResize") : t("p1.toolbar.ratioLocked"), icon: <Ratio className="size-4" />, onClick: () => toggleNodeFreeResize(node.id) });
+            if (versions || (node.type === CanvasNodeType.Text && node.metadata?.textVersions?.length)) items.push({ id: "p1-versions", title: t("p1.versions.title"), label: t("p1.versions.button", { count: versions || node.metadata?.textVersions?.length || 0 }), icon: <History className="size-4" />, onClick: () => setVersionsNodeId(node.id) });
+            return items;
+        },
+        [splitTextToShots, t, toggleNodeFreeResize],
+    );
+
     const handleNodeContentChange = useCallback((nodeId: string, content: string) => {
         setNodes((prev) =>
             prev.map((node) =>
                 node.id === nodeId
-                    ? { ...node, metadata: { ...node.metadata, content, texts: node.metadata?.texts?.map((text) => (text.id === node.metadata?.primaryTextId ? { ...text, content } : text)) } }
+                    ? { ...node, metadata: { ...withTextVersion(node, content), texts: node.metadata?.texts?.map((text) => (text.id === node.metadata?.primaryTextId ? { ...text, content } : text)) } }
                     : node,
             ),
         );
@@ -2707,7 +2784,7 @@ function InfiniteCanvasPage() {
                                             width: rootNode.width,
                                             height: rootNode.height,
                                             title: rootNode.title,
-                                            metadata: { ...node.metadata, ...rootNode.metadata, content: undefined, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, errorDetails: undefined },
+                                            metadata: withPreviousVersion(node, { ...node.metadata, ...rootNode.metadata, content: undefined, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, errorDetails: undefined }),
                                         }
                                       : isImageNode
                                         ? {
@@ -3167,14 +3244,14 @@ function InfiniteCanvasPage() {
                             ...item,
                             type: CanvasNodeType.Image,
                             ...(makePrimary ? { width: imageSize.width, height: imageSize.height, ...(imageId ? { position: { x: item.position.x + item.width / 2 - imageSize.width / 2, y: item.position.y + item.height / 2 - imageSize.height / 2 } } : {}) } : {}),
-                            metadata: {
+                            metadata: withPreviousVersion(makePrimary ? item : undefined, {
                                 ...item.metadata,
                                 ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
                                 images: item.metadata?.images?.map((current) => (current.id === retryImage.id ? retryImage : current)),
                                 primaryImageId: makePrimary ? retryImage.id : item.metadata?.primaryImageId,
                                 prompt,
                                 ...generationMetadata,
-                            },
+                            }),
                         };
                     }),
                 );
@@ -3667,6 +3744,7 @@ function InfiniteCanvasPage() {
                     node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen || Boolean(referencePickerNodeId) || expandedBatchNodeIds.has(toolbarNode?.id || "") ? null : toolbarNode}
                     viewport={viewport}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
+                    pinnedExtraTools={toolbarNode ? hemosiToolbarItems(toolbarNode) : undefined}
                     onKeep={keepNodeToolbar}
                     onLeave={hideNodeToolbar}
                     onInfo={(node) => setInfoNodeId(node.id)}
@@ -3723,6 +3801,10 @@ function InfiniteCanvasPage() {
                     onAddText={() => createNode(CanvasNodeType.Text)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
+                    extraButtons={[
+                        { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
+                        { id: "tool-anchor", label: "锚点（角色/场景/风格）", icon: <Anchor className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Anchor) },
+                    ]}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -3859,6 +3941,29 @@ function InfiniteCanvasPage() {
                     setLabelEdit(null);
                 }}>
                     <Input autoFocus maxLength={24} value={labelEdit?.value || ""} placeholder={t("p1.link.labelPlaceholder")} onChange={(event) => setLabelEdit((current) => (current ? { ...current, value: event.target.value } : current))} />
+                </Modal>
+
+                <CanvasNodeVersionsModal
+                    node={versionsNodeId ? nodeById.get(versionsNodeId) || null : null}
+                    onClose={() => setVersionsNodeId(null)}
+                    onRestore={(nodeId, versionId) => updateNodeById(nodeId, (node) => restoreVersion(node, versionId))}
+                    onDelete={(nodeId, versionId) => updateNodeById(nodeId, (node) => deleteVersion(node, versionId))}
+                    onRestoreText={(nodeId, versionId) => updateNodeById(nodeId, (node) => restoreTextVersion(node, versionId))}
+                />
+
+                <Modal title={t("p1.toolbar.setRefTitle")} open={Boolean(refTargetSourceId)} centered footer={null} onCancel={() => setRefTargetSourceId(null)} destroyOnHidden>
+                    <div className="thin-scrollbar max-h-[50vh] space-y-1 overflow-auto">
+                        {nodes.filter((node) => node.id !== refTargetSourceId && isGenerationTarget(node) && node.type !== CanvasNodeType.Text && node.type !== CanvasNodeType.Audio).map((node) => (
+                            <button key={node.id} type="button" className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10" onClick={() => {
+                                if (refTargetSourceId && !connectionsRef.current.some((item) => item.fromNodeId === refTargetSourceId && item.toNodeId === node.id)) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: refTargetSourceId, toNodeId: node.id, kind: "reference" }]);
+                                setRefTargetSourceId(null);
+                                focusNode(node.id);
+                            }}>
+                                <span className="truncate">{node.type === HemosiNodeType.Shot ? `镜头 ${node.metadata?.shotNo ?? ""} · ` : ""}{node.title}</span>
+                                <span className="shrink-0 text-xs opacity-50">{getNodeSpec(node.type).title}</span>
+                            </button>
+                        ))}
+                    </div>
                 </Modal>
 
                 <CanvasGenerationConfirmModal summary={generationConfirmSummary} onConfirm={(dontAskAgain) => settleGenerationConfirm(true, dontAskAgain)} onCancel={() => settleGenerationConfirm(false)} />

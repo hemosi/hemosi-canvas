@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { Check, ChevronRight, Copy, Download, Group, Image as ImageIcon, Loader2, Lock, Music2, Plus, Puzzle, RefreshCw, Star, Trash2, TriangleAlert, Video } from "lucide-react";
-import { nodeStatusBadge } from "@/lib/canvas/canvas-node-ops";
+import { nodeStatusBadge, rememberTextSelection } from "@/lib/canvas/canvas-node-ops";
+import copyToClipboard from "copy-to-clipboard";
+import { App } from "antd";
 import { AUDIO_ROLES, AUDIO_ROLE_LABEL, IMAGE_ROLES, IMAGE_ROLE_LABEL } from "@/lib/canvas/canvas-reference-roles";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -217,6 +219,8 @@ export const CanvasNode = React.memo(function CanvasNode({
             const target = event.target;
             if (!(target instanceof Node)) return;
             if (isEditingContent && textareaRef.current?.contains(target)) return;
+            const textarea = textareaRef.current;
+            if (textarea && textarea.selectionEnd > textarea.selectionStart) rememberTextSelection(data.id, textarea.value.slice(textarea.selectionStart, textarea.selectionEnd));
 
             setIsEditingContent(false);
         };
@@ -633,8 +637,14 @@ function MissingPluginContent({ theme, type }: Pick<NodeContentRendererProps, "t
     );
 }
 
+/** Characters excluding whitespace (Chinese-style 字数). */
+function countWords(text: string) {
+    return text.replace(/\s/g, "").length;
+}
+
 function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, batchExpanded, onContentChange, onStopEditing, onToggleBatch, onSetBatchPrimary }: NodeContentRendererProps) {
     const { t } = useTranslation();
+    const { message } = App.useApp();
     const fontSize = node.metadata?.fontSize || 14;
     const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
     const texts = node.metadata?.texts || [];
@@ -682,6 +692,14 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                     </div>
                 )}
             </div>
+            {content ? (
+                <div className="absolute bottom-2 right-3 z-30 flex items-center gap-2 text-[10px]" style={{ color: theme.node.muted }} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    <span>{countWords(content)} 字 · {content.split(/\n\s*\n+/).filter((part) => part.trim()).length} 段</span>
+                    <button type="button" className="rounded px-1 hover:bg-black/5 dark:hover:bg-white/10" title="复制全文" onClick={() => void Promise.resolve(copyToClipboard(content)).then(() => message.success("已复制全文"))}>
+                        复制
+                    </button>
+                </div>
+            ) : null}
             {isBatchRoot ? (
                 <button
                     type="button"

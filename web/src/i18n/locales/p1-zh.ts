@@ -13,6 +13,26 @@ const p1 = {
         editLabel: "编辑连线标注",
         labelPlaceholder: "例如：动作参考 / 主角 / 第二场",
     },
+    shot: {
+        nothingToSplit: "没有可拆的文字（先写剧本，或在文本里选中一段）",
+        scene: "场次",
+        split: "已拆成 {{count}} 个分镜（镜头 {{from}}–{{to}}）",
+        splitParagraph: "拆分镜·按段",
+        splitParagraphTitle: "把选中的剧本（未选中则全文）按空行分段，每段一个分镜，描述自动填入",
+        splitLine: "拆分镜·按行",
+        splitLineTitle: "按行拆，每行一个分镜",
+    },
+    toolbar: {
+        setRef: "设为参考",
+        setRefTitle: "把这张图作为参考连给某个生成节点/分镜",
+        ratioLockTitle: "切换：保持比例 / 自由拉伸",
+        ratioLocked: "比例锁定",
+        freeResize: "自由拉伸",
+    },
+    versions: {
+        title: "历史版本：对比 / 还原",
+        button: "版本 {{count}}",
+    },
     menu: {
         duplicate: "复制",
         duplicateWithLinks: "带连线复制",

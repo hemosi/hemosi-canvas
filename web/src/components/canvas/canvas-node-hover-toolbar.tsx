@@ -43,6 +43,8 @@ type CanvasNodeHoverToolbarProps = {
     onDelete: (node: CanvasNodeData) => void;
     onUngroup?: (node: CanvasNodeData) => void;
     extraTools?: CanvasNodeToolbarItem[];
+    /** Always shown first, for every node type (版本、拆分镜、设为参考…). */
+    pinnedExtraTools?: CanvasNodeToolbarItem[];
 };
 
 type ToolbarTool = {
@@ -85,6 +87,7 @@ export function CanvasNodeHoverToolbar({
     onDelete,
     onUngroup,
     extraTools = [],
+    pinnedExtraTools = [],
 }: CanvasNodeHoverToolbarProps) {
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [showImageToolLabels, setShowImageToolLabels] = useState(false);
@@ -174,7 +177,7 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo ? [{ id: "download", title: t("canvas.nodeToolbar.downloadVideo"), label: t("hemosi.videoTools.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
         ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo || (!isBuiltinNodeType(node.type) && Boolean(node.metadata?.content) && Boolean(getNodeDefinition(node.type)?.useBuiltinPanel?.writeBackToSelf))) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
     ];
-    const toolbarTools = hasImage ? [...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...pinnedTools, ...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
+    const toolbarTools = hasImage ? [...pinnedExtraTools, ...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...pinnedExtraTools, ...pinnedTools, ...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {
@@ -213,7 +216,7 @@ export function CanvasNodeHoverToolbar({
                 onPointerDown={(event) => event.stopPropagation()}
             >
                 {toolbarTools.map((tool) => (
-                    <ToolbarAction key={tool.id} {...tool} showLabel={tool.id === "hdRegenerate" || !isImage ? true : showImageToolLabels} />
+                    <ToolbarAction key={tool.id} {...tool} showLabel={tool.id === "hdRegenerate" || tool.id.startsWith("p1-") || !isImage ? true : showImageToolLabels} />
                 ))}
                 {hasImage ? <ToolbarAction id="more" title={t("canvas.imageTools.configure")} label={t("canvas.imageTools.more")} icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
             </div>

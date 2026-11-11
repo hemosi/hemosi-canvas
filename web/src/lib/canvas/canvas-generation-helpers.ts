@@ -42,7 +42,26 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
+async function hydrateMediaItem<T extends { content?: string; storageKey?: string }>(item: T | undefined): Promise<T | undefined> {
+    if (!item?.storageKey) return item;
+    const content = item.storageKey.startsWith("image:") ? await resolveImageUrl(item.storageKey, item.content) : await resolveMediaUrl(item.storageKey, item.content);
+    return { ...item, content };
+}
+
+/** Object URLs die with the page: re-resolve media kept inside metadata (anchors, shots, versions) from local storage. */
+async function hydrateNestedMedia(node: CanvasNodeData): Promise<CanvasNodeData> {
+    const meta = node.metadata;
+    if (!meta || !(meta.anchorImages || meta.shotRefs || meta.shotImage || meta.shotVideo || meta.anchorVoice || meta.versions)) return node;
+    const list = <T extends { content?: string; storageKey?: string }>(items?: T[]) => (items ? Promise.all(items.map((item) => hydrateMediaItem(item) as Promise<T>)) : Promise.resolve(undefined));
+    const [anchorImages, shotRefs, shotImage, shotVideo, anchorVoice, versions] = await Promise.all([list(meta.anchorImages), list(meta.shotRefs), hydrateMediaItem(meta.shotImage), hydrateMediaItem(meta.shotVideo), hydrateMediaItem(meta.anchorVoice), list(meta.versions)]);
+    return { ...node, metadata: { ...meta, anchorImages, shotRefs, shotImage, shotVideo, anchorVoice, versions } };
+}
+
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
+    return Promise.all((await hydrateCanvasNodeMedia(nodes)).map(hydrateNestedMedia));
+}
+
+async function hydrateCanvasNodeMedia(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
             const metadata = node.metadata;
