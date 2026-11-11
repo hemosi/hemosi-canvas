@@ -19,6 +19,10 @@ export type CanvasProject = {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
+    /** The 项目 (workspace) this canvas belongs to. */
+    workspaceId?: string;
+    /** Canvas this one was forked from. */
+    forkedFrom?: string;
 };
 
 export type CanvasDeletedProject = {
@@ -30,19 +34,29 @@ type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
     deletedProjects: CanvasDeletedProject[];
-    createProject: (title?: string) => string;
+    createProject: (title?: string, workspaceId?: string) => string;
+    forkProject: (id: string, title?: string) => string | null;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "workspaceId">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects" | "deletedProjects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let flushPending: (() => Promise<void>) | null = null;
+
+/** Autosave state for the 未保存 / 已保存 indicator. */
+export const useCanvasSaveStatus = create<{ pending: boolean; savedAt: string | null; error: string | null }>(() => ({ pending: false, savedAt: null, error: null }));
+
+/** Write a queued save right away (page hide / before unload). */
+export function flushCanvasSave() {
+    return flushPending?.() ?? Promise.resolve();
+}
 let queuedPersistState: PersistedCanvasState | null = null;
 
 const canvasStorage: PersistStorage<CanvasStore> = {
@@ -58,10 +72,20 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.deletedProjects === nextState.deletedProjects) return;
         queuedPersistState = nextState;
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
+        useCanvasSaveStatus.setState({ pending: true });
+        const write = async () => {
+            if (saveTimer) clearTimeout(saveTimer);
             saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
-        }, 400);
+            flushPending = null;
+            try {
+                await localForageStorage.setItem(name, JSON.stringify(value));
+                useCanvasSaveStatus.setState({ pending: Boolean(saveTimer), savedAt: new Date().toISOString(), error: null });
+            } catch (error) {
+                useCanvasSaveStatus.setState({ pending: true, error: error instanceof Error ? error.message : String(error) });
+            }
+        };
+        flushPending = write;
+        saveTimer = setTimeout(() => void write(), 400);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
@@ -72,7 +96,7 @@ export const useCanvasStore = create<CanvasStore>()(
             hydrated: false,
             projects: [],
             deletedProjects: [],
-            createProject: (title = i18n.t("canvas.project.untitled")) => {
+            createProject: (title = i18n.t("canvas.project.untitled"), workspaceId) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
                 const project: CanvasProject = {
@@ -87,9 +111,20 @@ export const useCanvasStore = create<CanvasStore>()(
                     backgroundMode: "lines",
                     showImageInfo: false,
                     viewport: initialViewport,
+                    workspaceId,
                 };
                 set((state) => ({ projects: [project, ...state.projects] }));
                 return id;
+            },
+            // Fork: a full copy of the canvas (nodes, links, versions) in the same project; the original stays as it is.
+            forkProject: (id, title) => {
+                const source = get().projects.find((item) => item.id === id);
+                if (!source) return null;
+                const now = new Date().toISOString();
+                const copy = JSON.parse(JSON.stringify({ nodes: source.nodes, connections: source.connections })) as Pick<CanvasProject, "nodes" | "connections">;
+                const fork: CanvasProject = { ...source, ...copy, id: nanoid(), title: title || `${source.title} · 分支`, createdAt: now, updatedAt: now, chatSessions: [], activeChatId: null, forkedFrom: source.id };
+                set((state) => ({ projects: [fork, ...state.projects] }));
+                return fork.id;
             },
             importProject: (source) => {
                 const now = new Date().toISOString();
@@ -105,6 +140,8 @@ export const useCanvasStore = create<CanvasStore>()(
                     backgroundMode: source.backgroundMode || "lines",
                     showImageInfo: source.showImageInfo || false,
                     viewport: source.viewport || initialViewport,
+                    workspaceId: source.workspaceId,
+                    forkedFrom: source.forkedFrom,
                 };
                 set((state) => ({ projects: [project, ...state.projects] }));
                 return project.id;

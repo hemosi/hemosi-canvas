@@ -5,29 +5,34 @@ import { createZip } from "@/lib/zip";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
+import type { Workspace } from "@/stores/canvas/use-workspace-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import { collectNodeFiles, nodeTextContent } from "@/lib/canvas/canvas-node-ops";
 
-export async function exportCanvasProjects(projects: CanvasProject[], fileName = i18n.t("canvas.export.defaultProjectName")) {
-    const zipFiles: { name: string; data: BlobPart }[] = [];
-    const exportedProjects = await Promise.all(
-        projects.map(async (project) => {
-            const files: CanvasExportAsset[] = [];
-            await Promise.all(
-                collectStorageKeys(project).map(async (storageKey) => {
-                    const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                    if (!blob) return;
-                    const path = `projects/${project.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
-                    files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
-                    zipFiles.push({ name: path, data: blob });
-                }),
-            );
-            return { project, files };
+async function collectFiles(owner: unknown, folder: string, zipFiles: { name: string; data: BlobPart }[], done: Set<string>) {
+    const files: CanvasExportAsset[] = [];
+    await Promise.all(
+        collectStorageKeys(owner).map(async (storageKey) => {
+            const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+            if (!blob) return;
+            const path = `${folder}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+            files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
+            if (!done.has(path)) zipFiles.push({ name: path, data: blob });
+            done.add(path);
         }),
     );
+    return files;
+}
 
-    const data: CanvasExportFile = { app: "infinite-canvas", version: 3, exportedAt: new Date().toISOString(), projects: exportedProjects };
+/** Export canvases (and, for a 项目包, their project with script and materials) with every referenced file: results, versions, anchors, materials. */
+export async function exportCanvasProjects(projects: CanvasProject[], fileName = i18n.t("canvas.export.defaultProjectName"), workspaces: Workspace[] = []) {
+    const zipFiles: { name: string; data: BlobPart }[] = [];
+    const done = new Set<string>();
+    const exportedProjects = await Promise.all(projects.map(async (project) => ({ project, files: await collectFiles(project, `projects/${project.id}`, zipFiles, done) })));
+    const exportedWorkspaces = await Promise.all(workspaces.map(async (workspace) => ({ workspace, files: await collectFiles(workspace, `workspaces/${workspace.id}`, zipFiles, done) })));
+
+    const data: CanvasExportFile = { app: "infinite-canvas", version: workspaces.length ? 4 : 3, exportedAt: new Date().toISOString(), projects: exportedProjects, ...(workspaces.length ? { workspaces: exportedWorkspaces } : {}) };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     saveAs(zip, `${safeFileName(fileName)}.zip`);
 }

@@ -1,4 +1,7 @@
-import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { getNodeSpec } from "@/constant/canvas";
+import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
+import { getGroupWrapRect } from "@/lib/canvas/canvas-node-geometry";
+import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 /** Canvas-page actions that shot/anchor node content calls; registered by the canvas page while it is mounted. */
 export type ShotHost = {
@@ -65,4 +68,17 @@ export function nextShotNo(nodes: CanvasNodeData[]) {
 
 export function downstreamNodeCount(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return connections.filter((connection) => connection.fromNodeId === nodeId && nodes.some((node) => node.id === connection.toNodeId && node.type !== CanvasNodeType.Group)).length;
+}
+
+/** A scene: one group holding a row of empty shots (one per script part, description filled in), left edge at `origin`. */
+export function buildShotRow(parts: string[], origin: Position, startNo: number, groupTitle: string) {
+    const spec = getNodeSpec(HemosiNodeType.Shot);
+    const gap = 40;
+    const shots = parts.map((text, index) => ({
+        ...createCanvasNode(HemosiNodeType.Shot, { x: origin.x + index * (spec.width + gap) + spec.width / 2, y: origin.y + spec.height / 2 }, { shotNo: startNo + index, shotDescription: text, shotRefs: [] }),
+        title: `镜头 ${startNo + index}`,
+    }));
+    const rect = getGroupWrapRect(shots);
+    const group = { ...createCanvasNode(CanvasNodeType.Group, { x: 0, y: 0 }), title: groupTitle, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height };
+    return [group, ...shots.map((shot) => ({ ...shot, metadata: { ...shot.metadata, groupId: group.id } }))];
 }

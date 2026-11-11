@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Bot, Download, GitFork, Home, Images, Menu, Package, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Button, Dropdown, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -8,6 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
+import { CanvasShortcutsList } from "@/components/canvas/canvas-shortcuts-list";
 
 export function CanvasTopBar({
     title,
@@ -31,6 +32,11 @@ export function CanvasTopBar({
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
+    projectName,
+    onOpenProject,
+    onFork,
+    onExportPackage,
+    saveState,
 }: {
     title: string;
     titleDraft: string;
@@ -53,6 +59,11 @@ export function CanvasTopBar({
     agentOpen: boolean;
     compactAgentStatus: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
+    projectName?: string;
+    onOpenProject?: () => void;
+    onFork?: () => void;
+    onExportPackage?: () => void;
+    saveState?: { pending: boolean; savedAt: string | null; error: string | null };
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const { t } = useTranslation();
@@ -99,6 +110,8 @@ export function CanvasTopBar({
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: t("canvas.importAsset"), onClick: onImportImage },
                                 { key: "export", icon: <Download className="size-4" />, label: t("canvas.exportCurrent"), onClick: onExportProject },
+                                ...(onExportPackage ? [{ key: "export-package", icon: <Package className="size-4" />, label: "导出项目包（全部画布 + 剧本 + 素材 + 版本）", onClick: onExportPackage }] : []),
+                                ...(onFork ? [{ key: "fork", icon: <GitFork className="size-4" />, label: "Fork 一个分支画布（原画布不动）", onClick: onFork }] : []),
                                 { type: "divider" },
                                 { key: "undo", disabled: !canUndo, icon: <Undo2 className="size-4" />, label: <MenuLabel text={t("canvas.undo")} shortcut="⌘ Z" />, onClick: onUndo },
                                 { key: "redo", disabled: !canRedo, icon: <Redo2 className="size-4" />, label: <MenuLabel text={t("canvas.redo")} shortcut="⌘ ⇧ Z / ⌘ Y" />, onClick: onRedo },
@@ -135,6 +148,16 @@ export function CanvasTopBar({
                             </button>
                         )}
                     </div>
+                    {projectName && onOpenProject ? (
+                        <button type="button" className="max-w-[160px] truncate text-xs opacity-60 transition hover:opacity-100" style={{ color: theme.node.text }} title="打开所在项目" onClick={onOpenProject}>
+                            项目 · {projectName}
+                        </button>
+                    ) : null}
+                    {saveState ? (
+                        <span className="text-xs" style={{ color: saveState.error ? "#f87171" : saveState.pending ? "#f59e0b" : theme.node.muted }} title={saveState.error || undefined}>
+                            {saveState.error ? "保存失败" : saveState.pending ? "未保存…" : saveState.savedAt ? `已自动保存 ${new Date(saveState.savedAt).toLocaleTimeString()}` : "已保存"}
+                        </span>
+                    ) : null}
                     <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                 </div>
 
@@ -152,23 +175,9 @@ export function CanvasTopBar({
                     </Button>
                 </div>
             </div>
-            <Modal title={t("canvas.shortcuts")} open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
-                <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut keys={["Ctrl / Space", t("canvas.shortcut.drag")]} value={t("canvas.shortcut.toggleTool")} />
-                    <Shortcut keys={[t("canvas.shortcut.wheel")]} value={t("canvas.shortcut.zoom")} />
-                    <Shortcut keys={[t("canvas.shortcut.zoomSlider")]} value={t("canvas.shortcut.preciseZoom")} />
-                    <Shortcut keys={[t("canvas.shortcut.drag")]} value={t("canvas.shortcut.boxSelect")} />
-                    <Shortcut keys={["Shift / Cmd", t("canvas.shortcut.click")]} value={t("canvas.shortcut.addSelection")} />
-                    <Shortcut keys={["Ctrl / Cmd", "A"]} value={t("canvas.shortcut.selectAll")} />
-                    <Shortcut keys={["Ctrl / Cmd", "C / V"]} value={t("canvas.shortcut.copyPaste")} />
-                    <Shortcut keys={["Ctrl / Cmd", "G"]} value={t("canvas.shortcut.group")} />
-                    <Shortcut keys={["Ctrl / Cmd", "Shift", "G"]} value={t("canvas.shortcut.ungroup")} />
-                    <Shortcut keys={["Ctrl / Cmd", "Z"]} value={t("canvas.undo")} />
-                    <Shortcut keys={["Ctrl / Cmd", "Shift", "Z"]} value={t("canvas.redo")} />
-                    <Shortcut keys={["Ctrl / Cmd", "Y"]} value={t("canvas.redo")} />
-                    <Shortcut keys={["Delete / Backspace"]} value={t("canvas.shortcut.delete")} />
-                    <Shortcut keys={["Esc"]} value={t("canvas.shortcut.escape")} />
-                    <Shortcut keys={[t("canvas.shortcut.dropMedia")]} value={t("canvas.shortcut.upload")} />
+            <Modal title={t("canvas.shortcuts")} open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered width={760}>
+                <div className="border-t pt-4" style={{ borderColor: theme.node.stroke }}>
+                    <CanvasShortcutsList />
                 </div>
             </Modal>
         </>
@@ -195,26 +204,5 @@ function CompactAgentStatus({ status, onClick }: { status: { connected: boolean;
             <span className="size-2 rounded-full" style={{ background: dotColor }} />
             <span className="max-w-[140px] truncate">{label}</span>
         </button>
-    );
-}
-
-function Shortcut({ keys, value }: { keys: string[]; value: string }) {
-    return (
-        <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">
-            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {keys.map((key, index) => (
-                    <span key={`${key}-${index}`} className="flex items-center gap-1.5">
-                        {index ? <span className="text-xs opacity-35">+</span> : null}
-                        <kbd
-                            className="min-w-9 rounded-md border px-2.5 py-1.5 text-center text-xs font-medium leading-none shadow-[inset_0_-1px_0_rgba(0,0,0,.08),0_1px_2px_rgba(0,0,0,.06)]"
-                            style={{ borderColor: "rgba(120,113,108,.28)", background: "linear-gradient(#fff, rgba(245,245,244,.92))", color: "rgb(68,64,60)" }}
-                        >
-                            {key}
-                        </kbd>
-                    </span>
-                ))}
-            </span>
-            <span className="text-right text-sm opacity-55">{value}</span>
-        </div>
     );
 }

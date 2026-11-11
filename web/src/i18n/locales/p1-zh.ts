@@ -54,6 +54,9 @@ const p1 = {
         rerunImages: "应用并重跑图片",
         rerunVideos: "应用并重跑视频",
     },
+    project: {
+        forked: "已 Fork 出分支画布，原画布保持不变",
+    },
     menu: {
         duplicate: "复制",
         duplicateWithLinks: "带连线复制",

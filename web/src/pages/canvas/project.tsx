@@ -43,7 +43,8 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasSave, useCanvasSaveStatus, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useWorkspaceStore } from "@/stores/canvas/use-workspace-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -553,6 +554,35 @@ function InfiniteCanvasPage() {
         };
         void restore();
     }, [hydrated, navigate, openProject, projectId]);
+
+    // Every canvas lives in a 项目; an older or stand-alone canvas gets its own project the first time it opens.
+    const workspacesHydrated = useWorkspaceStore((state) => state.hydrated);
+    useEffect(() => {
+        if (!projectLoaded || !workspacesHydrated) return;
+        const canvas = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+        if (!canvas || (canvas.workspaceId && useWorkspaceStore.getState().workspaces.some((item) => item.id === canvas.workspaceId))) return;
+        updateProject(projectId, { workspaceId: useWorkspaceStore.getState().createWorkspace(canvas.title) });
+    }, [projectId, projectLoaded, updateProject, workspacesHydrated]);
+    const workspace = useWorkspaceStore((state) => state.workspaces.find((item) => item.id === currentProject?.workspaceId));
+
+    // 未保存提示: warn before leaving while a save is queued, and write it immediately when the page is hidden.
+    const savePending = useCanvasSaveStatus((state) => state.pending);
+    const saveSavedAt = useCanvasSaveStatus((state) => state.savedAt);
+    const saveError = useCanvasSaveStatus((state) => state.error);
+    useEffect(() => {
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (!useCanvasSaveStatus.getState().pending) return;
+            void flushCanvasSave();
+            event.preventDefault();
+        };
+        const hide = () => void flushCanvasSave();
+        window.addEventListener("beforeunload", beforeUnload);
+        window.addEventListener("pagehide", hide);
+        return () => {
+            window.removeEventListener("beforeunload", beforeUnload);
+            window.removeEventListener("pagehide", hide);
+        };
+    }, []);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -1462,9 +1492,9 @@ function InfiniteCanvasPage() {
     }, [applyHistory]);
 
     const createAndOpenProject = useCallback(() => {
-        const id = createProject(t("canvas.defaultTitle", { count: useCanvasStore.getState().projects.length + 1 }));
+        const id = createProject(t("canvas.defaultTitle", { count: useCanvasStore.getState().projects.length + 1 }), currentProject?.workspaceId);
         navigate(`/canvas/${id}`);
-    }, [createProject, navigate, t]);
+    }, [createProject, currentProject?.workspaceId, navigate, t]);
 
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
@@ -1482,6 +1512,30 @@ function InfiniteCanvasPage() {
         } catch (error) {
             console.error(error);
             message.error(t("canvas.sidePanel.exportFailed"));
+        } finally {
+            hide();
+        }
+    }, [message, projectId, t]);
+
+    const forkCurrentCanvas = useCallback(() => {
+        void flushCanvasSave();
+        const id = useCanvasStore.getState().forkProject(projectId);
+        if (!id) return;
+        message.success(t("p1.project.forked"));
+        navigate(`/canvas/${id}`);
+    }, [message, navigate, projectId, t]);
+
+    const exportProjectPackage = useCallback(async () => {
+        const canvas = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+        const ws = useWorkspaceStore.getState().workspaces.find((item) => item.id === canvas?.workspaceId);
+        if (!canvas) return;
+        const hide = message.loading(t("canvas.projectPage.exporting"), 0);
+        try {
+            const canvases = ws ? useCanvasStore.getState().projects.filter((item) => item.workspaceId === ws.id) : [canvas];
+            await exportCanvasProjects(canvases, `${ws?.title || canvas.title}-项目包`, ws ? [ws] : []);
+            message.success(t("canvas.projectPage.exported"));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : t("canvas.sidePanel.exportFailed"));
         } finally {
             hide();
         }
@@ -1759,8 +1813,18 @@ function InfiniteCanvasPage() {
         };
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
+    // 素材节点: a file brought in from outside becomes a node and is archived into this canvas's project.
+    const archiveMaterial = useCallback(
+        (kind: "image" | "video" | "audio", name: string, file: { storageKey?: string; mimeType: string; bytes: number; width?: number; height?: number; durationMs?: number }) => {
+            const workspaceId = useCanvasStore.getState().projects.find((item) => item.id === projectId)?.workspaceId;
+            if (workspaceId && file.storageKey) useWorkspaceStore.getState().addMaterials(workspaceId, [{ kind, name, storageKey: file.storageKey, mimeType: file.mimeType, bytes: file.bytes, width: file.width, height: file.height, durationMs: file.durationMs, canvasId: projectId }]);
+        },
+        [projectId],
+    );
+
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
         const image = await uploadImage(file);
+        archiveMaterial("image", file.name, image);
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newNode: CanvasNodeData = {
@@ -1770,17 +1834,18 @@ function InfiniteCanvasPage() {
             position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: imageMetadata(image),
+            metadata: { ...imageMetadata(image), material: true, sourceFileName: file.name },
         };
 
         setNodes((prev) => [...prev, newNode]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
-    }, []);
+    }, [archiveMaterial]);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video");
+        archiveMaterial("video", file.name, video);
         const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
         const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         setNodes((prev) => [
@@ -1792,16 +1857,17 @@ function InfiniteCanvasPage() {
                 position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
                 width: size.width,
                 height: size.height,
-                metadata: videoMetadata(video),
+                metadata: { ...videoMetadata(video), material: true, sourceFileName: file.name },
             },
         ]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
-    }, []);
+    }, [archiveMaterial]);
 
     const createAudioFileNode = useCallback(async (file: File, position: Position) => {
         const audio = await uploadMediaFile(file, "audio");
+        archiveMaterial("audio", file.name, audio);
         const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
         const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         setNodes((prev) => [
@@ -1813,12 +1879,12 @@ function InfiniteCanvasPage() {
                 position: { x: position.x - spec.width / 2, y: position.y - spec.height / 2 },
                 width: spec.width,
                 height: spec.height,
-                metadata: audioMetadata(audio),
+                metadata: { ...audioMetadata(audio), material: true, sourceFileName: file.name },
             },
         ]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
-    }, []);
+    }, [archiveMaterial]);
 
     const createTextNodeFromClipboard = useCallback(
         (text: string) => {
@@ -3730,6 +3796,11 @@ function InfiniteCanvasPage() {
                     agentOpen={agentPanelOpen}
                     compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
                     onToggleAgent={toggleAgentPanel}
+                    projectName={workspace?.title}
+                    onOpenProject={workspace ? () => navigate(`/projects/${workspace.id}`) : undefined}
+                    onFork={forkCurrentCanvas}
+                    onExportPackage={exportProjectPackage}
+                    saveState={{ pending: savePending, savedAt: saveSavedAt, error: saveError }}
                 />
 
                 <InfiniteCanvas

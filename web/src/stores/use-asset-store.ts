@@ -97,8 +97,11 @@ export const useAssetStore = create<AssetStore>()(
             cleanupImages: (extra) => {
                 window.setTimeout(async () => {
                     const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
-                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
+                    const { useWorkspaceStore } = await import("@/stores/canvas/use-workspace-store");
+                    // Project materials keep their files even when no canvas node uses them any more.
+                    const workspaces = useWorkspaceStore.getState().workspaces;
+                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, workspaces, extra });
+                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, workspaces, extra });
                 }, 0);
             },
         }),
