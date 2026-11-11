@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Clapperboard, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
+import { Anchor, Clapperboard, Copy, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -1275,6 +1275,10 @@ function InfiniteCanvasPage() {
     );
 
     const [refTargetSourceId, setRefTargetSourceId] = useState<string | null>(null);
+    // Toolbar items are built before these callbacks exist in the file; refs keep them current.
+    const batchExecuteRef = useRef<((ids: string[]) => void) | null>(null);
+    const copySelectedNodesRef = useRef<(() => void) | null>(null);
+    const pasteCopiedNodesRef = useRef<(() => boolean) | null>(null);
 
     const openSaveTemplate = useCallback(() => {
         setContextMenu(null);
@@ -1317,7 +1321,9 @@ function InfiniteCanvasPage() {
     );
 
     const copySelectedNodes = useCallback(() => {
-        const selectedIds = selectedNodeIdsRef.current;
+        // A copied group takes its members along (整组复制).
+        const groupIds = new Set(nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Group).map((node) => node.id));
+        const selectedIds = new Set([...selectedNodeIdsRef.current, ...nodesRef.current.filter((node) => node.metadata?.groupId && groupIds.has(node.metadata.groupId)).map((node) => node.id)]);
         if (!selectedIds.size) return;
 
         const copiedNodes = nodesRef.current
@@ -2087,6 +2093,11 @@ function InfiniteCanvasPage() {
                 items.push({ id: "p1-split-paragraph", title: t("p1.shot.splitParagraphTitle"), label: t("p1.shot.splitParagraph"), icon: <Clapperboard className="size-4" />, onClick: () => splitTextToShots(node.id, "paragraph") });
                 items.push({ id: "p1-split-line", title: t("p1.shot.splitLineTitle"), label: t("p1.shot.splitLine"), icon: <Rows3 className="size-4" />, onClick: () => splitTextToShots(node.id, "line") });
             }
+            if (node.type === CanvasNodeType.Group) {
+                const members = nodesRef.current.filter((item) => item.metadata?.groupId === node.id).map((item) => item.id);
+                items.push({ id: "p1-group-run", title: t("p1.group.runTitle"), label: t("p1.group.run"), icon: <Play className="size-4" />, onClick: () => batchExecuteRef.current?.(members) });
+                items.push({ id: "p1-group-copy", title: t("p1.group.copyTitle"), label: t("p1.group.copy"), icon: <Copy className="size-4" />, onClick: () => { copySelectedNodesRef.current?.(); pasteCopiedNodesRef.current?.(); } });
+            }
             if (node.type === CanvasNodeType.Image && node.metadata?.content) items.push({ id: "p1-set-ref", title: t("p1.toolbar.setRefTitle"), label: t("p1.toolbar.setRef"), icon: <Link2 className="size-4" />, onClick: () => setRefTargetSourceId(node.id) });
             if (node.type === CanvasNodeType.Video && node.metadata?.content) items.push({ id: "p1-ratio-lock", title: t("p1.toolbar.ratioLockTitle"), label: node.metadata?.freeResize ? t("p1.toolbar.freeResize") : t("p1.toolbar.ratioLocked"), icon: <Ratio className="size-4" />, onClick: () => toggleNodeFreeResize(node.id) });
             if (versions || (node.type === CanvasNodeType.Text && node.metadata?.textVersions?.length)) items.push({ id: "p1-versions", title: t("p1.versions.title"), label: t("p1.versions.button", { count: versions || node.metadata?.textVersions?.length || 0 }), icon: <History className="size-4" />, onClick: () => setVersionsNodeId(node.id) });
@@ -2525,23 +2536,23 @@ function InfiniteCanvasPage() {
         setDialogNodeId(childId);
     }, []);
 
-    const generateAngleNode = useCallback(
-        async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
+    // Image-to-image result as a new connected node (改角度 / 超分): confirm card, record, loading state, error text kept.
+    const runImageEditChild = useCallback(
+        async (node: CanvasNodeData, prompt: string, title: string) => {
             if (!node.metadata?.content) return;
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
             }
-            const prompt = buildAnglePrompt(params);
             if (!(await requestGenerationConfirm(buildGenerationConfirmSummary(generationConfig, "image", { prompt, images: sourceNodeReferenceImages(node), count: 1 }), "user", node.id))) return;
             const childId = nanoid();
             const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
-            const title = buildAngleLabel(params);
             const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [
                 { id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey },
             ]);
             setAngleNodeId(null);
+            setSuperResolveNodeId(null);
             setRunningNodeId(childId);
             setNodes((prev) => [
                 ...prev,
@@ -2552,7 +2563,7 @@ function InfiniteCanvasPage() {
                     position: { x: node.position.x + node.width + 96, y: node.position.y },
                     width: imageConfig.width,
                     height: imageConfig.height,
-                    metadata: { prompt, status: NODE_STATUS_LOADING, ...generationMetadata },
+                    metadata: { prompt, status: NODE_STATUS_LOADING, generationSourceId: node.id, ...generationMetadata },
                 },
             ]);
             setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
@@ -2580,6 +2591,8 @@ function InfiniteCanvasPage() {
         },
         [effectiveConfig, finishGenerationRequest, openConfigDialog, requestGenerationConfirm, startGenerationRequest, t],
     );
+    const generateAngleNode = useCallback((node: CanvasNodeData, params: CanvasImageAngleParams) => runImageEditChild(node, buildAnglePrompt(params), buildAngleLabel(params)), [runImageEditChild]);
+    const superResolveImageNode = useCallback((node: CanvasNodeData) => runImageEditChild(node, t("p1.toolbar.superResolvePrompt"), `${node.title || ""} · 超分`), [runImageEditChild, t]);
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, fontSize } } : node)));
@@ -3233,8 +3246,12 @@ function InfiniteCanvasPage() {
         [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, requestGenerationConfirm, startGenerationRequest, t],
     );
     useEffect(() => {
-        generateNodeRef.current = handleGenerateNode;
-    }, [handleGenerateNode]);
+        // Shots run their own image/video generation (same confirm card, Agent-started ones included).
+        generateNodeRef.current = async (nodeId, mode, prompt, options) => {
+            if (nodesRef.current.find((node) => node.id === nodeId)?.type === HemosiNodeType.Shot) return void (await runShot(nodeId, mode === "video" ? "video" : "image", { origin: options?.origin }));
+            return handleGenerateNode(nodeId, mode, prompt, options);
+        };
+    }, [handleGenerateNode, runShot]);
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData, imageId?: string, retryOptions: { skipConfirm?: boolean } = {}) => {
@@ -3654,6 +3671,12 @@ function InfiniteCanvasPage() {
         },
         [confirmBatch, handleGenerateNode, message, runShots, t],
     );
+
+    useEffect(() => {
+        batchExecuteRef.current = batchExecute;
+        copySelectedNodesRef.current = copySelectedNodes;
+        pasteCopiedNodesRef.current = pasteCopiedNodes;
+    }, [batchExecute, copySelectedNodes, pasteCopiedNodes]);
 
     const retryQueueItems = useCallback(
         (items: QueueItem[], skipConfirm: boolean) => {
@@ -4122,8 +4145,8 @@ function InfiniteCanvasPage() {
                     <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
                 ) : null}
 
-                <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
-                    <div className="py-8 text-center text-base font-medium">{t("canvas.projectPage.notImplemented")}</div>
+                <Modal title={t("canvas.projectPage.superResolve")} open={Boolean(superResolveNode?.metadata?.content)} centered okText={t("p1.toolbar.superResolveOk")} cancelText={t("common.cancel")} onOk={() => superResolveNode && void superResolveImageNode(superResolveNode)} onCancel={() => setSuperResolveNodeId(null)}>
+                    <p className="text-sm opacity-70">{t("p1.toolbar.superResolveBody")}</p>
                 </Modal>
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}

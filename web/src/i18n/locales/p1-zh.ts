@@ -28,6 +28,9 @@ const p1 = {
         ratioLockTitle: "切换：保持比例 / 自由拉伸",
         ratioLocked: "比例锁定",
         freeResize: "自由拉伸",
+        superResolveOk: "用 AI 超分",
+        superResolveBody: "用本节点的图片模型做一次 AI 超分（图生图）：内容与构图不变，只提升清晰度和细节，结果放在右侧新节点并连回原图。会产生一次图片生成费用，先弹确认卡。只想无损放大像素，请用「放大」。",
+        superResolvePrompt: "超分辨率重建：严格保持画面内容、构图、人物、颜色与光影完全不变，只提升清晰度与细节，去除噪点、模糊和压缩痕迹，输出更高分辨率的同一张图。",
     },
     versions: {
         title: "历史版本：对比 / 还原",
@@ -56,6 +59,12 @@ const p1 = {
     },
     project: {
         forked: "已 Fork 出分支画布，原画布保持不变",
+    },
+    group: {
+        run: "整组执行",
+        runTitle: "组内的分镜/生成节点一起执行（一张确认卡）",
+        copy: "整组复制",
+        copyTitle: "连同组内节点一起复制一份",
     },
     menu: {
         duplicate: "复制",

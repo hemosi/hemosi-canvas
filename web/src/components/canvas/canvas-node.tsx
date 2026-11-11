@@ -822,7 +822,35 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
+    return <VideoWithInfo node={node} />;
+}
+
+/** Video player (play / seek / volume via native controls) with duration and resolution shown on the node. */
+function VideoWithInfo({ node }: { node: CanvasNodeData }) {
+    const [info, setInfo] = useState<{ duration: number; width: number; height: number } | null>(null);
+    const meta = node.metadata || {};
+    const duration = info?.duration || (meta.durationMs ? meta.durationMs / 1000 : 0);
+    const width = info?.width || meta.naturalWidth;
+    const height = info?.height || meta.naturalHeight;
+    return (
+        <>
+            <video
+                src={meta.content}
+                controls
+                className="h-full w-full rounded-[18px] bg-black object-contain"
+                data-canvas-video={node.id}
+                data-canvas-no-zoom
+                onLoadedMetadata={(event) => setInfo({ duration: event.currentTarget.duration || 0, width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })}
+            />
+            {duration || width ? (
+                <span className="pointer-events-none absolute left-1/2 top-3 z-[55] -translate-x-1/2 rounded-md px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "rgba(10,12,14,.72)", color: "#e5e7eb" }}>
+                    {duration ? `${duration.toFixed(1)}s` : ""}
+                    {duration && width ? " · " : ""}
+                    {width && height ? `${width}×${height}` : ""}
+                </span>
+            ) : null}
+        </>
+    );
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -838,7 +866,8 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
         <div className="flex h-full w-full flex-col justify-center gap-3 px-4" style={{ background: theme.node.fill, color: theme.node.text }}>
             <div className="flex min-w-0 items-center gap-2 text-sm opacity-70">
                 <Music2 className="size-4 shrink-0" />
-                <span className="truncate">{t("canvas.node.audio")}</span>
+                <span className="truncate">{node.metadata?.audioRole ? AUDIO_ROLE_LABEL[node.metadata.audioRole] : t("canvas.node.audio")}</span>
+                {node.metadata?.durationMs ? <span className="ml-auto shrink-0 text-xs">{(node.metadata.durationMs / 1000).toFixed(1)}s</span> : null}
             </div>
             <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
         </div>
