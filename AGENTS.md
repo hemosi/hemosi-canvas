@@ -96,3 +96,5 @@
 - Agent 对话消息必须同时按 `threadId`、`turnId` 和 `itemId` 归属；实时事件只用于补充未物化的 turn，历史快照成为权威后不得重复合并同一条消息。
 - Agent 通信协议版本与消息存储版本必须独立管理；消息存储格式升级时必须先备份再迁移，遇到未知版本、损坏清单或冲突备份时拒绝覆盖原文件，不得按记录数量或文件大小静默裁剪历史元数据。
 - 本地启动或浏览器验收时不要关闭用户已经打开的浏览器窗口或标签页；需要自动化验证时使用独立测试页面，避免打断用户当前页面和对话状态。
+- 浏览器冒烟/控制台报错检查用 `web/tests/e2e/smoke-canvas.py`（Playwright 1.49 自带 chromium headless shell，无需系统库）；沙箱里要把出网代理配给浏览器并 `ignore_https_errors`，否则外部请求会被误报为 CORS/证书错误。
+- 生成渠道只接官方 API：新厂商写进 `web/src/services/api/official-providers.ts`（纯函数拼请求体 + 创建/轮询），预设写进 `OFFICIAL_CHANNEL_PRESETS`；模型不可用时用 `modelNotReadyReason` 报原因，不得换用其他模型。

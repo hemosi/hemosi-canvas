@@ -7,6 +7,9 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Official model channels: Settings → Providers → Add official channel, fill only the key; image nodes (gpt-image-2.6, gemini-3-pro-image, flux-2-max) and video nodes (gemini-omni-1.2-flash, kling-4.0, gen4.5, doubao-seedance-2-5-260628) should return results. A missing key or removed channel must show the exact reason and open settings without switching to another model; vendor errors should appear verbatim in the generation queue.
+- Camera and lighting: camera settings on image/video/shot nodes and lighting on nodes, groups or scene anchors should appear on the confirm card and at the end of the prompt; all shots in one group should carry the identical lighting block.
+- Director Agent: the Agent panel's Director tab should plan within the chosen scope, show a plan card before writing to the canvas, and show the generation confirm card before each spending batch; undo should revert the last write.
 - Saved model selection: save a canvas node with a model, then remove its provider or remove that model while another video model remains the default. Generation, retry and pending-video recovery should keep the unavailable model selected and open configuration instead of sending a request to the default or first provider. Re-selecting a valid model should allow generation. Changing only the API key on the same provider should preserve the model; switching a config node from a valid image model to video should still use the video default.
 
 - Local storage usage on HTTP deployments: opening the Local storage settings tab at an HTTP origin without `navigator.storage.estimate` should still show IndexedDB content statistics, display an unavailable quota instead of an error, and keep the canvas data unchanged.
