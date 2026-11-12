@@ -389,8 +389,7 @@ function InfiniteCanvasPage() {
         (nodeId: string) => {
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (!node) return;
-            const k = Math.max(0.1, Math.min(4, Number(node.metadata?.bookmarkZoom) || 1));
-            // Match rgthree Bookmark: align canvas top-left to the bookmark node's top-left (with a small 16px margin)
+            const k = viewportRef.current.k;
             const target = {
                 x: -node.position.x * k + 24,
                 y: -node.position.y * k + 64,

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
@@ -512,15 +512,32 @@ export default function VideoPage() {
 function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
+    const [expanded, setExpanded] = useState(false);
+    const summaryText = `${config.vquality || "720"}P · ${videoSizeLabel(config.size)} · ${config.videoSeconds || "6"}s`;
 
     return (
         <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
+            <label className="col-span-2 block min-w-0">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
-            <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+            <div className="col-span-2 rounded-xl border border-stone-200 dark:border-stone-800">
+                <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center justify-between px-3.5 py-2.5 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/5"
+                    onClick={() => setExpanded((prev) => !prev)}
+                >
+                    <span className="font-semibold">参数设置</span>
+                    <span className="flex items-center gap-2 text-xs opacity-75">
+                        <span>{summaryText}</span>
+                        <ChevronDown className={`size-4 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+                    </span>
+                </button>
+                {expanded ? (
+                    <div className="border-t border-stone-200 p-3.5 dark:border-stone-800">
+                        <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+                    </div>
+                ) : null}
             </div>
         </>
     );

@@ -129,6 +129,7 @@ export type CanvasNodeMetadata = {
     anchorKind?: CanvasAnchorKind;
     anchorText?: string;
     anchorImages?: CanvasNodeImage[];
+    anchorSlots?: Partial<Record<CanvasAnchorKind, { text?: string; images?: CanvasNodeImage[] }>>;
     anchorVoice?: { content: string; storageKey?: string; mimeType?: string; name?: string };
     /** Storyboard shot node. */
     shotNo?: number;

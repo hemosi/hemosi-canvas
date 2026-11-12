@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
@@ -498,7 +498,7 @@ export default function ImagePage() {
                             {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
                         </div>
                         {results.length ? (
-                            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                            <div className={`grid gap-4 ${results.length === 1 ? "max-w-xl grid-cols-1" : "sm:grid-cols-2 2xl:grid-cols-3"}`}>
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
                                         <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
@@ -557,15 +557,34 @@ export default function ImagePage() {
 function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
+    const [expanded, setExpanded] = useState(false);
+    const activeSize = !config.size || config.size === "1:1" ? "1024x1024" : config.size;
+    const count = Math.max(1, Math.min(10, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const summaryText = activeSize === "1024x1024" ? `1K · 1024×1024 · ${count} 张` : `${activeSize.replace("x", "×")} · ${count} 张`;
 
     return (
         <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
+            <label className="col-span-2 block min-w-0">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
-            <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+            <div className="col-span-2 rounded-xl border border-stone-200 dark:border-stone-800">
+                <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center justify-between px-3.5 py-2.5 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/5"
+                    onClick={() => setExpanded((prev) => !prev)}
+                >
+                    <span className="font-semibold">参数设置</span>
+                    <span className="flex items-center gap-2 text-xs opacity-75">
+                        <span>{summaryText}</span>
+                        <ChevronDown className={`size-4 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+                    </span>
+                </button>
+                {expanded ? (
+                    <div className="border-t border-stone-200 p-3.5 dark:border-stone-800">
+                        <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                    </div>
+                ) : null}
             </div>
         </>
     );
@@ -588,7 +607,14 @@ function ResultImageCard({
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <Image src={previewUrlFor(image.storageKey) || image.dataUrl} preview={{ src: image.dataUrl }} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square object-cover" />
+            <div className="flex items-center justify-center bg-black/40 p-2">
+                <Image
+                    src={previewUrlFor(image.storageKey) || image.dataUrl}
+                    preview={{ src: image.dataUrl }}
+                    alt={t("imageWorkbench.resultAlt", { count: index + 1 })}
+                    className="max-h-[62vh] w-auto max-w-full rounded object-contain"
+                />
+            </div>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>

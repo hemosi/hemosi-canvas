@@ -36,7 +36,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
+    const activeSize = !config.size || config.size === "1:1" ? "1024x1024" : config.size;
     const transparentBackground = config.background === "transparent";
     const selectedScale = inferMediaScale(activeSize);
     const selectedRatio = inferMediaRatio(activeSize);

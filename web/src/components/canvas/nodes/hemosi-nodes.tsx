@@ -84,18 +84,66 @@ const ANCHOR_HINT = {
     style: { images: "风格样图", text: "风格提示词：画风、色调、镜头质感…" },
 } as const;
 
+function readAnchorSlot(meta: CanvasNodeMetadata, kind: "character" | "scene" | "style") {
+    const slot = meta.anchorSlots?.[kind];
+    if (slot) return { images: slot.images || [], text: slot.text || "" };
+    // Backward compatibility: if anchorSlots wasn't initialized yet, only the originally active kind owns legacy anchorImages/anchorText
+    if ((meta.anchorKind || "character") === kind) {
+        return { images: meta.anchorImages || [], text: meta.anchorText || "" };
+    }
+    return { images: [], text: "" };
+}
+
 function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const { message } = App.useApp();
     const meta = ctx.node.metadata || {};
     const kind = meta.anchorKind || "character";
-    const images = meta.anchorImages || [];
+    const currentSlot = readAnchorSlot(meta, kind);
+    const images = currentSlot.images;
+    const textValue = currentSlot.text;
     const imageInput = useRef<HTMLInputElement>(null);
     const voiceInput = useRef<HTMLInputElement>(null);
     const refs = getShotHost()?.downstreamCount(ctx.node.id) || 0;
+
+    const updateSlot = (targetKind: "character" | "scene" | "style", patch: { images?: CanvasNodeImage[]; text?: string }) => {
+        const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
+        const prevSlot = readAnchorSlot(latestMeta, targetKind);
+        const nextSlot = { ...prevSlot, ...patch };
+        const nextSlots = {
+            character: readAnchorSlot(latestMeta, "character"),
+            scene: readAnchorSlot(latestMeta, "scene"),
+            style: readAnchorSlot(latestMeta, "style"),
+            [targetKind]: nextSlot,
+        };
+        ctx.updateMetadata({
+            anchorSlots: nextSlots,
+            anchorImages: nextSlot.images,
+            anchorText: nextSlot.text,
+        });
+    };
+
+    const switchKind = (nextKind: "character" | "scene" | "style") => {
+        const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
+        const nextSlots = {
+            character: readAnchorSlot(latestMeta, "character"),
+            scene: readAnchorSlot(latestMeta, "scene"),
+            style: readAnchorSlot(latestMeta, "style"),
+        };
+        const target = nextSlots[nextKind];
+        ctx.updateMetadata({
+            anchorKind: nextKind,
+            anchorSlots: nextSlots,
+            anchorImages: target.images,
+            anchorText: target.text,
+        });
+    };
+
     const addImages = async (event: ChangeEvent<HTMLInputElement>) => {
         try {
             const added = await filesToImages(event.target.files);
-            ctx.updateMetadata({ anchorImages: [...(ctx.getNode(ctx.node.id)?.metadata?.anchorImages || []), ...added] });
+            const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
+            const cur = readAnchorSlot(latestMeta, kind);
+            updateSlot(kind, { images: [...cur.images, ...added] });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "图片读取失败");
         } finally {
@@ -114,11 +162,23 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
             <div className="flex items-center gap-2">
                 <Anchor className="size-4 shrink-0" style={{ color: "var(--hemosi-accent)" }} />
                 <div className="flex rounded-lg border p-0.5" style={{ borderColor: ctx.theme.node.stroke }}>
-                    {ANCHOR_KINDS.map((item) => (
-                        <button key={item} type="button" {...stop} className="rounded-md px-2 py-0.5" style={item === kind ? { background: ctx.theme.toolbar.activeBg, color: ctx.theme.node.text } : { color: ctx.theme.node.muted }} onClick={() => ctx.updateMetadata({ anchorKind: item })}>
-                            {ANCHOR_KIND_LABEL[item]}
-                        </button>
-                    ))}
+                    {ANCHOR_KINDS.map((item) => {
+                        const slot = readAnchorSlot(meta, item);
+                        const hasData = Boolean(slot.images.length || slot.text.trim());
+                        return (
+                            <button
+                                key={item}
+                                type="button"
+                                {...stop}
+                                className="relative flex items-center gap-1 rounded-md px-2 py-0.5"
+                                style={item === kind ? { background: ctx.theme.toolbar.activeBg, color: ctx.theme.node.text } : { color: ctx.theme.node.muted }}
+                                onClick={() => switchKind(item)}
+                            >
+                                <span>{ANCHOR_KIND_LABEL[item]}</span>
+                                {hasData ? <span className="size-1.5 rounded-full" style={{ background: "var(--hemosi-accent, #00d0c4)" }} /> : null}
+                            </button>
+                        );
+                    })}
                 </div>
                 <span className="ml-auto shrink-0 opacity-60">{refs ? `已连 ${refs} 处` : "连给分镜/生成节点即生效"}</span>
             </div>
@@ -127,7 +187,7 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
                     {images.map((image, index) => (
                         <Thumb key={image.id} ctx={ctx} image={image}>
                             <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }}>{index + 1}</span>
-                            <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => ctx.updateMetadata({ anchorImages: images.filter((item) => item.id !== image.id) })}>
+                            <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => updateSlot(kind, { images: images.filter((item) => item.id !== image.id) })}>
                                 <X className="size-3" />
                             </button>
                         </Thumb>
@@ -138,7 +198,7 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
                 </div>
             </Field>
             <Field label={kind === "style" ? "风格提示词" : "文字设定"}>
-                <TextArea ctx={ctx} rows={kind === "character" ? 4 : 5} value={meta.anchorText || ""} placeholder={ANCHOR_HINT[kind].text} onChange={(anchorText) => ctx.updateMetadata({ anchorText })} />
+                <TextArea ctx={ctx} rows={kind === "character" ? 4 : 5} value={textValue} placeholder={ANCHOR_HINT[kind].text} onChange={(anchorText) => updateSlot(kind, { text: anchorText })} />
             </Field>
             {kind === "character" ? (
                 <Field label="声线（可选）" extra={meta.anchorVoice ? <IconButton title="移除声线" onClick={() => ctx.updateMetadata({ anchorVoice: undefined })}><X className="size-3" /></IconButton> : null}>
@@ -332,43 +392,38 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
     );
 }
 
-// ---------------------------------------------------------------- Bookmark (1:1 rgthree-comfy Bookmark 🔖)
+// ---------------------------------------------------------------- Bookmark (极简书签 🔖)
 
 function BookmarkContent({ ctx }: { ctx: CanvasNodeContext }) {
     const meta = ctx.node.metadata || {};
     const bookmarks = ctx.getNodes().filter((n) => n.type === HemosiNodeType.Bookmark);
     const index = Math.max(0, bookmarks.findIndex((n) => n.id === ctx.node.id));
     const shortcutKey = meta.bookmarkKey ?? String((index % 9) + 1);
-    const zoom = meta.bookmarkZoom ?? 1;
 
     return (
-        <div className="flex size-full flex-col justify-center gap-1.5 px-2.5 py-2 text-[11px] select-none" style={{ color: ctx.theme.node.text }} {...stop}>
-            <div className="flex h-6 items-center justify-between rounded-full px-2.5" style={{ background: ctx.theme.node.fill }}>
-                <span className="opacity-65">shortcut_key</span>
-                <input
-                    type="text"
-                    data-canvas-no-zoom
-                    value={shortcutKey}
-                    placeholder="1"
-                    className="w-16 bg-transparent text-right font-mono text-xs font-semibold outline-none"
-                    style={{ color: ctx.theme.node.text }}
-                    onChange={(e) => ctx.updateMetadata({ bookmarkKey: e.target.value.trim() })}
-                />
-            </div>
-            <div className="flex h-6 items-center justify-between rounded-full px-2.5" style={{ background: ctx.theme.node.fill }}>
-                <span className="opacity-65">zoom</span>
-                <input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    max="4"
-                    data-canvas-no-zoom
-                    value={zoom}
-                    className="w-16 bg-transparent text-right font-mono text-xs font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    style={{ color: ctx.theme.node.text }}
-                    onChange={(e) => ctx.updateMetadata({ bookmarkZoom: Number(e.target.value) || 1 })}
-                />
-            </div>
+        <div className="flex size-full items-center justify-between gap-2 px-3.5 text-xs select-none cursor-grab active:cursor-grabbing" style={{ color: ctx.theme.node.text }}>
+            <span className="flex items-center gap-1.5 font-medium opacity-75">
+                <Bookmark className="size-3.5 shrink-0" style={{ color: "var(--hemosi-accent, #00d0c4)" }} />
+                <span>快捷键</span>
+            </span>
+            <input
+                {...stop}
+                type="text"
+                data-canvas-no-zoom
+                value={shortcutKey}
+                placeholder="1"
+                maxLength={2}
+                className="h-7 w-12 rounded-lg border bg-transparent text-center font-mono text-xs font-bold uppercase outline-none focus:border-[#00d0c4]"
+                style={{ borderColor: ctx.theme.node.stroke, background: ctx.theme.node.fill, color: "var(--hemosi-accent, #00d0c4)" }}
+                onChange={(e) => {
+                    const val = e.target.value.trim().slice(-1);
+                    ctx.updateMetadata({ bookmarkKey: val });
+                }}
+                onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
+                }}
+            />
         </div>
     );
 }
@@ -594,7 +649,7 @@ const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
         type: HemosiNodeType.Bookmark,
         title: "书签",
         icon: <Bookmark className="size-4" />,
-        defaultSize: { width: 176, height: 74 },
+        defaultSize: { width: 156, height: 48 },
         defaultMetadata: { status: "idle", bookmarkZoom: 1 },
         minimapColor: "#00d0c4",
         hidePanel: true,

@@ -33,7 +33,11 @@ type ShotKind = "image" | "video";
 /** What one shot generation sends: prompt (description fallback), own reference slots, its image as first frame for video, plus upstream links (anchors, images…). */
 function prepareShotRun(node: CanvasNodeData, kind: ShotKind, nodes: CanvasNodeData[], connections: CanvasConnection[], config: AiConfig) {
     const meta = node.metadata || {};
-    const prompt = (meta.prompt?.trim() || meta.shotDescription?.trim() || "").trim();
+    const prompt = (
+        kind === "image"
+            ? meta.shotDescription?.trim() || meta.prompt?.trim() || ""
+            : meta.prompt?.trim() || meta.shotDescription?.trim() || ""
+    ).trim();
     const localRefs = (meta.shotRefs || []).filter((ref) => ref.enabled && ref.content);
     const extraInputs: NodeGenerationInput[] = [];
     if (kind === "video" && meta.shotImage?.content && !localRefs.some((ref) => ref.role === "firstFrame")) {
