@@ -84,66 +84,24 @@ const ANCHOR_HINT = {
     style: { images: "风格样图", text: "风格提示词：画风、色调、镜头质感…" },
 } as const;
 
-function readAnchorSlot(meta: CanvasNodeMetadata, kind: "character" | "scene" | "style") {
-    const slot = meta.anchorSlots?.[kind];
-    if (slot) return { images: slot.images || [], text: slot.text || "" };
-    // Backward compatibility: if anchorSlots wasn't initialized yet, only the originally active kind owns legacy anchorImages/anchorText
-    if ((meta.anchorKind || "character") === kind) {
-        return { images: meta.anchorImages || [], text: meta.anchorText || "" };
-    }
-    return { images: [], text: "" };
-}
-
 function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
     const { message } = App.useApp();
     const meta = ctx.node.metadata || {};
     const kind = meta.anchorKind || "character";
-    const currentSlot = readAnchorSlot(meta, kind);
-    const images = currentSlot.images;
-    const textValue = currentSlot.text;
+    const images = meta.anchorImages || [];
+    const textValue = meta.anchorText || "";
     const imageInput = useRef<HTMLInputElement>(null);
     const voiceInput = useRef<HTMLInputElement>(null);
     const refs = getShotHost()?.downstreamCount(ctx.node.id) || 0;
-
-    const updateSlot = (targetKind: "character" | "scene" | "style", patch: { images?: CanvasNodeImage[]; text?: string }) => {
-        const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
-        const prevSlot = readAnchorSlot(latestMeta, targetKind);
-        const nextSlot = { ...prevSlot, ...patch };
-        const nextSlots = {
-            character: readAnchorSlot(latestMeta, "character"),
-            scene: readAnchorSlot(latestMeta, "scene"),
-            style: readAnchorSlot(latestMeta, "style"),
-            [targetKind]: nextSlot,
-        };
-        ctx.updateMetadata({
-            anchorSlots: nextSlots,
-            anchorImages: nextSlot.images,
-            anchorText: nextSlot.text,
-        });
-    };
-
-    const switchKind = (nextKind: "character" | "scene" | "style") => {
-        const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
-        const nextSlots = {
-            character: readAnchorSlot(latestMeta, "character"),
-            scene: readAnchorSlot(latestMeta, "scene"),
-            style: readAnchorSlot(latestMeta, "style"),
-        };
-        const target = nextSlots[nextKind];
-        ctx.updateMetadata({
-            anchorKind: nextKind,
-            anchorSlots: nextSlots,
-            anchorImages: target.images,
-            anchorText: target.text,
-        });
-    };
+    const upstreamImages = ctx
+        .getUpstream()
+        .filter((n) => n.type === CanvasNodeType.Image && n.metadata?.content);
 
     const addImages = async (event: ChangeEvent<HTMLInputElement>) => {
         try {
             const added = await filesToImages(event.target.files);
-            const latestMeta = ctx.getNode(ctx.node.id)?.metadata || {};
-            const cur = readAnchorSlot(latestMeta, kind);
-            updateSlot(kind, { images: [...cur.images, ...added] });
+            const cur = ctx.getNode(ctx.node.id)?.metadata?.anchorImages || [];
+            ctx.updateMetadata({ anchorImages: [...cur, ...added] });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "图片读取失败");
         } finally {
@@ -162,32 +120,32 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
             <div className="flex items-center gap-2">
                 <Anchor className="size-4 shrink-0" style={{ color: "var(--hemosi-accent)" }} />
                 <div className="flex rounded-lg border p-0.5" style={{ borderColor: ctx.theme.node.stroke }}>
-                    {ANCHOR_KINDS.map((item) => {
-                        const slot = readAnchorSlot(meta, item);
-                        const hasData = Boolean(slot.images.length || slot.text.trim());
-                        return (
-                            <button
-                                key={item}
-                                type="button"
-                                {...stop}
-                                className="relative flex items-center gap-1 rounded-md px-2 py-0.5"
-                                style={item === kind ? { background: ctx.theme.toolbar.activeBg, color: ctx.theme.node.text } : { color: ctx.theme.node.muted }}
-                                onClick={() => switchKind(item)}
-                            >
-                                <span>{ANCHOR_KIND_LABEL[item]}</span>
-                                {hasData ? <span className="size-1.5 rounded-full" style={{ background: "var(--hemosi-accent, #00d0c4)" }} /> : null}
-                            </button>
-                        );
-                    })}
+                    {ANCHOR_KINDS.map((item) => (
+                        <button
+                            key={item}
+                            type="button"
+                            {...stop}
+                            className="rounded-md px-2 py-0.5"
+                            style={item === kind ? { background: ctx.theme.toolbar.activeBg, color: ctx.theme.node.text } : { color: ctx.theme.node.muted }}
+                            onClick={() => ctx.updateMetadata({ anchorKind: item })}
+                        >
+                            {ANCHOR_KIND_LABEL[item]}
+                        </button>
+                    ))}
                 </div>
                 <span className="ml-auto shrink-0 opacity-60">{refs ? `已连 ${refs} 处` : "连给分镜/生成节点即生效"}</span>
             </div>
             <Field label={ANCHOR_HINT[kind].images}>
                 <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
+                    {upstreamImages.map((upNode) => (
+                        <Thumb key={`up-${upNode.id}`} ctx={ctx} image={{ id: upNode.id, content: upNode.metadata?.content || "" }}>
+                            <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(0,208,196,.85)", color: "#061010" }}>连入</span>
+                        </Thumb>
+                    ))}
                     {images.map((image, index) => (
                         <Thumb key={image.id} ctx={ctx} image={image}>
                             <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }}>{index + 1}</span>
-                            <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => updateSlot(kind, { images: images.filter((item) => item.id !== image.id) })}>
+                            <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => ctx.updateMetadata({ anchorImages: images.filter((item) => item.id !== image.id) })}>
                                 <X className="size-3" />
                             </button>
                         </Thumb>
@@ -197,8 +155,8 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
                     </button>
                 </div>
             </Field>
-            <Field label={kind === "style" ? "风格提示词" : "文字设定"}>
-                <TextArea ctx={ctx} rows={kind === "character" ? 4 : 5} value={textValue} placeholder={ANCHOR_HINT[kind].text} onChange={(anchorText) => updateSlot(kind, { text: anchorText })} />
+            <Field label="简介说明 / 固定设定词（连线后自动注入下游提示词）">
+                <TextArea ctx={ctx} rows={kind === "character" ? 4 : 5} value={textValue} placeholder={ANCHOR_HINT[kind].text} onChange={(anchorText) => ctx.updateMetadata({ anchorText })} />
             </Field>
             {kind === "character" ? (
                 <Field label="声线（可选）" extra={meta.anchorVoice ? <IconButton title="移除声线" onClick={() => ctx.updateMetadata({ anchorVoice: undefined })}><X className="size-3" /></IconButton> : null}>
@@ -241,8 +199,8 @@ function ResultSlot({ ctx, kind }: { ctx: CanvasNodeContext; kind: "image" | "vi
     const error = kind === "image" ? meta.shotStatus?.imageError : meta.shotStatus?.videoError;
     const media = kind === "image" ? meta.shotImage : meta.shotVideo;
     return (
-        <div className="relative grid aspect-video min-w-0 flex-1 place-items-center overflow-hidden rounded-lg border" style={{ borderColor: ctx.theme.node.stroke, background: ctx.theme.canvas.background }} title={error}>
-            {media?.content ? kind === "image" ? <img src={media.content} alt="" className="size-full object-contain" draggable={false} /> : <video {...stop} src={media.content} controls className="size-full object-contain" /> : (
+        <div className="relative flex h-36 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-lg border" style={{ borderColor: ctx.theme.node.stroke, background: ctx.theme.canvas.background }} title={error}>
+            {media?.content ? kind === "image" ? <img src={media.content} alt="" className="max-h-full max-w-full object-contain" draggable={false} /> : <video {...stop} data-canvas-video src={media.content} controls className="max-h-full max-w-full object-contain" /> : (
                 <span className="flex flex-col items-center gap-1 opacity-50">
                     {kind === "image" ? <ImageIcon className="size-4" /> : <Video className="size-4" />}
                     {kind === "image" ? "图片结果" : "视频结果"}
@@ -297,6 +255,7 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
                 <Clapperboard className="size-4 shrink-0" style={{ color: "var(--hemosi-accent)" }} />
                 <span className="opacity-60">镜头</span>
                 <input {...stop} className="w-10 rounded border bg-transparent px-1 text-center text-sm font-semibold outline-none" style={{ borderColor: ctx.theme.node.stroke }} inputMode="numeric" value={meta.shotNo ?? ""} onChange={(event) => patch({ shotNo: Number(event.target.value.replace(/\D/g, "")) || undefined })} />
+                {upstreamRefs ? <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] opacity-75">已连入 {upstreamRefs} 处设定/参考</span> : null}
                 <div className="ml-auto flex items-center gap-0.5">
                     <IconButton title="选中整排（同组或同一行的分镜）" onClick={() => host?.selectRow(ctx.node.id)}>
                         <Rows3 className="size-3.5" />
@@ -306,36 +265,11 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
                     </IconButton>
                 </div>
             </div>
-            <Field label="画面描述">
-                <TextArea ctx={ctx} rows={3} value={meta.shotDescription || ""} placeholder="这个镜头里发生什么…" onChange={(shotDescription) => patch({ shotDescription })} />
+            <Field label="图片提示词（生成首帧画面）">
+                <TextArea ctx={ctx} rows={3} value={meta.shotDescription || ""} placeholder="描述这一镜的静态首帧画面（点击下方「生成图片」生出左下方首帧图）…" onChange={(shotDescription) => patch({ shotDescription })} />
             </Field>
-            <Field label="提示词（留空则用画面描述）">
-                <TextArea ctx={ctx} rows={3} value={meta.prompt || ""} placeholder="给模型的完整提示词，锚点设定会自动拼进去" onChange={(prompt) => patch({ prompt })} />
-            </Field>
-            <Field label={`参考图 ${refs.filter((ref) => ref.enabled).length}/${refs.length}${upstreamRefs ? ` · 连入 ${upstreamRefs} 个` : ""}`}>
-                <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
-                    {refs.map((ref, index) => (
-                        <div key={ref.id} className="flex shrink-0 flex-col items-center gap-0.5">
-                            <Thumb ctx={ctx} image={ref} dim={!ref.enabled}>
-                                <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }}>{index + 1}</span>
-                                <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => setRefs(refs.filter((item) => item.id !== ref.id))}>
-                                    <X className="size-3" />
-                                </button>
-                            </Thumb>
-                            <div className="flex items-center">
-                                <IconButton title="前移" disabled={index === 0} onClick={() => moveRef(index, -1)}><ChevronLeft className="size-3" /></IconButton>
-                                <IconButton title={ref.enabled ? "本次不用这张" : "启用"} onClick={() => setRefs(refs.map((item) => (item.id === ref.id ? { ...item, enabled: !item.enabled } : item)))}>{ref.enabled ? <Eye className="size-3" /> : <EyeOff className="size-3" />}</IconButton>
-                                <IconButton title="后移" disabled={index === refs.length - 1} onClick={() => moveRef(index, 1)}><ChevronRight className="size-3" /></IconButton>
-                            </div>
-                            <select {...stop} className="max-w-[56px] bg-transparent text-[10px] outline-none" value={ref.role || "reference"} onChange={(event) => setRefs(refs.map((item) => (item.id === ref.id ? { ...item, role: event.target.value as CanvasShotRef["role"] } : item)))}>
-                                {IMAGE_ROLES.map((role) => <option key={role} value={role} style={{ background: ctx.theme.toolbar.panel }}>{IMAGE_ROLE_LABEL[role]}</option>)}
-                            </select>
-                        </div>
-                    ))}
-                    <button type="button" {...stop} className="grid size-14 shrink-0 place-items-center rounded-lg border border-dashed" style={{ borderColor: ctx.theme.node.stroke, color: ctx.theme.node.muted }} title="放入参考图（也可以把图片/锚点节点连进来）" onClick={() => fileInput.current?.click()}>
-                        <Plus className="size-4" />
-                    </button>
-                </div>
+            <Field label="视频提示词（把左下方图片结果作为首帧生成视频）">
+                <TextArea ctx={ctx} rows={3} value={meta.prompt || ""} placeholder="描述这一镜的人物动作与镜头运镜（留空则共用上方图片提示词）…" onChange={(prompt) => patch({ prompt })} />
             </Field>
             <div className="space-y-1.5" {...stop}>
                 <div className="flex items-center gap-1">
@@ -628,7 +562,14 @@ const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
         defaultMetadata: { status: "idle", anchorKind: "character", anchorImages: [] },
         minimapColor: "#f59e0b",
         hidePanel: true,
-        resource: (node) => (node.metadata?.anchorText?.trim() || node.metadata?.anchorImages?.length ? { kind: "text", text: node.metadata?.anchorText || node.title } : null),
+        resource: (node) => {
+            const meta = node.metadata;
+            const slots = meta?.anchorSlots;
+            const hasSlot = slots && (["character", "scene", "style"] as const).some((k) => Boolean(slots[k]?.text?.trim() || slots[k]?.images?.length));
+            return hasSlot || meta?.anchorText?.trim() || meta?.anchorImages?.length || meta?.anchorVoice?.content
+                ? { kind: "text", text: meta?.anchorText || node.title }
+                : { kind: "text", text: node.title || "锚点" };
+        },
         Content: AnchorContent,
     },
     {

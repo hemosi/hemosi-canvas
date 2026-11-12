@@ -44,6 +44,7 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { flushCanvasSave, useCanvasSaveStatus, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useWorkspaceStore } from "@/stores/canvas/use-workspace-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
@@ -389,15 +390,19 @@ function InfiniteCanvasPage() {
         (nodeId: string) => {
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (!node) return;
-            const k = viewportRef.current.k;
+            // Reset zoom to 100% (k = 1) and place the bookmark at the top-left corner of the visible canvas area
+            const k = 1;
+            const sidePanel = useCanvasSidePanelStore.getState();
+            const leftInset = sidePanel.panelOpen ? sidePanel.width + 24 : 24;
+            const topInset = 64;
             const target = {
-                x: -node.position.x * k + 24,
-                y: -node.position.y * k + 64,
+                x: leftInset - node.position.x * k,
+                y: topInset - node.position.y * k,
                 k,
             };
             if (focusAnimRef.current) cancelAnimationFrame(focusAnimRef.current);
             const start = { ...viewportRef.current };
-            const duration = 260;
+            const duration = 280;
             const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
             let startTime: number | null = null;
             const step = (now: number) => {

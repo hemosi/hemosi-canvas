@@ -164,7 +164,6 @@ export function CanvasTopBar({
                             {saveState.error ? "保存失败" : saveState.pending ? "未保存…" : saveState.savedAt ? `已自动保存 ${new Date(saveState.savedAt).toLocaleTimeString()}` : "已保存"}
                         </span>
                     ) : null}
-                    <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">

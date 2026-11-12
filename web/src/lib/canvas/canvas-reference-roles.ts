@@ -8,23 +8,9 @@ export const AUDIO_ROLE_LABEL: Record<CanvasAudioRole, string> = { voice: "配�
 export const ANCHOR_KINDS: CanvasAnchorKind[] = ["character", "scene", "style"];
 export const ANCHOR_KIND_LABEL: Record<CanvasAnchorKind, string> = { character: "角色", scene: "场景", style: "风格" };
 
-/** The text an anchor puts into every prompt it feeds: collects all filled-in slots (character / scene / style) or legacy single slot. */
+/** The text an anchor puts into every prompt it feeds: its kind, name and description. */
 export function anchorPromptBlock(node: CanvasNodeData) {
     const meta = node.metadata || {};
-    const slots = meta.anchorSlots;
-    if (slots) {
-        const parts: string[] = [];
-        const labels: string[] = [];
-        for (const k of ANCHOR_KINDS) {
-            const t = (slots[k]?.text || "").trim();
-            if (!t) continue;
-            const hint = k === "character" ? "保持该角色外形、服装与参考定妆照一致" : k === "scene" ? "保持场景布局、陈设与参考图一致" : "整体画面风格遵循以下风格设定与样图";
-            labels.push(ANCHOR_KIND_LABEL[k]);
-            parts.push(`【${ANCHOR_KIND_LABEL[k]}设定】${hint}：\n${t}`);
-        }
-        if (!parts.length) return null;
-        return { label: `${labels.join("+")}锚点·${node.title || "设定"}`, text: parts.join("\n\n") };
-    }
     const kind = meta.anchorKind || "character";
     const text = (meta.anchorText || "").trim();
     if (!text) return null;

@@ -61,7 +61,7 @@ export function useShotGeneration({ projectId, nodesRef, connectionsRef, setNode
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (!node || node.type !== HemosiNodeType.Shot) return false;
             const { prompt, context, base, requestConfig, draft } = prepareShotRun(node, kind, nodesRef.current, connectionsRef.current, effectiveConfig);
-            if (!prompt) {
+            if (!context.prompt.trim() && !context.referenceImages.length) {
                 message.warning(`镜头 ${node.metadata?.shotNo ?? ""} 还没有画面描述或提示词`);
                 return false;
             }

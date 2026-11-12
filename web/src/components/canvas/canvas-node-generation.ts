@@ -188,10 +188,10 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
     return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
         if (node.type === CanvasNodeType.Group) {
-            const children = getGroupResourceNodes(node.id, nodes).flatMap(readNodeGenerationResource);
+            const children = getGroupResourceNodes(node.id, nodes).flatMap((child) => readNodeGenerationResource(child, nodes, connections));
             return children.length ? [{ nodeId: node.id, type: "group", title: node.title, children }] : [];
         }
-        return readNodeGenerationResource(node);
+        return readNodeGenerationResource(node, nodes, connections);
     });
 }
 
@@ -200,8 +200,8 @@ function flattenGenerationInputs(inputs: NodeGenerationInput[]) {
     return [...new Map(resources.map((input) => [input.nodeId, input])).values()];
 }
 
-function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourceInput[] {
-    if (node.type === HemosiNodeType.Anchor) return readAnchorResources(node);
+function readNodeGenerationResource(node: CanvasNodeData, nodes?: CanvasNodeData[], connections?: CanvasConnection[]): NodeGenerationResourceInput[] {
+    if (node.type === HemosiNodeType.Anchor) return readAnchorResources(node, nodes, connections);
     if (node.type === HemosiNodeType.Shot) return readShotResources(node);
     const image = readReferenceImage(node);
     if (image) return [{ nodeId: node.id, type: "image", title: node.title, image, role: node.metadata?.imageRole }];
@@ -252,54 +252,50 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     return { ...context, referenceImages: [...frames, ...referenceImages], imageRoles: [...frames.map(() => "firstFrame" as const), ...(context.imageRoles || [])], imageCount: frames.length + referenceImages.length };
 }
 
-function readAnchorResources(node: CanvasNodeData): NodeGenerationResourceInput[] {
+function readAnchorResources(node: CanvasNodeData, nodes?: CanvasNodeData[], connections?: CanvasConnection[]): NodeGenerationResourceInput[] {
     const meta = node.metadata || {};
     const block = anchorPromptBlock(node);
     const images: NodeGenerationResourceInput[] = [];
-    if (meta.anchorSlots) {
-        const kinds: Array<["character" | "scene" | "style", CanvasImageRole]> = [
-            ["character", "character"],
-            ["scene", "scene"],
-            ["style", "style"],
-        ];
-        for (const [k, role] of kinds) {
-            const list = (meta.anchorSlots[k]?.images || []).filter((img) => img.content);
-            list.forEach((image, index) => {
+    const activeRole: CanvasImageRole = meta.anchorKind === "scene" ? "scene" : meta.anchorKind === "style" ? "style" : "character";
+
+    // Also include any upstream Image nodes connected into the Anchor's left port
+    if (nodes && connections) {
+        const upstreamNodes = connections
+            .filter((c) => c.toNodeId === node.id)
+            .map((c) => nodes.find((n) => n.id === c.fromNodeId))
+            .filter((n): n is CanvasNodeData => Boolean(n));
+        for (const up of upstreamNodes) {
+            const upImg = readReferenceImage(up);
+            if (upImg) {
                 images.push({
-                    nodeId: `${node.id}#${image.id}`,
+                    nodeId: `${node.id}#up-${up.id}`,
                     type: "image",
-                    title: `${node.title}${list.length > 1 ? ` ${index + 1}` : ""}`,
-                    role,
-                    image: {
-                        id: `${node.id}#${image.id}`,
-                        name: `${node.title || node.id}-${k}-${index + 1}.png`,
-                        type: image.mimeType || "image/png",
-                        dataUrl: image.content,
-                        storageKey: image.storageKey,
-                    },
+                    title: up.title || node.title,
+                    role: activeRole,
+                    image: upImg,
                 });
-            });
+            }
         }
-    } else {
-        const role: CanvasImageRole = meta.anchorKind === "scene" ? "scene" : meta.anchorKind === "style" ? "style" : "character";
-        (meta.anchorImages || [])
-            .filter((image) => image.content)
-            .forEach((image, index) => {
-                images.push({
-                    nodeId: `${node.id}#${image.id}`,
-                    type: "image",
-                    title: `${node.title}${(meta.anchorImages?.length || 0) > 1 ? ` ${index + 1}` : ""}`,
-                    role,
-                    image: {
-                        id: `${node.id}#${image.id}`,
-                        name: `${node.title || node.id}-${index + 1}.png`,
-                        type: image.mimeType || "image/png",
-                        dataUrl: image.content,
-                        storageKey: image.storageKey,
-                    },
-                });
-            });
     }
+
+    (meta.anchorImages || [])
+        .filter((image) => image.content)
+        .forEach((image, index) => {
+            images.push({
+                nodeId: `${node.id}#${image.id}`,
+                type: "image",
+                title: `${node.title}${(meta.anchorImages?.length || 0) > 1 ? ` ${index + 1}` : ""}`,
+                role: activeRole,
+                image: {
+                    id: `${node.id}#${image.id}`,
+                    name: `${node.title || node.id}-${index + 1}.png`,
+                    type: image.mimeType || "image/png",
+                    dataUrl: image.content,
+                    storageKey: image.storageKey,
+                },
+            });
+        });
+
     const voice = meta.anchorVoice?.content ? [{ nodeId: `${node.id}#voice`, type: "audio" as const, title: `${node.title} 声线`, audioRole: "voice" as const, audio: { id: `${node.id}#voice`, name: meta.anchorVoice.name || "voice.mp3", type: meta.anchorVoice.mimeType || "audio/mpeg", url: meta.anchorVoice.content, storageKey: meta.anchorVoice.storageKey } }] : [];
     return [...(block ? [{ nodeId: node.id, type: "text" as const, title: node.title, label: block.label, text: block.text }] : []), ...images, ...voice];
 }
