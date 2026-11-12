@@ -101,9 +101,18 @@ export function DirectorAgentPanel() {
         setPending(null);
         setRunning(true);
         try {
-            if (execution.ops.length) {
-                current.applyOps(execution.ops);
-                addLog(`已写入画布：${execution.steps.filter((step) => !step.startsWith("批量生成") && !step.startsWith("重新生成")).join("；")}`);
+            const combinedOps = [
+                ...execution.ops,
+                ...execution.runNodes.map((item) => ({ type: "run_generation" as const, nodeId: item.nodeId, mode: item.mode })),
+            ];
+            if (combinedOps.length) {
+                current.applyOps(combinedOps);
+                if (execution.ops.length) {
+                    addLog(`已写入画布：${execution.steps.filter((step) => !step.startsWith("批量生成") && !step.startsWith("重新生成")).join("；")}`);
+                }
+                if (execution.runNodes.length) {
+                    addLog(`已发起 ${execution.runNodes.length} 个节点的重新生成（每个都会先弹确认卡）`);
+                }
             }
             const runShots = current.runShots;
             if ((execution.runImages.length || execution.runVideos.length) && !runShots) throw new Error("当前画布不支持批量生成分镜");
@@ -117,10 +126,6 @@ export function DirectorAgentPanel() {
                 addLog(`批量生成 ${execution.runVideos.length} 段分镜视频：等待确认卡…`);
                 const result = await runShots(execution.runVideos, "video", "agent");
                 addLog(result.canceled ? "分镜视频：已取消，未花钱" : `分镜视频：成功 ${result.ok}，失败 ${result.failed}`);
-            }
-            if (execution.runNodes.length) {
-                useAgentStore.getState().canvasContext?.applyOps(execution.runNodes.map((item) => ({ type: "run_generation" as const, nodeId: item.nodeId, mode: item.mode })));
-                addLog(`已发起 ${execution.runNodes.length} 个节点的重新生成（每个都会先弹确认卡）`);
             }
         } catch (error) {
             message.error(error instanceof Error ? error.message : String(error));
@@ -204,7 +209,7 @@ export function DirectorAgentPanel() {
                         <Button size="small" onClick={() => setPending(null)}>
                             放弃
                         </Button>
-                        <Button size="small" type="primary" disabled={!pending.execution.ops.length && !pending.execution.runImages.length && !pending.execution.runNodes.length} onClick={() => void execute()}>
+                        <Button size="small" type="primary" disabled={!pending.execution.ops.length && !pending.execution.runImages.length && !pending.execution.runVideos.length && !pending.execution.runNodes.length} onClick={() => void execute()}>
                             确认执行
                         </Button>
                     </div>

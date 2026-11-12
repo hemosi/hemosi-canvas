@@ -842,6 +842,74 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
+async function requestChatCompletionsStream(
+    config: AiConfig,
+    messages: AiTextMessage[],
+    onDelta?: (text: string) => void,
+    options?: RequestOptions,
+): Promise<string> {
+    const chatMessages = (withSystemMessage(config, messages) as AiTextMessage[]).map((m) => ({
+        role: m.role,
+        content: Array.isArray(m.content)
+            ? m.content.map((part) => (part.type === "text" ? { type: "text", text: part.text } : { type: "image_url", image_url: { url: part.image_url.url } }))
+            : String(m.content || ""),
+    }));
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify({
+            model: config.model,
+            messages: chatMessages,
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.body || contentType.includes("application/json")) {
+        const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+        if (json.error?.message) throw new Error(json.error.message);
+        const text = json.choices?.[0]?.message?.content || "";
+        if (text) onDelta?.(text);
+        return text;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+    const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") return;
+        try {
+            const parsed = JSON.parse(data) as {
+                choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>;
+                error?: { message?: string };
+            };
+            if (parsed.error?.message) throw new Error(parsed.error.message);
+            const delta = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
+            if (delta) {
+                fullText += delta;
+                onDelta?.(fullText);
+            }
+        } catch (err) {
+            if (err instanceof Error && !err.message.includes("JSON")) throw err;
+        }
+    };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        for (const line of lines) processLine(line);
+    }
+    buffer += decoder.decode();
+    for (const line of buffer.split(/\r?\n/)) processLine(line);
+    return fullText;
+}
+
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     const script = resolveModelScript(config, config.model || config.textModel);
@@ -874,13 +942,26 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === apiText("noContent")) onDelta(answer);
             return answer;
         }
-        const answer = (await requestStreamingResponse(requestConfig, {
-            model: requestConfig.model,
-            input: toResponseInput(withSystemMessage(requestConfig, messages)),
-            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
-        }, onDelta, options)).content || apiText("noContent");
-        if (answer === apiText("noContent")) onDelta(answer);
-        return answer;
+        // Use standard /chat/completions first for DeepSeek / GLM / third-party gateways, and fall back to /responses if needed
+        const isOfficialOpenAiHost = /api\.openai\.com/i.test(requestConfig.baseUrl);
+        if (!isOfficialOpenAiHost) {
+            const answer = (await requestChatCompletionsStream(requestConfig, messages, onDelta, options)) || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        }
+        try {
+            const answer = (await requestStreamingResponse(requestConfig, {
+                model: requestConfig.model,
+                input: toResponseInput(withSystemMessage(requestConfig, messages)),
+                ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
+            }, onDelta, options)).content || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        } catch {
+            const answer = (await requestChatCompletionsStream(requestConfig, messages, onDelta, options)) || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        }
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }

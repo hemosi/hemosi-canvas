@@ -15,20 +15,6 @@ import { useAgentStore } from "@/stores/use-agent-store";
 
 const COLLAPSED_KEY = "hemosi:sidebar_collapsed";
 
-function useAgentAutoConnect() {
-    const autoConnectRef = useRef(false);
-    const agentToken = useAgentStore((state) => state.token);
-    const agentEnabled = useAgentStore((state) => state.enabled);
-    const agentConnected = useAgentStore((state) => state.connected);
-    const connectAgent = useAgentStore((state) => state.connectAgent);
-
-    useEffect(() => {
-        if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
-        autoConnectRef.current = true;
-        connectAgent({ silent: true });
-    }, [agentConnected, agentEnabled, agentToken, connectAgent]);
-}
-
 // CapCut-style left sidebar. Hidden on /canvas/:id so the editor keeps the full screen.
 export function AppSidebar() {
     const { t } = useTranslation();
@@ -40,8 +26,6 @@ export function AppSidebar() {
     const { createCanvas, ready } = useCreateCanvas();
     const fullScreen = /^\/canvas\/[^/]+/.test(pathname);
     const activeToolSlug = getActiveToolSlug(pathname);
-
-    useAgentAutoConnect();
 
     const toggleCollapsed = () => {
         setManualCollapsed((value) => {

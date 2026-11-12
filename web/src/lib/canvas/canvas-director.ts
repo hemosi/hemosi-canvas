@@ -98,6 +98,7 @@ export function canvasDigest(snapshot: CanvasAgentSnapshot, onlySelected: boolea
                 hasImage: Boolean(meta.content && node.type === CanvasNodeType.Image) || Boolean(meta.shotImage?.content) || undefined,
                 hasVideo: Boolean(meta.content && node.type === CanvasNodeType.Video) || Boolean(meta.shotVideo?.content) || undefined,
                 status: meta.status,
+                shotStatus: meta.shotStatus,
             });
         }),
         connections: snapshot.connections.filter((item) => ids.has(item.fromNodeId) && ids.has(item.toNodeId)).map((item) => ({ from: item.fromNodeId, to: item.toNodeId, kind: item.kind })),

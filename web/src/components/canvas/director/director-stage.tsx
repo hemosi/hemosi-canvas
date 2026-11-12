@@ -70,46 +70,54 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                     ctx.updateMetadata({
                         directorScene: {
                             ...(prevScene || { version: 1, title: ctx.node.title || "3D 导演台", description: "", aspect: "16:9", groundColor: "#14181d", showGround: true, subjects: [], shots: [], activeShotId: "" }),
-                            preview: { content: first.url, storageKey: first.storageKey, width: first.width, height: first.height },
+                            preview: { content: first.url, storageKey: first.storageKey },
                         },
                     });
                 }
 
-                const ops = uploadedList.map((img, index) => {
+                const ops = uploadedList.flatMap((img, index) => {
                     const size = fitNodeSize(img.width, img.height);
-                    return {
-                        type: "add_node" as const,
-                        nodeType: CanvasNodeType.Image,
-                        title: img.title,
-                        position: {
-                            x: ctx.node.position.x + ctx.node.width + 64,
-                            y: ctx.node.position.y + index * (size.height + 28),
+                    const newNodeId = nanoid();
+                    return [
+                        {
+                            type: "add_node" as const,
+                            id: newNodeId,
+                            nodeType: CanvasNodeType.Image,
+                            title: img.title,
+                            position: {
+                                x: ctx.node.position.x + ctx.node.width + 64,
+                                y: ctx.node.position.y + index * (size.height + 28),
+                            },
+                            width: size.width,
+                            height: size.height,
+                            metadata: {
+                                status: "success" as const,
+                                content: img.url,
+                                storageKey: img.storageKey,
+                                naturalWidth: img.width,
+                                naturalHeight: img.height,
+                                bytes: img.bytes,
+                                mimeType: img.mimeType,
+                                images: [
+                                    {
+                                        id: nanoid(),
+                                        status: "success" as const,
+                                        content: img.url,
+                                        storageKey: img.storageKey,
+                                        naturalWidth: img.width,
+                                        naturalHeight: img.height,
+                                        bytes: img.bytes,
+                                        mimeType: img.mimeType,
+                                    },
+                                ],
+                            },
                         },
-                        width: size.width,
-                        height: size.height,
-                        connectFrom: ctx.node.id,
-                        metadata: {
-                            status: "success" as const,
-                            content: img.url,
-                            storageKey: img.storageKey,
-                            naturalWidth: img.width,
-                            naturalHeight: img.height,
-                            bytes: img.bytes,
-                            mimeType: img.mimeType,
-                            images: [
-                                {
-                                    id: nanoid(),
-                                    status: "success" as const,
-                                    content: img.url,
-                                    storageKey: img.storageKey,
-                                    naturalWidth: img.width,
-                                    naturalHeight: img.height,
-                                    bytes: img.bytes,
-                                    mimeType: img.mimeType,
-                                },
-                            ],
+                        {
+                            type: "connect_nodes" as const,
+                            fromNodeId: ctx.node.id,
+                            toNodeId: newNodeId,
                         },
-                    };
+                    ];
                 });
                 ctx.applyOps(ops);
                 message.success(`已将 ${uploadedList.length} 张机位画面发送到画布`);
@@ -163,20 +171,12 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
     const handleQuickCaptureToCanvas = async () => {
         if (sending) return;
         try {
-            const shot = await requestViewportCapture();
+            const [shot] = await requestViewportCapture({ preset: "current", source: "capture-panel" });
+            if (!shot) return;
             const state = useDirectorStore.getState();
             const activeCam = state.project.cameras.find((c) => c.id === state.project.activeCameraId);
             if (activeCam) {
-                state.addCameraCaptures(activeCam.id, [
-                    {
-                        id: nanoid(),
-                        name: `${activeCam.name}-机位图`,
-                        createdAt: new Date().toISOString(),
-                        dataUrl: shot.dataUrl,
-                        width: shot.meta.width,
-                        height: shot.meta.height,
-                    },
-                ]);
+                state.addCameraCaptures(activeCam.id, [shot.dataUrl]);
             }
             const file = await dataUrlToFile(shot.dataUrl, `${activeCam?.name || "3D机位"}.png`);
             const up = await uploadImage(file);
@@ -184,19 +184,20 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
             ctx.updateMetadata({
                 directorScene: {
                     ...(prevScene || { version: 1, title: ctx.node.title || "3D 导演台", description: "", aspect: "16:9", groundColor: "#14181d", showGround: true, subjects: [], shots: [], activeShotId: "" }),
-                    preview: { content: up.url, storageKey: up.storageKey, width: up.width, height: up.height },
+                    preview: { content: up.url, storageKey: up.storageKey },
                 },
             });
             const size = fitNodeSize(up.width, up.height);
+            const newNodeId = nanoid();
             ctx.applyOps([
                 {
                     type: "add_node",
+                    id: newNodeId,
                     nodeType: CanvasNodeType.Image,
                     title: `${activeCam?.name || "3D 机位"} 构图参考`,
                     position: { x: ctx.node.position.x + ctx.node.width + 64, y: ctx.node.position.y },
                     width: size.width,
                     height: size.height,
-                    connectFrom: ctx.node.id,
                     metadata: {
                         status: "success",
                         content: up.url,
@@ -219,6 +220,11 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
                         ],
                     },
                 },
+                {
+                    type: "connect_nodes",
+                    fromNodeId: ctx.node.id,
+                    toNodeId: newNodeId,
+                },
             ]);
             message.success("已截取当前 3D 机位画面并发送到画布！");
         } catch (err) {
@@ -228,16 +234,18 @@ export default function DirectorStage({ ctx, onClose }: { ctx: CanvasNodeContext
 
     const handleCloseWithPreview = async () => {
         try {
-            const shot = await requestViewportCapture();
-            const file = await dataUrlToFile(shot.dataUrl, "director-preview.png");
-            const up = await uploadImage(file);
-            const prevScene = ctx.node.metadata?.directorScene;
-            ctx.updateMetadata({
-                directorScene: {
-                    ...(prevScene || { version: 1, title: ctx.node.title || "3D 导演台", description: "", aspect: "16:9", groundColor: "#14181d", showGround: true, subjects: [], shots: [], activeShotId: "" }),
-                    preview: { content: up.url, storageKey: up.storageKey, width: up.width, height: up.height },
-                },
-            });
+            const [shot] = await requestViewportCapture({ preset: "current", source: "capture-panel" });
+            if (shot) {
+                const file = await dataUrlToFile(shot.dataUrl, "director-preview.png");
+                const up = await uploadImage(file);
+                const prevScene = ctx.node.metadata?.directorScene;
+                ctx.updateMetadata({
+                    directorScene: {
+                        ...(prevScene || { version: 1, title: ctx.node.title || "3D 导演台", description: "", aspect: "16:9", groundColor: "#14181d", showGround: true, subjects: [], shots: [], activeShotId: "" }),
+                        preview: { content: up.url, storageKey: up.storageKey },
+                    },
+                });
+            }
         } catch {
             // ignore preview capture failure on close
         }

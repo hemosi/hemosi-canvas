@@ -17,7 +17,7 @@ import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { HemosiNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeMetadata, type CanvasShotRef } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeMetadata, type CanvasShotRef } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
 
 const stop = { onMouseDown: (event: { stopPropagation: () => void }) => event.stopPropagation(), onPointerDown: (event: { stopPropagation: () => void }) => event.stopPropagation() };
@@ -138,7 +138,7 @@ function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
             <Field label={ANCHOR_HINT[kind].images}>
                 <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
                     {upstreamImages.map((upNode) => (
-                        <Thumb key={`up-${upNode.id}`} ctx={ctx} image={{ id: upNode.id, content: upNode.metadata?.content || "" }}>
+                        <Thumb key={`up-${upNode.id}`} ctx={ctx} image={{ id: upNode.id, status: "success", content: upNode.metadata?.content || "", naturalWidth: upNode.metadata?.naturalWidth || 0, naturalHeight: upNode.metadata?.naturalHeight || 0, bytes: upNode.metadata?.bytes || 0, mimeType: upNode.metadata?.mimeType || "image/png" }}>
                             <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(0,208,196,.85)", color: "#061010" }}>连入</span>
                         </Thumb>
                     ))}
