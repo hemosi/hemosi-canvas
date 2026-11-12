@@ -111,7 +111,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         if (target?.closest("[data-canvas-no-zoom]")) return;
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
-        const temporaryTool = event.ctrlKey || isSpacePressed;
+        const temporaryTool = event.ctrlKey || event.shiftKey || isSpacePressed;
         const activeTool = temporaryTool ? (tool === "select" ? "pan" : "select") : tool;
         const shouldPan = event.button === 1 || (event.button === 0 && activeTool === "pan" && isBackgroundClick);
 

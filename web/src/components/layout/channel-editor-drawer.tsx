@@ -79,7 +79,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
-                    {OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat) ? <span className="mt-1 block text-xs text-stone-500">Key 在哪里拿：{OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat)!.keyHint}。Key 只存在本机浏览器，请求由前端直连官方接口。</span> : null}
+                    {OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.id === draft.id || preset.apiFormat === draft.apiFormat) ? <span className="mt-1 block text-xs text-stone-500">Key 在哪里拿：{(OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.id === draft.id) || OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat))!.keyHint}。Key 只存在本机浏览器，请求由前端直连官方接口。</span> : null}
                 </label>
             </div>
 

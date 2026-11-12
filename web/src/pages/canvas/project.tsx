@@ -457,6 +457,40 @@ function InfiniteCanvasPage() {
         return () => window.removeEventListener("keydown", onBookmarkKey);
     }, [jumpToBookmark]);
 
+    // Single tap on Shift toggles between Pan (hand) and Select (pointer) mode
+    useEffect(() => {
+        let shiftAlone = false;
+        const onKeyDown = (event: KeyboardEvent) => {
+            const target = event.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable || target.closest("[data-canvas-shortcuts-ignore]"))) {
+                shiftAlone = false;
+                return;
+            }
+            if (event.key === "Shift" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.repeat) {
+                shiftAlone = true;
+            } else if (event.key !== "Shift") {
+                shiftAlone = false;
+            }
+        };
+        const onKeyUp = (event: KeyboardEvent) => {
+            if (event.key === "Shift" && shiftAlone) {
+                shiftAlone = false;
+                setCanvasTool((prev) => (prev === "pan" ? "select" : "pan"));
+            }
+        };
+        const onPointerDown = () => {
+            shiftAlone = false;
+        };
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("pointerdown", onPointerDown, true);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+            window.removeEventListener("keyup", onKeyUp);
+            window.removeEventListener("pointerdown", onPointerDown, true);
+        };
+    }, []);
+
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios });
@@ -800,20 +834,32 @@ function InfiniteCanvasPage() {
         (current: ConnectionHandle, targetNodeId: string) => {
             if (current.nodeId === targetNodeId) return;
 
-            const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
-            if (!connection) {
-                message.warning(t("canvas.projectPage.configConnection"));
-                return;
+            const isMultiSource = current.handleType === "source" && selectedNodeIdsRef.current.size > 1 && selectedNodeIdsRef.current.has(current.nodeId);
+            const sourceIds = isMultiSource ? [...selectedNodeIdsRef.current].filter((id) => id !== targetNodeId) : [current.nodeId];
+
+            const newConns: CanvasConnection[] = [];
+            for (const srcId of sourceIds) {
+                const connection = normalizeConnection(srcId, targetNodeId, nodesRef.current, current.handleType);
+                if (!connection) continue;
+                const { fromNodeId, toNodeId } = connection;
+                const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId) || newConns.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
+                if (!exists) {
+                    const from = nodesRef.current.find((node) => node.id === fromNodeId);
+                    const to = nodesRef.current.find((node) => node.id === toNodeId);
+                    const kind = from && to ? inferConnectionKind(from, to) : undefined;
+                    newConns.push({ id: `conn-${Date.now()}-${nanoid(4)}`, fromNodeId, toNodeId, kind });
+                }
             }
-            const { fromNodeId, toNodeId } = connection;
-            const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
-            if (!exists) {
-                const from = nodesRef.current.find((node) => node.id === fromNodeId);
-                const to = nodesRef.current.find((node) => node.id === toNodeId);
-                const kind = from && to ? inferConnectionKind(from, to) : undefined;
-                const problem = from && to && kind ? connectionKindProblem(kind, from, to) : null;
-                if (problem) message.warning(t("p1.link.problem", { problem }));
-                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId, kind }]);
+
+            if (!newConns.length && !isMultiSource) {
+                const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
+                if (!connection) {
+                    message.warning(t("canvas.projectPage.configConnection"));
+                    return;
+                }
+            }
+            if (newConns.length) {
+                setConnections((prev) => [...prev, ...newConns]);
             }
             setContextMenu(null);
         },
@@ -824,13 +870,22 @@ function InfiniteCanvasPage() {
         (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
             const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata);
-            const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
-            if (!connection) {
+            const isMultiSource = pending.connection.handleType === "source" && selectedNodeIdsRef.current.size > 1 && selectedNodeIdsRef.current.has(pending.connection.nodeId);
+            const sourceIds = isMultiSource ? [...selectedNodeIdsRef.current] : [pending.connection.nodeId];
+            const nextNodesList = [...nodesRef.current, newNode];
+            const newConns: CanvasConnection[] = [];
+            for (const srcId of sourceIds) {
+                const connection = normalizeConnection(srcId, newNode.id, nextNodesList, pending.connection.handleType);
+                if (connection) {
+                    newConns.push({ id: nanoid(), ...connection });
+                }
+            }
+            if (!newConns.length) {
                 message.warning(t("canvas.projectPage.configConnection"));
                 return;
             }
             setNodes((prev) => [...prev, newNode]);
-            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            setConnections((prev) => [...prev, ...newConns]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
@@ -1285,18 +1340,25 @@ function InfiniteCanvasPage() {
             setQuickGrowMenu(null);
             const source = nodesRef.current.find((node) => node.id === nodeId);
             if (!source) return;
+            const isMultiSource = selectedNodeIdsRef.current.size > 1 && selectedNodeIdsRef.current.has(nodeId);
+            const sourceIds = isMultiSource ? [...selectedNodeIdsRef.current] : [source.id];
             const type = quickGrowNodeType(kind);
             const spec = getNodeSpec(type);
             const position = findFreeRightPosition(source, spec, nodesRef.current);
             const created = createCanvasNode(type, { x: position.x + spec.width / 2, y: position.y + spec.height / 2 });
             const newNode: CanvasNodeData = kind === "edit" ? { ...created, title: t("hemosi.quickGrow.editTitle") } : created;
-            const connection = normalizeConnection(source.id, newNode.id, [...nodesRef.current, newNode], "source");
-            if (!connection) {
+            const nextNodesList = [...nodesRef.current, newNode];
+            const newConns: CanvasConnection[] = [];
+            for (const srcId of sourceIds) {
+                const connection = normalizeConnection(srcId, newNode.id, nextNodesList, "source");
+                if (connection) newConns.push({ id: nanoid(), ...connection });
+            }
+            if (!newConns.length) {
                 message.warning(t("hemosi.quickGrow.connectFailed"));
                 return;
             }
             setNodes((prev) => [...prev, newNode]);
-            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            setConnections((prev) => [...prev, ...newConns]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             setToolbarNodeId(null);
@@ -4050,7 +4112,21 @@ function InfiniteCanvasPage() {
                             />
                             );
                         })}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
+                        {connectingParams ? (
+                            connectingParams.handleType === "source" && selectedNodeIds.size > 1 && selectedNodeIds.has(connectingParams.nodeId) ? (
+                                selectedNodes.map((selNode) => (
+                                    <ActiveConnectionPath
+                                        key={`active-${selNode.id}`}
+                                        node={selNode}
+                                        handle={{ nodeId: selNode.id, handleType: "source" }}
+                                        mouseWorld={mouseWorld}
+                                        target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined}
+                                    />
+                                ))
+                            ) : (
+                                <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} />
+                            )
+                        ) : null}
                     </svg>
 
                     {visibleNodes.map((node) => (
@@ -4094,7 +4170,7 @@ function InfiniteCanvasPage() {
                             onViewImage={handleNodeViewImage}
                             onSelectReference={selectNodeReference}
                             onContextMenu={handleNodeContextMenu}
-                            onQuickGrow={referencePickerNodeId ? undefined : openQuickGrowMenu}
+                            onQuickGrow={referencePickerNodeId || hasMultipleSelectedNodes ? undefined : openQuickGrowMenu}
                         />
                     ))}
 
@@ -4192,6 +4268,8 @@ function InfiniteCanvasPage() {
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
                         onSaveTemplate={openSaveTemplate}
+                        onConnectStart={(event, nodeId) => handleConnectStart(event, nodeId, "source")}
+                        onQuickGrow={openQuickGrowMenu}
                         actions={[
                             ...(selectedNodes.some((node) => node.type === HemosiNodeType.Shot)
                                 ? [
@@ -4463,7 +4541,10 @@ function CanvasMediaPreviewModal({
             setInfoOpen(false);
             return;
         }
-        // Automatically pause any playing videos on the canvas when opening fullscreen preview
+        // Exit any native browser fullscreen and pause any playing videos on the canvas when opening fullscreen preview
+        if (document.fullscreenElement) {
+            void document.exitFullscreen().catch(() => {});
+        }
         document.querySelectorAll<HTMLVideoElement>("video[data-canvas-video]").forEach((v) => {
             if (!v.paused) v.pause();
         });
@@ -4504,6 +4585,8 @@ function CanvasMediaPreviewModal({
                 <video
                     src={content}
                     controls
+                    controlsList="nofullscreen nodownload noremoteplayback"
+                    disablePictureInPicture
                     autoPlay
                     className="max-h-[95vh] max-w-[96vw] object-contain outline-none"
                     onClick={(event) => event.stopPropagation()}

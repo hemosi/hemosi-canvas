@@ -108,7 +108,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         const preset = OFFICIAL_CHANNEL_PRESETS.find((item) => item.id === presetId);
         if (!preset) return;
         if (config.channels.some((channel) => channel.id === preset.id)) return setEditingChannelId(preset.id);
-        const channel = createModelChannel({ id: preset.id, name: preset.name, apiFormat: preset.apiFormat, models: preset.models });
+        const channel = createModelChannel({ id: preset.id, name: preset.name, apiFormat: preset.apiFormat, baseUrl: preset.baseUrl, models: preset.models });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
     };

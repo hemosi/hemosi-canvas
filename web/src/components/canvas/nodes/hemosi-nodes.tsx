@@ -200,7 +200,7 @@ function ResultSlot({ ctx, kind }: { ctx: CanvasNodeContext; kind: "image" | "vi
     const media = kind === "image" ? meta.shotImage : meta.shotVideo;
     return (
         <div className="relative flex h-36 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-lg border" style={{ borderColor: ctx.theme.node.stroke, background: ctx.theme.canvas.background }} title={error}>
-            {media?.content ? kind === "image" ? <img src={media.content} alt="" className="max-h-full max-w-full object-contain" draggable={false} /> : <video {...stop} data-canvas-video src={media.content} controls className="max-h-full max-w-full object-contain" /> : (
+            {media?.content ? kind === "image" ? <img src={media.content} alt="" className="max-h-full max-w-full object-contain" draggable={false} /> : <video {...stop} data-canvas-video src={media.content} controls controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture className="max-h-full max-w-full object-contain" /> : (
                 <span className="flex flex-col items-center gap-1 opacity-50">
                     {kind === "image" ? <ImageIcon className="size-4" /> : <Video className="size-4" />}
                     {kind === "image" ? "图片结果" : "视频结果"}

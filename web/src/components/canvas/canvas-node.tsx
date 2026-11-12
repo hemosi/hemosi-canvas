@@ -90,6 +90,7 @@ type NodeContentRendererProps = {
     onRetryBatchImage?: (imageId: string) => void;
     onDeleteBatchImage?: (imageId: string) => void;
     onViewBatchImage?: (imageId: string) => void;
+    onViewImage?: (node: CanvasNodeData, imageId?: string) => void;
     groupChildCount: number;
 };
 
@@ -431,6 +432,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onContentChange={onContentChange}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
+                        onViewImage={onViewImage}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={(itemId) => onSetBatchPrimary?.(data.id, itemId)}
                         onDuplicateBatchImage={(imageId) => onDuplicateBatchImage?.(data, imageId)}
@@ -826,7 +828,7 @@ function EmptyImageContent({ theme }: NodeContentRendererProps) {
     );
 }
 
-function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+function VideoNodeContent({ node, theme, onViewImage }: NodeContentRendererProps) {
     const { t } = useTranslation();
     if (!node.metadata?.content)
         return (
@@ -835,16 +837,45 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <VideoWithInfo node={node} />;
+    return <VideoWithInfo node={node} onViewImage={onViewImage} />;
 }
 
 /** Video player (play / seek / volume via native controls). */
-function VideoWithInfo({ node }: { node: CanvasNodeData }) {
+function VideoWithInfo({ node, onViewImage }: { node: CanvasNodeData; onViewImage?: (node: CanvasNodeData) => void }) {
     const meta = node.metadata || {};
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        const el = videoRef.current;
+        if (!el) return;
+        const onFsChange = () => {
+            if (document.fullscreenElement === el) {
+                void document.exitFullscreen().catch(() => {});
+                onViewImage?.(node);
+            }
+        };
+        el.addEventListener("fullscreenchange", onFsChange);
+        el.addEventListener("webkitfullscreenchange", onFsChange);
+        return () => {
+            el.removeEventListener("fullscreenchange", onFsChange);
+            el.removeEventListener("webkitfullscreenchange", onFsChange);
+        };
+    }, [node, onViewImage]);
+
     return (
         <video
+            ref={videoRef}
             src={meta.content}
             controls
+            controlsList="nofullscreen nodownload noremoteplayback"
+            disablePictureInPicture
+            onDoubleClick={(event) => {
+                event.stopPropagation();
+                if (document.fullscreenElement) {
+                    void document.exitFullscreen().catch(() => {});
+                }
+                onViewImage?.(node);
+            }}
             className="h-full w-full rounded-[18px] bg-black object-contain"
             data-canvas-video={node.id}
             data-canvas-no-zoom

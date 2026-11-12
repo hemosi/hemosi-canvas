@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { BookmarkPlus, Group, Ungroup } from "lucide-react";
+import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { BookmarkPlus, Group, Plus, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -19,6 +19,8 @@ export function CanvasSelectionToolbar({
     onGroup,
     onUngroup,
     onSaveTemplate,
+    onConnectStart,
+    onQuickGrow,
     actions = [],
 }: {
     nodes: CanvasNodeData[];
@@ -29,11 +31,14 @@ export function CanvasSelectionToolbar({
     onGroup: () => void;
     onUngroup: () => void;
     onSaveTemplate?: () => void;
+    onConnectStart?: (event: ReactMouseEvent, nodeId: string) => void;
+    onQuickGrow?: (nodeId: string, clientX: number, clientY: number) => void;
     /** Batch actions on the selection (批量执行、重试失败、下载、删除、分镜整排操作…). */
     actions?: { id: string; label: string; title?: string; icon: ReactNode; onClick: () => void }[];
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const plusBtnRef = useRef<HTMLButtonElement>(null);
     if (nodes.length < 2) return null;
 
     const bounds = nodeBounds(nodes);
@@ -42,6 +47,36 @@ export function CanvasSelectionToolbar({
     const width = (bounds.right - bounds.left) * viewport.k + SELECTION_PAD * 2;
     const height = (bounds.bottom - bounds.top) * viewport.k + SELECTION_PAD * 2;
     const showActions = showToolbar && (canGroup || canUngroup || Boolean(onSaveTemplate) || actions.length > 0);
+    const primaryNode = nodes[0];
+
+    const handlePlusMouseDown = (downEvent: ReactMouseEvent<HTMLButtonElement>) => {
+        downEvent.stopPropagation();
+        if (downEvent.button !== 0 || !primaryNode) return;
+        const startX = downEvent.clientX;
+        const startY = downEvent.clientY;
+        let isDrag = false;
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) > 3) {
+                isDrag = true;
+                window.removeEventListener("mousemove", handleMouseMove);
+                window.removeEventListener("mouseup", handleMouseUp);
+                onConnectStart?.(downEvent, primaryNode.id);
+            }
+        };
+
+        const handleMouseUp = () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+            if (!isDrag) {
+                const rect = plusBtnRef.current?.getBoundingClientRect();
+                if (rect) onQuickGrow?.(primaryNode.id, rect.right + 8, rect.top);
+            }
+        };
+
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", handleMouseUp);
+    };
 
     return (
         <>
@@ -61,6 +96,28 @@ export function CanvasSelectionToolbar({
                     strokeLinecap="round"
                 />
             </svg>
+            {showToolbar ? (
+                <button
+                    ref={plusBtnRef}
+                    type="button"
+                    title="拖拽批量连线到右侧节点，或点击新建节点并全部连入"
+                    aria-label="批量连线"
+                    data-quick-grow
+                    className="pointer-events-auto absolute z-[70] flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border shadow-lg transition hover:scale-110 active:scale-95"
+                    style={{
+                        left: left + width + 10,
+                        top: top + height / 2,
+                        background: theme.toolbar.panel,
+                        borderColor: "var(--hemosi-accent)",
+                        color: "var(--hemosi-accent)",
+                    }}
+                    onMouseDown={handlePlusMouseDown}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <Plus className="size-4" strokeWidth={2.5} />
+                </button>
+            ) : null}
             {showActions ? (
                 <div
                     className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"

@@ -127,8 +127,9 @@ export const OFFICIAL_BASE_URLS: Record<ApiCallFormat, string> = {
 };
 
 /** One-click official channels (Key left empty for the user). Model names are each vendor's current official IDs. */
-export const OFFICIAL_CHANNEL_PRESETS: Array<{ id: string; name: string; apiFormat: ApiCallFormat; models: ChannelModel[]; keyHint: string }> = [
-    { id: "official-openai", name: "OpenAI 官方", apiFormat: "openai", keyHint: "platform.openai.com → API keys（sk-…）", models: [{ name: "gpt-image-2.6-sunburst", capability: "image" }, { name: "gpt-image-2.6-flare", capability: "image" }, { name: "gpt-5.5", capability: "text" }] },
+export const OFFICIAL_CHANNEL_PRESETS: Array<{ id: string; name: string; apiFormat: ApiCallFormat; baseUrl?: string; models: ChannelModel[]; keyHint: string }> = [
+    { id: "official-deepseek", name: "DeepSeek 官方", apiFormat: "openai", baseUrl: "https://api.deepseek.com", keyHint: "platform.deepseek.com → API keys（sk-…）", models: [{ name: "deepseek-chat", capability: "text" }, { name: "deepseek-reasoner", capability: "text" }] },
+    { id: "official-openai", name: "OpenAI 官方", apiFormat: "openai", baseUrl: "https://api.openai.com", keyHint: "platform.openai.com → API keys（sk-…）", models: [{ name: "gpt-image-2.6-sunburst", capability: "image" }, { name: "gpt-image-2.6-flare", capability: "image" }, { name: "gpt-5.5", capability: "text" }] },
     { id: "official-gemini", name: "Google Gemini 官方", apiFormat: "gemini", keyHint: "aistudio.google.com → Get API key", models: [{ name: "gemini-3-pro-image", capability: "image" }, { name: "gemini-omni-1.2-flash", capability: "video" }, { name: "gemini-3.8-flash", capability: "text" }] },
     { id: "official-anthropic", name: "Anthropic 官方", apiFormat: "anthropic", keyHint: "console.anthropic.com → API Keys（sk-ant-…）", models: [{ name: "claude-opus-5-5", capability: "text" }, { name: "claude-sonnet-5-5", capability: "text" }] },
     { id: "official-bfl", name: "Black Forest Labs 官方（FLUX）", apiFormat: "bfl", keyHint: "dashboard.bfl.ai → API Keys（请求头 x-key）", models: [{ name: "flux-2-max", capability: "image" }, { name: "flux-2-pro-preview", capability: "image" }] },
