@@ -20,7 +20,12 @@ export enum CanvasNodeType {
 }
 
 /** Hemosi node types registered through the node registry (rendered by their own Content component). */
-export const HemosiNodeType = { Shot: "shot", Anchor: "anchor" } as const;
+export const HemosiNodeType = {
+    Shot: "shot",
+    Anchor: "anchor",
+    Bookmark: "bookmark",
+    ImageCompare: "image-compare",
+} as const;
 
 // Node types are open strings: built-ins use CanvasNodeType and plugins use "<pluginId>:<name>".
 export type CanvasNodeTypeId = CanvasNodeType | (string & {});
@@ -140,6 +145,14 @@ export type CanvasNodeMetadata = {
     sourceFileName?: string;
     /** 3D 场景节点（导演台）：主体、机位运镜、全景底图。 */
     directorScene?: import("@/lib/canvas/director-scene").DirectorScene;
+    /** 书签快速导航节点（参考 rgthree-comfy Bookmark） */
+    bookmarkKey?: string;
+    bookmarkZoom?: number;
+    /** 双图对比节点（参考 rgthree-comfy Image Comparer） */
+    compareImageA?: CanvasNodeImage;
+    compareImageB?: CanvasNodeImage;
+    compareSwap?: boolean;
+    compareMode?: "hover" | "drag";
 };
 
 export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";

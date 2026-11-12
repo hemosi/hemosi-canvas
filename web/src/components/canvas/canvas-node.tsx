@@ -472,7 +472,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 ) : null}
             </div>
 
-            {!referenceSelectionState && !isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
+            {!referenceSelectionState && !isGroup && data.type !== "bookmark" ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? <ConnectionHandleDot side="right" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {onQuickGrow && !referenceSelectionState && !isConnecting && canQuickGrow(data) && (definition?.hasSourceHandle ?? true) ? (
@@ -1123,12 +1123,19 @@ function ConnectionHandleDot({ side, visible, onMouseDown }: { side: "left" | "r
 
     return (
         <div
-            className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
-                side === "left" ? "-left-6" : "-right-6"
+            className={`group/handle absolute top-1/2 z-30 flex h-20 w-14 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
+                side === "left" ? "-left-7" : "-right-7"
             } ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-            onMouseDown={onMouseDown}
+            onMouseDown={(event) => {
+                event.stopPropagation();
+                onMouseDown(event);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
         >
-            <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
+            <div
+                className="size-4 rounded-full border-2 shadow-md transition-transform duration-150 group-hover/handle:scale-125"
+                style={{ background: theme.node.panel, borderColor: "var(--hemosi-accent, #00d0c4)" }}
+            />
         </div>
     );
 }

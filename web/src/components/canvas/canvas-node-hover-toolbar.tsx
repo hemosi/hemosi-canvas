@@ -11,7 +11,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
 import type { CanvasNodeToolbarItem } from "@/types/canvas-plugin";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
-import { IMAGE_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
+import { IMAGE_QUICK_TOOLS_STORAGE_KEY, WEIGHTED_IMAGE_TOOL_ORDER, buildImageToolbarTools, copyImageSourceToClipboard, defaultImageQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -141,7 +141,22 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, t("common.promptCopied"));
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const copyImageFile = async (target: CanvasNodeData) => {
+        const primaryId = target.metadata?.primaryImageId;
+        const primaryImg = target.metadata?.images?.find((item) => item.id === primaryId) || target.metadata?.images?.[0];
+        const src = primaryImg?.content || target.metadata?.content;
+        if (!src) {
+            message.warning("当前节点暂无可复制的图片");
+            return;
+        }
+        try {
+            await copyImageSourceToClipboard(src);
+            message.success("已复制到粘贴板");
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "复制图片失败");
+        }
+    };
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyImage: (target) => void copyImageFile(target), onCopyPrompt: copyImagePrompt, onReversePrompt });
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -150,16 +165,17 @@ export function CanvasNodeHoverToolbar({
         setImageToolSettingsOpen(true);
     }
 
-    const baseToolbarTools: ToolbarTool[] = [
-        { id: "info", title: t("canvas.nodeToolbar.infoTitle"), label: t("canvas.nodeToolbar.info"), icon: <Info className="size-4" />, onClick: () => onInfo(node) },
+    const tailSystemTools: ToolbarTool[] = [
         ...(node.type === CanvasNodeType.Group && onUngroup ? [{ id: "ungroup", title: t("canvas.nodeToolbar.ungroupTitle"), label: t("canvas.nodeToolbar.ungroup"), icon: <Ungroup className="size-4" />, onClick: () => onUngroup(node) }] : []),
+        { id: "info", title: t("canvas.nodeToolbar.infoTitle"), label: t("canvas.nodeToolbar.info"), icon: <Info className="size-4" />, onClick: () => onInfo(node) },
         { id: "delete", title: t("canvas.nodeToolbar.removeTitle"), label: t("common.delete"), icon: <Trash2 className="size-4" />, onClick: () => onDelete(node), danger: true },
     ];
     const nodeToolbarTools: ToolbarTool[] = [
         ...(canQueryVideoTask ? [{ id: "queryVideoTask", title: t("canvas.nodeToolbar.queryVideoTaskTitle"), label: t("canvas.nodeToolbar.queryVideoTask"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
-        ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
+        ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
         ...(hasImage || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: t("canvas.node.generateImage"), label: t("canvas.node.generate"), icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),
         ...(isConfig ? [{ id: "config", title: t("canvas.configNode.title"), label: t("canvas.configNode.title"), icon: <Settings2 className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
@@ -168,21 +184,32 @@ export function CanvasNodeHoverToolbar({
         ...(isImage && !hasImage ? [{ id: "uploadImage", title: t("canvas.nodeToolbar.uploadImage"), label: t("canvas.nodeToolbar.uploadImage"), icon: <Upload className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(isVideo ? [{ id: "uploadVideo", title: t(hasVideo ? "canvas.nodeToolbar.replaceVideo" : "canvas.nodeToolbar.uploadVideo"), label: t(hasVideo ? "canvas.nodeToolbar.replaceVideo" : "canvas.nodeToolbar.uploadVideo"), icon: <Video className="size-4" />, onClick: () => onUpload(node) }] : []),
         ...(isAudio ? [{ id: "uploadAudio", title: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), label: t(hasAudio ? "canvas.nodeToolbar.replaceAudio" : "canvas.nodeToolbar.uploadAudio"), icon: <Music2 className="size-4" />, onClick: () => onUpload(node) }] : []),
-        ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
     ];
-    // Pinned tools always show, outside the user's image quick-tool selection.
+    // Pinned tools weighted by frequency: 高频预览/下载/截帧在前
     const pinnedTools: ToolbarTool[] = [
-        ...(hasVideo ? [{ id: "viewVideo", title: "放大播放", label: "放大", icon: <Maximize2 className="size-4" />, onClick: () => onViewImage(node) }] : []),
-        ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
-        ...(hasVideo && onSplitVideoShots ? [{ id: "splitVideoShots", title: "按镜头切换把视频拆成一排分镜节点", label: "拆分镜", icon: <Clapperboard className="size-4" />, onClick: () => onSplitVideoShots(node) }] : []),
-        ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
-        ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
-        // Video result toolbar: 截帧 / 用末帧续拍 / 重拍 / 下载, in that order.
+        ...(hasVideo ? [{ id: "viewVideo", title: "全屏", label: "全屏", icon: <Maximize2 className="size-4" />, onClick: () => onViewImage(node) }] : []),
         ...(hasVideo ? [{ id: "download", title: t("canvas.nodeToolbar.downloadVideo"), label: t("hemosi.videoTools.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
+        ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
+        ...(hasVideo && onSplitVideoShots ? [{ id: "splitVideoShots", title: "按镜头切换把视频拆成一排分镜节点", label: "拆分镜", icon: <Clapperboard className="size-4" />, onClick: () => onSplitVideoShots(node) }] : []),
+        ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
         ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo || (!isBuiltinNodeType(node.type) && Boolean(node.metadata?.content) && Boolean(getNodeDefinition(node.type)?.useBuiltinPanel?.writeBackToSelf))) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
     ];
-    const toolbarTools = hasImage ? [...pinnedExtraTools, ...pinnedTools, ...[...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId))] : [...pinnedExtraTools, ...pinnedTools, ...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
-    const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
+    const allImagePool = [...nodeToolbarTools, ...tailSystemTools];
+    const weightedImageTools = WEIGHTED_IMAGE_TOOL_ORDER
+        .map((id) => allImagePool.find((t) => t.id === id))
+        .filter((t): t is ToolbarTool => Boolean(t));
+    const retryTools = nodeToolbarTools.filter((t) => t.id === "retry" || t.id === "queryVideoTask");
+    const toolbarTools = hasImage
+        ? [
+              ...retryTools,
+              ...weightedImageTools.filter((t) => t.id !== "info" && t.id !== "delete" && quickImageToolIdSet.has(t.id as ImageQuickToolId)),
+              ...pinnedTools,
+              ...pinnedExtraTools,
+              ...weightedImageTools.filter((t) => (t.id === "info" || t.id === "delete") && quickImageToolIdSet.has(t.id as ImageQuickToolId)),
+          ]
+        : [...pinnedTools, ...nodeToolbarTools, ...extraTools, ...pinnedExtraTools, ...tailSystemTools];
+    const selectableImageToolbarTools = weightedImageTools as ImageToolbarSettingsTool[];
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);

@@ -11,6 +11,8 @@ export type ShotHost = {
     downstreamCount: (nodeId: string) => number;
     /** Patch any node's metadata (used by builtin nodes such as groups that have no plugin context). */
     updateMetadata: (nodeId: string, patch: CanvasNodeData["metadata"]) => void;
+    jumpToBookmark?: (nodeId: string) => void;
+    getCurrentZoom?: () => number;
 };
 
 let host: ShotHost | null = null;

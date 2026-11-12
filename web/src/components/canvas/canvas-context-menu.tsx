@@ -1,12 +1,14 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, Copy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Copy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
+import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeData, ContextMenuState } from "@/types/canvas";
 import type { VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
+import { copyImageSourceToClipboard } from "./canvas-image-toolbar-tools";
 
 export function CanvasNodeContextMenu({
     menu,
@@ -44,7 +46,20 @@ export function CanvasNodeContextMenu({
     connectionItems?: ReactNode;
 }) {
     const { t } = useTranslation();
+    const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const primaryImageId = node?.metadata?.primaryImageId;
+    const imageSrc = node?.type === "image" ? (node.metadata?.images?.find((i) => i.id === primaryImageId)?.content || node.metadata?.images?.[0]?.content || node.metadata?.content) : undefined;
+    const handleCopyImage = async () => {
+        if (!imageSrc) return;
+        onClose();
+        try {
+            await copyImageSourceToClipboard(imageSrc);
+            message.success("已复制到粘贴板");
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "复制图片失败");
+        }
+    };
 
     useEffect(() => {
         const close = (event: PointerEvent) => {
@@ -70,6 +85,7 @@ export function CanvasNodeContextMenu({
                     <div className="my-1 border-t" style={{ borderColor: theme.toolbar.border }} />
                 </>
             ) : null}
+            {menu.type === "node" && imageSrc ? <MenuButton icon={<ClipboardCopy className="size-4" />} label="复制到粘贴板" onClick={() => void handleCopyImage()} /> : null}
             {menu.type === "node" && canGroup ? <MenuButton icon={<Group className="size-4" />} label={t("canvas.nodeToolbar.group")} onClick={onGroup} /> : null}
             {menu.type === "node" && canUngroup ? <MenuButton icon={<Ungroup className="size-4" />} label={t("canvas.nodeToolbar.ungroup")} onClick={onUngroup} /> : null}
             {menu.type === "node" ? <MenuButton icon={<Copy className="size-4" />} label={t("p1.menu.duplicate")} onClick={() => onDuplicate(false)} /> : null}

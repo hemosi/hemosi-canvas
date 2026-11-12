@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, ClipboardCopy, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
-export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
-export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
+export type ImageNodeActionToolId = "view" | "copyImage" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "replace" | "resize" | "superResolve" | "angle";
+export type ImageQuickToolId = "view" | "copyImage" | "download" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "saveAsset" | "replace" | "resize" | "superResolve" | "angle" | "info" | "delete";
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
@@ -17,6 +17,7 @@ export type ImageToolHandlers = {
     onSuperResolve: (node: CanvasNodeData) => void;
     onAngle: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
+    onCopyImage: (node: CanvasNodeData) => void;
     onCopyPrompt: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
 };
@@ -36,11 +37,77 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v7";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v8";
 
-const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download"];
+// Weighted by real-world frequency:高频操作左置，低频信息与高危删除右置
+export const WEIGHTED_IMAGE_TOOL_ORDER: ImageQuickToolId[] = [
+    "view",
+    "copyImage",
+    "download",
+    "crop",
+    "maskEdit",
+    "upscale",
+    "split",
+    "copyPrompt",
+    "reversePrompt",
+    "saveAsset",
+    "replace",
+    "resize",
+    "superResolve",
+    "angle",
+    "info",
+    "delete",
+];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
+    {
+        id: "view",
+        defaultVisible: true,
+        label: () => "全屏",
+        title: () => "全屏",
+        icon: () => <Maximize2 className="size-4" />,
+        run: (node, handlers) => handlers.onViewImage(node),
+    },
+    {
+        id: "copyImage",
+        defaultVisible: true,
+        label: () => "复制图片",
+        title: () => "复制到粘贴板",
+        icon: () => <ClipboardCopy className="size-4" />,
+        run: (node, handlers) => handlers.onCopyImage(node),
+    },
+    {
+        id: "crop",
+        defaultVisible: true,
+        label: () => i18n.t("canvas.imageTools.crop"),
+        title: () => i18n.t("canvas.imageTools.cropTitle"),
+        icon: () => <Scissors className="size-4" />,
+        run: (node, handlers) => handlers.onCrop(node),
+    },
+    {
+        id: "maskEdit",
+        defaultVisible: true,
+        label: () => i18n.t("canvas.imageTools.mask"),
+        title: () => i18n.t("canvas.imageTools.maskTitle"),
+        icon: () => <Brush className="size-4" />,
+        run: (node, handlers) => handlers.onMaskEdit(node),
+    },
+    {
+        id: "upscale",
+        defaultVisible: true,
+        label: () => i18n.t("canvas.imageTools.upscale"),
+        title: () => i18n.t("canvas.imageTools.upscaleTitle"),
+        icon: () => <ZoomIn className="size-4" />,
+        run: (node, handlers) => handlers.onUpscale(node),
+    },
+    {
+        id: "split",
+        defaultVisible: true,
+        label: () => i18n.t("canvas.imageTools.split"),
+        title: () => i18n.t("canvas.imageTools.splitTitle"),
+        icon: () => <Grid2x2 className="size-4" />,
+        run: (node, handlers) => handlers.onSplit(node),
+    },
     {
         id: "copyPrompt",
         defaultVisible: true,
@@ -75,38 +142,6 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onToggleFreeResize(node),
     },
     {
-        id: "maskEdit",
-        defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.mask"),
-        title: () => i18n.t("canvas.imageTools.maskTitle"),
-        icon: () => <Brush className="size-4" />,
-        run: (node, handlers) => handlers.onMaskEdit(node),
-    },
-    {
-        id: "crop",
-        defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.crop"),
-        title: () => i18n.t("canvas.imageTools.cropTitle"),
-        icon: () => <Scissors className="size-4" />,
-        run: (node, handlers) => handlers.onCrop(node),
-    },
-    {
-        id: "split",
-        defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.split"),
-        title: () => i18n.t("canvas.imageTools.splitTitle"),
-        icon: () => <Grid2x2 className="size-4" />,
-        run: (node, handlers) => handlers.onSplit(node),
-    },
-    {
-        id: "upscale",
-        defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.upscale"),
-        title: () => i18n.t("canvas.imageTools.upscaleTitle"),
-        icon: () => <ZoomIn className="size-4" />,
-        run: (node, handlers) => handlers.onUpscale(node),
-    },
-    {
         id: "superResolve",
         defaultVisible: false,
         label: () => i18n.t("canvas.imageTools.superResolve"),
@@ -122,17 +157,12 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         icon: () => <Camera className="size-4" />,
         run: (node, handlers) => handlers.onAngle(node),
     },
-    {
-        id: "view",
-        defaultVisible: true,
-        label: () => i18n.t("canvas.imageTools.view"),
-        title: () => i18n.t("canvas.imageTools.viewTitle"),
-        icon: () => <Maximize2 className="size-4" />,
-        run: (node, handlers) => handlers.onViewImage(node),
-    },
 ];
 
-export const defaultImageQuickToolIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.filter((tool) => tool.defaultVisible).map((tool) => tool.id)];
+export const defaultImageQuickToolIds: ImageQuickToolId[] = WEIGHTED_IMAGE_TOOL_ORDER.filter((id) => {
+    const def = imageToolDefinitions.find((t) => t.id === id);
+    return def ? def.defaultVisible : true;
+});
 
 export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers) {
     return imageToolDefinitions.map((tool) => ({
@@ -146,9 +176,8 @@ export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageTool
 }
 
 export function normalizeImageQuickToolIds(value: unknown[]) {
-    const allIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
-    const ids = new Set(allIds);
-    return allIds.filter((id) => value.includes(id) && ids.has(id));
+    const ids = new Set(WEIGHTED_IMAGE_TOOL_ORDER);
+    return WEIGHTED_IMAGE_TOOL_ORDER.filter((id) => value.includes(id) && ids.has(id));
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
@@ -159,6 +188,27 @@ export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig
         ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
         showLabels: data.showLabels === true,
     };
+}
+
+/** Convert any image URL / data URL to PNG Blob and write to system clipboard for direct pasting into external webpages/apps. */
+export async function copyImageSourceToClipboard(src: string): Promise<void> {
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("图片加载失败，无法复制"));
+        img.src = src;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth || img.width || 1024;
+    canvas.height = img.naturalHeight || img.height || 1024;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("画布初始化失败");
+    ctx.drawImage(img, 0, 0);
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("生成剪贴板图片失败"))), "image/png");
+    });
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
 }
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {

@@ -69,12 +69,29 @@ export function inferMediaScale(size: string, storedScale?: string) {
     return "1k";
 }
 
+export function isPresetPixelSize(size: string) {
+    const pixels = parsePixelSize(size);
+    if (!pixels) return false;
+    const normalized = `${pixels.width}x${pixels.height}`;
+    return Object.values(imageSizePresets).some((map) => Object.values(map).includes(normalized));
+}
+
 export function inferMediaRatio(size: string, fallback = "1:1") {
     if (!size || size === "auto") return "auto";
     if (mediaRatioOptions.some((item) => item.value === size)) return size;
-    const pixels = parsePixelSize(size) || parseAspectRatio(size);
-    if (!pixels) return fallback;
-    const target = pixels.width / pixels.height;
+    const pixels = parsePixelSize(size);
+    if (pixels) {
+        const normalized = `${pixels.width}x${pixels.height}`;
+        for (const map of Object.values(imageSizePresets)) {
+            for (const [ratioKey, val] of Object.entries(map)) {
+                if (val === normalized) return ratioKey;
+            }
+        }
+        return "custom";
+    }
+    const aspect = parseAspectRatio(size);
+    if (!aspect) return fallback;
+    const target = aspect.width / aspect.height;
     return mediaRatioOptions
         .filter((item) => item.value !== "auto")
         .reduce((best, item) => {

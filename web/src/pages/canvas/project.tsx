@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Box, Clapperboard, Copy, Film, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
+import { Anchor, Bookmark, Box, Clapperboard, Columns2, Copy, Film, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -156,8 +156,8 @@ const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // Stable empty reference array prevents `... || []` from invalidating CanvasNode's React.memo on every render.
 const EMPTY_REFERENCES: CanvasResourceReference[] = [];
-const CONNECTION_HANDLE_HIT_RADIUS = 40;
-const CONNECTION_NODE_HIT_PADDING = 32;
+const CONNECTION_HANDLE_HIT_RADIUS = 56;
+const CONNECTION_NODE_HIT_PADDING = 44;
 const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -228,6 +228,7 @@ function InfiniteCanvasPage() {
     const dragRef = useRef<{
         isDraggingNode: boolean;
         hasMoved: boolean;
+        altDuplicatePending?: boolean;
         startX: number;
         startY: number;
         // Keyed by node id so drag frames look positions up in O(1) instead of scanning the array per node.
@@ -384,6 +385,38 @@ function InfiniteCanvasPage() {
 
     const { runShot, runShots } = useShotGeneration({ projectId, nodesRef, connectionsRef, setNodes, effectiveConfig, isAiConfigReady, openConfigDialog, requestGenerationConfirm, startGenerationRequest, finishGenerationRequest });
     const [versionsNodeId, setVersionsNodeId] = useState<string | null>(null);
+    const jumpToBookmark = useCallback(
+        (nodeId: string) => {
+            const node = nodesRef.current.find((item) => item.id === nodeId);
+            if (!node) return;
+            const k = Math.max(0.1, Math.min(4, Number(node.metadata?.bookmarkZoom) || 1));
+            // Match rgthree Bookmark: align canvas top-left to the bookmark node's top-left (with a small 16px margin)
+            const target = {
+                x: -node.position.x * k + 24,
+                y: -node.position.y * k + 64,
+                k,
+            };
+            if (focusAnimRef.current) cancelAnimationFrame(focusAnimRef.current);
+            const start = { ...viewportRef.current };
+            const duration = 260;
+            const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+            let startTime: number | null = null;
+            const step = (now: number) => {
+                if (startTime === null) startTime = now;
+                const progress = Math.min((now - startTime) / duration, 1);
+                const ease = easeOutCubic(progress);
+                setViewport({
+                    x: start.x + (target.x - start.x) * ease,
+                    y: start.y + (target.y - start.y) * ease,
+                    k: start.k + (target.k - start.k) * ease,
+                });
+                focusAnimRef.current = progress < 1 ? requestAnimationFrame(step) : null;
+            };
+            focusAnimRef.current = requestAnimationFrame(step);
+        },
+        [],
+    );
+
     useEffect(
         () =>
             setShotHost({
@@ -396,9 +429,29 @@ function InfiniteCanvasPage() {
                 openVersions: setVersionsNodeId,
                 downstreamCount: (nodeId) => downstreamNodeCount(nodeId, nodesRef.current, connectionsRef.current),
                 updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
+                jumpToBookmark,
+                getCurrentZoom: () => viewportRef.current.k,
             }),
-        [runShot],
+        [jumpToBookmark, runShot],
     );
+
+    useEffect(() => {
+        const onBookmarkKey = (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const target = event.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable || target.closest("[data-canvas-shortcuts-ignore]"))) return;
+            const bookmarks = nodesRef.current.filter((n) => n.type === HemosiNodeType.Bookmark);
+            if (!bookmarks.length) return;
+            const pressed = event.key.toLowerCase();
+            const matched = bookmarks.find((b, idx) => (b.metadata?.bookmarkKey || String((idx % 9) + 1)).toLowerCase() === pressed);
+            if (matched) {
+                event.preventDefault();
+                jumpToBookmark(matched.id);
+            }
+        };
+        window.addEventListener("keydown", onBookmarkKey);
+        return () => window.removeEventListener("keydown", onBookmarkKey);
+    }, [jumpToBookmark]);
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
@@ -1699,6 +1752,7 @@ function InfiniteCanvasPage() {
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
+            altDuplicatePending: Boolean(event.altKey),
             startX: event.clientX,
             startY: event.clientY,
             initialSelectedNodes,
@@ -1776,11 +1830,47 @@ function InfiniteCanvasPage() {
             if (dragRef.current.isDraggingNode) {
                 const dx = (event.clientX - dragRef.current.startX) / currentViewport.k;
                 const dy = (event.clientY - dragRef.current.startY) / currentViewport.k;
-                const initialPositions = dragRef.current.initialSelectedNodes;
-                const movedIds = dragRef.current.movedIds;
                 if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) {
                     dragRef.current.hasMoved = true;
+                    if (dragRef.current.altDuplicatePending) {
+                        dragRef.current.altDuplicatePending = false;
+                        const origIds = dragRef.current.movedIds;
+                        const idMap = new Map<string, string>();
+                        const newInitial = new Map<string, { x: number; y: number }>();
+                        const clones: CanvasNodeData[] = [];
+                        nodesRef.current.forEach((n, idx) => {
+                            if (!origIds.has(n.id)) return;
+                            const newId = `${n.type}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+                            idMap.set(n.id, newId);
+                            const initPos = dragRef.current.initialSelectedNodes.get(n.id) || n.position;
+                            newInitial.set(newId, { x: initPos.x, y: initPos.y });
+                            clones.push({
+                                ...n,
+                                id: newId,
+                                position: { x: initPos.x + dx, y: initPos.y + dy },
+                                metadata: n.metadata ? structuredClone(n.metadata) : undefined,
+                            });
+                        });
+                        const remappedClones = clones.map((c) => {
+                            const gid = c.metadata?.groupId;
+                            if (gid && idMap.has(gid)) {
+                                return { ...c, metadata: { ...c.metadata, groupId: idMap.get(gid) } };
+                            }
+                            return c;
+                        });
+                        const newMovedSet = new Set(newInitial.keys());
+                        dragRef.current.initialSelectedNodes = newInitial;
+                        dragRef.current.movedIds = newMovedSet;
+                        const nextNodes = [...nodesRef.current, ...remappedClones];
+                        nodesRef.current = nextNodes;
+                        setNodes(nextNodes);
+                        setSelectedNodeIds(newMovedSet);
+                        setToolbarNodeId(newMovedSet.size === 1 ? [...newMovedSet][0] : null);
+                        return;
+                    }
                 }
+                const initialPositions = dragRef.current.initialSelectedNodes;
+                const movedIds = dragRef.current.movedIds;
 
                 // Drop-target detection and node updates both run once per frame; mousemove can fire far more often than the display refreshes.
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -2174,7 +2264,7 @@ function InfiniteCanvasPage() {
                     applyAgentOps(ops);
                     setDialogNodeId(videoId);
                 };
-                items.push({ id: "p6-draw-to-video", title: "草图/预演图作为首帧，新建视频节点并连线（走已有视频生成与确认卡）", label: "首帧转视频", icon: <Video className="size-4" />, onClick: () => toVideo("firstFrame") });
+                items.push({ id: "p6-draw-to-video", title: "作为首帧图，新建视频节点并连线", label: "首帧转视频", icon: <Video className="size-4" />, onClick: () => toVideo("firstFrame") });
                 items.push({ id: "p6-draw-to-video-ref", title: "作为参考图，新建视频节点并连线", label: "参考转视频", icon: <Film className="size-4" />, onClick: () => toVideo("reference") });
             }
             if (node.type === CanvasNodeType.Image && node.metadata?.content) items.push({ id: "p1-set-ref", title: t("p1.toolbar.setRefTitle"), label: t("p1.toolbar.setRef"), icon: <Link2 className="size-4" />, onClick: () => setRefTargetSourceId(node.id) });
@@ -4132,7 +4222,9 @@ function InfiniteCanvasPage() {
                     extraButtons={[
                         { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
                         { id: "tool-anchor", label: "锚点（角色/场景/风格）", icon: <Anchor className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Anchor) },
-                        { id: "tool-scene3d", label: "3D 场景（导演台）", icon: <Box className="size-4.5" />, onClick: () => createNode(DIRECTOR_NODE_TYPE) },
+                        { id: "tool-compare", label: "双图拉帘对比", icon: <Columns2 className="size-4.5" />, onClick: () => createNode(HemosiNodeType.ImageCompare) },
+                        { id: "tool-bookmark", label: "书签快速导航 (按 1~9 闪现)", icon: <Bookmark className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Bookmark) },
+                        { id: "tool-scene3d", label: "3D 导演工作台", icon: <Box className="size-4.5" />, onClick: () => createNode(DIRECTOR_NODE_TYPE) },
                         { id: "tool-search", label: "搜索节点 (Ctrl+F)", icon: <Search className="size-4.5" />, active: searchOpen, onClick: () => setSearchOpen((value) => !value) },
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },
                         { id: "tool-queue", label: queueCount ? `生成队列 · ${queueCount} 项` : "生成队列 / 记录", icon: <span className="relative"><ListChecks className="size-4.5" />{queueCount ? <span className="absolute -right-1.5 -top-1.5 grid min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-bold" style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}>{queueCount}</span> : null}</span>, active: queueOpen, onClick: () => setQueueOpen((value) => !value) },
@@ -4354,99 +4446,169 @@ function CanvasMediaPreviewModal({
     open: boolean;
     onClose: () => void;
 }) {
+    const { message } = App.useApp();
     const isVideo = node?.type === CanvasNodeType.Video;
     const [videoMeta, setVideoMeta] = useState<{ duration: number; width: number; height: number } | null>(null);
     const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
+    const [infoOpen, setInfoOpen] = useState(false);
 
     useEffect(() => {
         if (!open) {
             setVideoMeta(null);
             setImageMeta(null);
+            setInfoOpen(false);
+            return;
         }
-    }, [open]);
+        // Automatically pause any playing videos on the canvas when opening fullscreen preview
+        document.querySelectorAll<HTMLVideoElement>("video[data-canvas-video]").forEach((v) => {
+            if (!v.paused) v.pause();
+        });
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+            if (event.key === "i" || event.key === "I") setInfoOpen((prev) => !prev);
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [open, onClose]);
+
+    if (!open || !content) return null;
 
     const bytes = node?.metadata?.bytes || (content ? getDataUrlByteSize(content) : 0);
     const videoDuration = videoMeta?.duration || (node?.metadata?.durationMs ? node.metadata.durationMs / 1000 : node?.metadata?.seconds || 0);
     const videoWidth = videoMeta?.width || node?.metadata?.naturalWidth;
     const videoHeight = videoMeta?.height || node?.metadata?.naturalHeight;
-
     const imgWidth = imageMeta?.width || node?.metadata?.naturalWidth;
     const imgHeight = imageMeta?.height || node?.metadata?.naturalHeight;
 
-    return (
-        <Modal
-            open={open}
-            centered
-            footer={null}
-            onCancel={onClose}
-            width="auto"
-            closable
-            destroyOnHidden
-            styles={{
-                body: {
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                },
-            }}
-        >
-            <div
-                className="flex flex-col items-center gap-3 p-4 rounded-2xl"
-                style={{
-                    background: "rgba(18, 20, 24, 0.96)",
-                    border: "1px solid rgba(255, 255, 255, 0.12)",
-                    boxShadow: "0 24px 64px rgba(0, 0, 0, 0.5)",
-                    color: "#f3f4f6",
-                }}
-            >
-                {isVideo ? (
-                    <video
-                        src={content}
-                        controls
-                        autoPlay
-                        className="max-h-[75vh] max-w-[85vw] rounded-xl bg-black object-contain shadow-2xl"
-                        onLoadedMetadata={(event) =>
-                            setVideoMeta({
-                                duration: event.currentTarget.duration || 0,
-                                width: event.currentTarget.videoWidth,
-                                height: event.currentTarget.videoHeight,
-                            })
-                        }
-                    />
-                ) : (
-                    <img
-                        src={content}
-                        alt={node?.title || "Image"}
-                        className="max-h-[75vh] max-w-[85vw] rounded-xl object-contain shadow-2xl"
-                        onLoad={(event) =>
-                            setImageMeta({
-                                width: event.currentTarget.naturalWidth,
-                                height: event.currentTarget.naturalHeight,
-                            })
-                        }
-                    />
-                )}
+    const handleCopyPreviewImage = async () => {
+        try {
+            const { copyImageSourceToClipboard } = await import("@/components/canvas/canvas-image-toolbar-tools");
+            await copyImageSourceToClipboard(content);
+            message.success("已复制到粘贴板");
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "复制图片失败");
+        }
+    };
 
-                <div className="flex flex-wrap items-center justify-between gap-4 w-full px-2 pt-1 text-xs text-gray-300">
-                    <span className="font-medium truncate max-w-[280px]" title={node?.title}>{node?.title || (isVideo ? "视频放大播放" : "图片详情")}</span>
-                    <div className="flex items-center gap-3">
-                        {isVideo ? (
-                            <>
-                                {videoDuration ? <span>时长：{Number(videoDuration).toFixed(1)}s</span> : null}
-                                {videoWidth && videoHeight ? <span>分辨率：{videoWidth}×{videoHeight}</span> : null}
-                                {bytes ? <span>文件大小：{formatBytes(bytes)}</span> : null}
-                            </>
-                        ) : (
-                            <>
-                                {imgWidth && imgHeight ? <span>真实像素：{imgWidth} × {imgHeight} px</span> : null}
-                                {bytes ? <span>大小：{formatBytes(bytes)}</span> : null}
-                            </>
-                        )}
-                    </div>
+    return (
+        <div
+            className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/92 backdrop-blur-md select-none"
+            onClick={onClose}
+        >
+            {/* 纯无边框媒体画面主体 */}
+            {isVideo ? (
+                <video
+                    src={content}
+                    controls
+                    autoPlay
+                    className="max-h-[95vh] max-w-[96vw] object-contain outline-none"
+                    onClick={(event) => event.stopPropagation()}
+                    onLoadedMetadata={(event) =>
+                        setVideoMeta({
+                            duration: event.currentTarget.duration || 0,
+                            width: event.currentTarget.videoWidth,
+                            height: event.currentTarget.videoHeight,
+                        })
+                    }
+                />
+            ) : (
+                <img
+                    src={content}
+                    alt={node?.title || "Image"}
+                    className="max-h-[95vh] max-w-[96vw] object-contain"
+                    onClick={(event) => event.stopPropagation()}
+                    onLoad={(event) =>
+                        setImageMeta({
+                            width: event.currentTarget.naturalWidth,
+                            height: event.currentTarget.naturalHeight,
+                        })
+                    }
+                />
+            )}
+
+            {/* 右上角极简悬浮控制组：复制图片 + i 信息按钮 + 关闭 */}
+            <div
+                className="fixed right-5 top-5 z-[1310] flex items-center gap-2.5"
+                onClick={(event) => event.stopPropagation()}
+            >
+                {!isVideo ? (
+                    <button
+                        type="button"
+                        title="复制到粘贴板"
+                        className="flex h-10 items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3.5 text-xs font-medium text-white/90 backdrop-blur-md transition hover:border-[#00d0c4] hover:text-[#00d0c4]"
+                        onClick={() => void handleCopyPreviewImage()}
+                    >
+                        <Copy className="size-3.5" />
+                        <span>复制图片</span>
+                    </button>
+                ) : null}
+                <div className="relative">
+                    <button
+                        type="button"
+                        title="媒体信息 (快捷键 I)"
+                        className={`grid size-10 place-items-center rounded-full border text-sm font-semibold italic backdrop-blur-md transition ${
+                            infoOpen
+                                ? "border-[#00d0c4] bg-[#00d0c4]/20 text-[#00d0c4]"
+                                : "border-white/15 bg-black/60 text-white/90 hover:border-white/40 hover:text-white"
+                        }`}
+                        onClick={() => setInfoOpen((prev) => !prev)}
+                    >
+                        i
+                    </button>
+                    {infoOpen ? (
+                        <div className="absolute right-0 top-12 w-80 rounded-2xl border border-white/15 bg-[#0d1114]/95 p-4 text-xs text-gray-200 shadow-2xl backdrop-blur-xl select-text">
+                            <div className="mb-2.5 flex items-center justify-between border-b border-white/10 pb-2">
+                                <span className="font-semibold text-white truncate max-w-[210px]" title={node?.title}>
+                                    {node?.title || (isVideo ? "视频节点" : "图片节点")}
+                                </span>
+                                <span className="rounded bg-[#00d0c4]/15 px-1.5 py-0.5 text-[10px] text-[#00d0c4]">
+                                    {isVideo ? "VIDEO" : "IMAGE"}
+                                </span>
+                            </div>
+                            <div className="space-y-1.5 leading-relaxed">
+                                {isVideo ? (
+                                    <>
+                                        {videoWidth && videoHeight ? (
+                                            <div className="flex justify-between"><span className="opacity-55">分辨率</span><span>{videoWidth} × {videoHeight} px</span></div>
+                                        ) : null}
+                                        {videoDuration ? (
+                                            <div className="flex justify-between"><span className="opacity-55">时长</span><span>{Number(videoDuration).toFixed(1)} 秒</span></div>
+                                        ) : null}
+                                    </>
+                                ) : (
+                                    <>
+                                        {imgWidth && imgHeight ? (
+                                            <div className="flex justify-between"><span className="opacity-55">真实像素</span><span>{imgWidth} × {imgHeight} px</span></div>
+                                        ) : null}
+                                    </>
+                                )}
+                                {bytes ? (
+                                    <div className="flex justify-between"><span className="opacity-55">文件大小</span><span>{formatBytes(bytes)}</span></div>
+                                ) : null}
+                                {node?.metadata?.model ? (
+                                    <div className="flex justify-between gap-2"><span className="shrink-0 opacity-55">生成模型</span><span className="truncate">{node.metadata.model}</span></div>
+                                ) : null}
+                                {node?.metadata?.prompt ? (
+                                    <div className="pt-1.5 border-t border-white/10">
+                                        <div className="mb-1 opacity-55">提示词</div>
+                                        <div className="max-h-32 overflow-y-auto rounded-lg bg-black/40 p-2 text-[11px] leading-5 text-gray-300 whitespace-pre-wrap break-words">
+                                            {node.metadata.prompt}
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+                    ) : null}
                 </div>
+                <button
+                    type="button"
+                    title="关闭全屏 (Esc)"
+                    className="grid size-10 place-items-center rounded-full border border-white/15 bg-black/60 text-lg leading-none text-white/90 backdrop-blur-md transition hover:border-white/40 hover:bg-white/10 hover:text-white"
+                    onClick={onClose}
+                >
+                    ×
+                </button>
             </div>
-        </Modal>
+        </div>
     );
 }

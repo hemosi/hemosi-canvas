@@ -1,7 +1,25 @@
-MIT License
+HemosiTV Source-Available & Non-Commercial License
+Copyright (c) 2026 hemosi. All rights reserved.
 
+1. Personal & Non-Commercial Use Only
+   Permission is granted to view, download, and use HemosiTV and its derivative
+   modifications authored by hemosi strictly for personal, non-commercial
+   creative and educational purposes.
+
+2. Strict Prohibition on Commercial Distribution & Re-packaging
+   Without prior written authorization from hemosi, no person or entity may:
+   (a) sell, lease, sublicense, or monetize HemosiTV or any modified/re-branded
+       version thereof (including installers, portable packages, or hosted services);
+   (b) remove or alter the HemosiTV brand, copyright notices, or attribution;
+   (c) bundle HemosiTV into paid courses, paid communities, or commercial toolkits.
+
+--------------------------------------------------------------------------------
+Upstream Base Attribution (MIT License)
+Portions of the underlying canvas foundation are derived from
+basketikun/infinite-canvas (v0.20.0 snapshot):
+
+MIT License
 Copyright (c) 2026 basketikun
-Copyright (c) 2026 hemosi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

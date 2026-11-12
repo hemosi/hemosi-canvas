@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, readMediaDimensions } from "@/lib/media-size";
+import { computeMediaSize, inferMediaRatio, inferMediaScale, isPresetPixelSize, mediaRatioOptions, mediaScaleOptions, parsePixelSize, readMediaDimensions } from "@/lib/media-size";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -40,14 +40,24 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const transparentBackground = config.background === "transparent";
     const selectedScale = inferMediaScale(activeSize);
     const selectedRatio = inferMediaRatio(activeSize);
-    const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio);
+    const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio === "custom" ? "1:1" : selectedRatio);
     const applySize = (scale: string, ratio: string) => onConfigChange("size", computeMediaSize(scale, ratio));
-    const selectScale = (scale: string) => applySize(scale, selectedRatio === "auto" ? "1:1" : selectedRatio);
-    const selectRatio = (ratio: string) => applySize(selectedScale, ratio);
+    const selectScale = (scale: string) => applySize(scale, selectedRatio === "auto" || selectedRatio === "custom" ? "1:1" : selectedRatio);
+    const selectRatio = (ratio: string) => {
+        if (ratio === "custom") {
+            const w = dimensions.width || 1024;
+            const h = dimensions.height || 1024;
+            onConfigChange("size", `${w}x${h}`);
+            return;
+        }
+        applySize(selectedScale, ratio);
+    };
     const updateDimension = (key: "width" | "height", value: number | null) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
-        const width = key === "width" ? next : dimensions.width;
-        const height = key === "height" ? next : dimensions.height;
+        const fallbackW = dimensions.width || 1024;
+        const fallbackH = dimensions.height || 1024;
+        const next = Math.max(64, Math.min(8192, Math.floor(value || (key === "width" ? fallbackW : fallbackH))));
+        const width = key === "width" ? next : fallbackW;
+        const height = key === "height" ? next : fallbackH;
         onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
     };
 
@@ -86,9 +96,9 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput prefix="W" value={dimensions.width || 1024} disabled={false} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                        <span className="text-lg opacity-45">×</span>
+                        <DimensionInput prefix="H" value={dimensions.height || 1024} disabled={false} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div>
                 <div className="space-y-2.5">
@@ -104,17 +114,17 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.aspectRatio")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {mediaRatioOptions.map((item) => (
+                        {[...mediaRatioOptions, { value: "custom" as const, width: 14, height: 10 }].map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
                                 className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
-                                style={{ borderColor: selectedRatio === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                                style={{ borderColor: selectedRatio === item.value ? theme.node.activeStroke : theme.node.stroke, background: selectedRatio === item.value ? `${theme.node.activeStroke}14` : "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onClick={() => selectRatio(item.value)}
                             >
-                                <AspectIcon width={item.width} height={item.height} color={theme.node.text} />
-                                <span>{item.value === "auto" ? t("settingsPanels.common.auto") : item.value}</span>
+                                <AspectIcon width={item.width} height={item.height} color={theme.node.text} dashed={item.value === "custom"} />
+                                <span>{item.value === "auto" ? t("settingsPanels.common.auto") : item.value === "custom" ? "自由尺寸" : item.value}</span>
                             </button>
                         ))}
                     </div>
@@ -167,6 +177,8 @@ export function imageQualityLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
+    const pixels = parsePixelSize(size);
+    if (pixels && !isPresetPixelSize(size)) return `${pixels.width}×${pixels.height}`;
     const scale = inferMediaScale(size);
     const ratio = inferMediaRatio(size);
     if (ratio === "auto" || size === "auto") return i18n.t("settingsPanels.common.auto");
@@ -234,14 +246,14 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
     );
 }
 
-function AspectIcon({ width, height, color }: { width: number; height: number; color: string }) {
+function AspectIcon({ width, height, color, dashed }: { width: number; height: number; color: string; dashed?: boolean }) {
     if (!width || !height) return null;
     const ratio = width / height;
     const boxWidth = ratio >= 1 ? 24 : Math.max(10, 24 * ratio);
     const boxHeight = ratio >= 1 ? Math.max(10, 24 / ratio) : 24;
     return (
         <span className="grid h-7 w-9 place-items-center">
-            <span className="border-2" style={{ width: boxWidth, height: boxHeight, borderColor: color }} />
+            <span className={dashed ? "border-2 border-dashed" : "border-2"} style={{ width: boxWidth, height: boxHeight, borderColor: color }} />
         </span>
     );
 }

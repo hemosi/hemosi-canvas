@@ -1,7 +1,7 @@
-import { useRef, type ChangeEvent, type ReactNode } from "react";
+import { useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
-import { Anchor, ChevronLeft, ChevronRight, Clapperboard, Eye, EyeOff, History, Image as ImageIcon, Loader2, Mic, Plus, Rows3, Video, X } from "lucide-react";
+import { Anchor, ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, History, Image as ImageIcon, Loader2, Mic, Plus, Rows3, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { CanvasDraftToggle } from "@/components/canvas/canvas-draft-toggle";
@@ -332,12 +332,232 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
     );
 }
 
+// ---------------------------------------------------------------- Bookmark (1:1 rgthree-comfy Bookmark 🔖)
+
+function BookmarkContent({ ctx }: { ctx: CanvasNodeContext }) {
+    const meta = ctx.node.metadata || {};
+    const bookmarks = ctx.getNodes().filter((n) => n.type === HemosiNodeType.Bookmark);
+    const index = Math.max(0, bookmarks.findIndex((n) => n.id === ctx.node.id));
+    const shortcutKey = meta.bookmarkKey ?? String((index % 9) + 1);
+    const zoom = meta.bookmarkZoom ?? 1;
+
+    return (
+        <div className="flex size-full flex-col justify-center gap-1.5 px-2.5 py-2 text-[11px] select-none" style={{ color: ctx.theme.node.text }} {...stop}>
+            <div className="flex h-6 items-center justify-between rounded-full px-2.5" style={{ background: ctx.theme.node.fill }}>
+                <span className="opacity-65">shortcut_key</span>
+                <input
+                    type="text"
+                    data-canvas-no-zoom
+                    value={shortcutKey}
+                    placeholder="1"
+                    className="w-16 bg-transparent text-right font-mono text-xs font-semibold outline-none"
+                    style={{ color: ctx.theme.node.text }}
+                    onChange={(e) => ctx.updateMetadata({ bookmarkKey: e.target.value.trim() })}
+                />
+            </div>
+            <div className="flex h-6 items-center justify-between rounded-full px-2.5" style={{ background: ctx.theme.node.fill }}>
+                <span className="opacity-65">zoom</span>
+                <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max="4"
+                    data-canvas-no-zoom
+                    value={zoom}
+                    className="w-16 bg-transparent text-right font-mono text-xs font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    style={{ color: ctx.theme.node.text }}
+                    onChange={(e) => ctx.updateMetadata({ bookmarkZoom: Number(e.target.value) || 1 })}
+                />
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------- Image Comparer (rgthree-comfy style)
+
+function extractNodeImage(node: CanvasNodeData | undefined): { url: string; width?: number; height?: number; title?: string } | null {
+    if (!node) return null;
+    if (node.type === HemosiNodeType.Shot && node.metadata?.shotImage?.content) {
+        return { url: node.metadata.shotImage.content, width: node.metadata.shotImage.naturalWidth, height: node.metadata.shotImage.naturalHeight, title: node.title };
+    }
+    if (node.type === HemosiNodeType.Anchor && node.metadata?.anchorImages?.[0]?.content) {
+        const img = node.metadata.anchorImages[0];
+        return { url: img.content, width: img.naturalWidth, height: img.naturalHeight, title: node.title };
+    }
+    const primaryId = node.metadata?.primaryImageId;
+    const primary = node.metadata?.images?.find((i) => i.id === primaryId) || node.metadata?.images?.[0];
+    const url = primary?.content || node.metadata?.content;
+    if (!url || node.type === "video" || node.type === "audio" || node.type === "text") return null;
+    return { url, width: primary?.naturalWidth || node.metadata?.naturalWidth, height: primary?.naturalHeight || node.metadata?.naturalHeight, title: node.title };
+}
+
+function ImageCompareContent({ ctx }: { ctx: CanvasNodeContext }) {
+    const { message } = App.useApp();
+    const meta = ctx.node.metadata || {};
+    const [sliderPct, setSliderPct] = useState(50);
+    const [dragging, setDragging] = useState(false);
+    const viewRef = useRef<HTMLDivElement>(null);
+    const inputARef = useRef<HTMLInputElement>(null);
+    const inputBRef = useRef<HTMLInputElement>(null);
+
+    const upstreamImages = ctx.getUpstream().map(extractNodeImage).filter((x): x is NonNullable<typeof x> => Boolean(x));
+    const rawA = upstreamImages[0] || (meta.compareImageA?.content ? { url: meta.compareImageA.content, width: meta.compareImageA.naturalWidth, height: meta.compareImageA.naturalHeight, title: "本地图 A" } : null);
+    const rawB = upstreamImages[1] || (meta.compareImageB?.content ? { url: meta.compareImageB.content, width: meta.compareImageB.naturalWidth, height: meta.compareImageB.naturalHeight, title: "本地图 B" } : null);
+    const swapped = Boolean(meta.compareSwap);
+    const imgA = swapped ? rawB : rawA;
+    const imgB = swapped ? rawA : rawB;
+    const mode = meta.compareMode || "hover";
+
+    const updateSliderFromEvent = (clientX: number) => {
+        const rect = viewRef.current?.getBoundingClientRect();
+        if (!rect || rect.width <= 0) return;
+        const pct = ((clientX - rect.left) / rect.width) * 100;
+        setSliderPct(Math.max(0, Math.min(100, pct)));
+    };
+
+    const handleMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+        if (mode === "hover" || dragging) {
+            updateSliderFromEvent(event.clientX);
+        }
+    };
+
+    const uploadSide = async (side: "A" | "B", event: ChangeEvent<HTMLInputElement>) => {
+        try {
+            const list = await filesToImages(event.target.files);
+            if (list[0]) {
+                ctx.updateMetadata(side === "A" ? { compareImageA: list[0] } : { compareImageB: list[0] });
+            }
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "读取图片失败");
+        } finally {
+            event.target.value = "";
+        }
+    };
+
+    return (
+        <div className="flex size-full flex-col gap-2 p-2.5 text-xs select-none" style={{ color: ctx.theme.node.text }}>
+            {/* 顶部控制条 */}
+            <div className="flex items-center gap-1.5 px-0.5" {...stop}>
+                <Columns2 className="size-4 shrink-0" style={{ color: "var(--hemosi-accent, #00d0c4)" }} />
+                <span className="font-semibold">双图对比</span>
+                <button
+                    type="button"
+                    className="rounded border px-2 py-0.5 text-[11px] transition hover:opacity-85"
+                    style={{ borderColor: ctx.theme.node.stroke }}
+                    onClick={() => inputARef.current?.click()}
+                    title="上传或替换图 A（也可直接把左侧图片节点连线进来）"
+                >
+                    + 图A
+                </button>
+                <button
+                    type="button"
+                    className="rounded border px-2 py-0.5 text-[11px] transition hover:opacity-85"
+                    style={{ borderColor: ctx.theme.node.stroke }}
+                    onClick={() => inputBRef.current?.click()}
+                    title="上传或替换图 B（也可直接把第 2 个图片节点连线进来）"
+                >
+                    + 图B
+                </button>
+                <button
+                    type="button"
+                    className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition hover:opacity-85"
+                    style={{ borderColor: ctx.theme.node.stroke }}
+                    onClick={() => ctx.updateMetadata({ compareSwap: !swapped })}
+                    title="互换 A / B 左右图层"
+                >
+                    <ArrowLeftRight className="size-3" />
+                    互换
+                </button>
+                <button
+                    type="button"
+                    className="ml-auto rounded px-2 py-0.5 text-[11px] font-medium"
+                    style={{ background: ctx.theme.node.fill, color: "var(--hemosi-accent, #00d0c4)" }}
+                    onClick={() => ctx.updateMetadata({ compareMode: mode === "hover" ? "drag" : "hover" })}
+                    title="切换鼠标悬停拉帘 / 按住拖动拉帘"
+                >
+                    {mode === "hover" ? "悬停拉帘" : "按住拉帘"}
+                </button>
+            </div>
+
+            {/* 核心拉帘对比视窗 */}
+            <div
+                ref={viewRef}
+                {...(mode === "drag" ? stop : {})}
+                className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-black/60 cursor-ew-resize"
+                style={{ borderColor: ctx.theme.node.stroke }}
+                onMouseMove={handleMouseMove}
+                onMouseDown={(event) => {
+                    if (mode === "drag") {
+                        event.stopPropagation();
+                        setDragging(true);
+                        updateSliderFromEvent(event.clientX);
+                    }
+                }}
+                onMouseUp={() => setDragging(false)}
+                onMouseLeave={() => setDragging(false)}
+            >
+                {!imgA && !imgB ? (
+                    <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center opacity-55">
+                        <Columns2 className="size-7 opacity-45" />
+                        <div>连入 2 个图片节点，或点击上方「+ 图A」「+ 图B」上传</div>
+                    </div>
+                ) : (
+                    <>
+                        {/* 底层：图 B（右侧可见） */}
+                        {imgB ? (
+                            <img src={imgB.url} alt="B" draggable={false} className="pointer-events-none absolute inset-0 size-full object-contain" />
+                        ) : null}
+                        {/* 顶层：图 A（左侧裁剪 0 ~ sliderPct%） */}
+                        {imgA ? (
+                            <img
+                                src={imgA.url}
+                                alt="A"
+                                draggable={false}
+                                className="pointer-events-none absolute inset-0 size-full object-contain"
+                                style={{ clipPath: imgB ? `inset(0 ${100 - sliderPct}% 0 0)` : undefined }}
+                            />
+                        ) : null}
+
+                        {/* 分割线与拉手 */}
+                        {imgA && imgB ? (
+                            <div
+                                className="pointer-events-none absolute inset-y-0 z-20 w-0.5"
+                                style={{ left: `${sliderPct}%`, background: "var(--hemosi-accent, #00d0c4)", boxShadow: "0 0 10px rgba(0,208,196,0.8)" }}
+                            >
+                                <div
+                                    className="absolute left-1/2 top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border text-[11px] font-bold shadow-lg"
+                                    style={{ background: "#081212", borderColor: "var(--hemosi-accent, #00d0c4)", color: "var(--hemosi-accent, #00d0c4)" }}
+                                >
+                                    ⟷
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {/* 左上角 A 角标 & 右上角 B 角标 */}
+                        {imgA ? (
+                            <span className="pointer-events-none absolute left-2.5 top-2.5 z-10 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-[#2ef5e8] backdrop-blur-sm">
+                                A {imgA.width && imgA.height ? `· ${imgA.width}×${imgA.height}` : ""}
+                            </span>
+                        ) : null}
+                        {imgB ? (
+                            <span className="pointer-events-none absolute right-2.5 top-2.5 z-10 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-white/90 backdrop-blur-sm">
+                                B {imgB.width && imgB.height ? `· ${imgB.width}×${imgB.height}` : ""}
+                            </span>
+                        ) : null}
+                    </>
+                )}
+            </div>
+            <input ref={inputARef} type="file" accept="image/*" className="hidden" onChange={(e) => void uploadSide("A", e)} />
+            <input ref={inputBRef} type="file" accept="image/*" className="hidden" onChange={(e) => void uploadSide("B", e)} />
+        </div>
+    );
+}
+
 const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
     {
         type: HemosiNodeType.Shot,
         title: "分镜",
         icon: <Clapperboard className="size-4" />,
-        description: "镜头号 + 画面描述 + 提示词 + 参考图 + 图/视频结果",
         defaultSize: { width: 380, height: 720 },
         defaultMetadata: { status: "idle", shotRefs: [] },
         minimapColor: "#22d3ee",
@@ -349,13 +569,37 @@ const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
         type: HemosiNodeType.Anchor,
         title: "锚点",
         icon: <Anchor className="size-4" />,
-        description: "角色 / 场景 / 风格：连给分镜或生成节点，改一处下游跟随",
         defaultSize: { width: 340, height: 400 },
         defaultMetadata: { status: "idle", anchorKind: "character", anchorImages: [] },
         minimapColor: "#f59e0b",
         hidePanel: true,
         resource: (node) => (node.metadata?.anchorText?.trim() || node.metadata?.anchorImages?.length ? { kind: "text", text: node.metadata?.anchorText || node.title } : null),
         Content: AnchorContent,
+    },
+    {
+        type: HemosiNodeType.ImageCompare,
+        title: "图片对比",
+        icon: <Columns2 className="size-4" />,
+        defaultSize: { width: 460, height: 420 },
+        defaultMetadata: { status: "idle", compareMode: "hover" },
+        minimapColor: "#38bdf8",
+        hidePanel: true,
+        resource: (node) => {
+            const img = node.metadata?.compareSwap ? node.metadata?.compareImageB : node.metadata?.compareImageA;
+            return img?.content ? { kind: "image", url: img.content } : null;
+        },
+        Content: ImageCompareContent,
+    },
+    {
+        type: HemosiNodeType.Bookmark,
+        title: "书签",
+        icon: <Bookmark className="size-4" />,
+        defaultSize: { width: 176, height: 74 },
+        defaultMetadata: { status: "idle", bookmarkZoom: 1 },
+        minimapColor: "#00d0c4",
+        hidePanel: true,
+        hasSourceHandle: false,
+        Content: BookmarkContent,
     },
 ];
 

@@ -62,4 +62,5 @@ npm run dist:win   # 生成 desktop/release 下的安装包和免安装 zip
 
 ## 来源与许可
 
-基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)（MIT）修改。原项目版权声明见 [LICENSE](LICENSE)。
+- **HemosiTV 新增功能、视觉重塑、桌面端封装与导演工作台**（`Copyright (c) 2026 hemosi`）：仅限个人免费学习与非商业创作使用；未经作者 `hemosi` 书面授权，**严禁任何第三方进行商业售卖、付费社群捆绑分发、套壳改名倒卖或闭源商用**。
+- 底层基础画布引擎致谢：基于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas)（v0.20.0 快照，MIT）修改。完整版权与许可声明见 [LICENSE](LICENSE)。
