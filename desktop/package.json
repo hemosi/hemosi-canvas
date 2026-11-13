@@ -1,7 +1,7 @@
 {
   "name": "hemosi-desktop",
   "productName": "HemosiTV",
-  "version": "0.21.6",
+  "version": "0.21.7",
   "description": "Hemosi infinite canvas desktop app (Electron wrapper around web/dist with a built-in forwarding proxy).",
   "license": "MIT",
   "author": "hemosi",
@@ -29,6 +29,7 @@
       "main.js",
       "preload.js",
       "server.js",
+      "sidecar-routes.js",
       "package.json",
       "icon.png"
     ],
