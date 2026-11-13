@@ -2,7 +2,7 @@ import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 
-import { DirectorAgentPanel } from "./director-agent-panel";
+import { CanvasAgentChat } from "./canvas-agent-chat";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -38,10 +38,8 @@ export function AgentPanel() {
         window.addEventListener("pointerup", onUp);
     };
 
+    const canvasTitle = useAgentStore((state) => state.canvasContext?.snapshot.title);
     if (!panelMounted) return null;
-
-    const canvas = useAgentStore((state) => state.canvasContext);
-    const canvasTitle = canvas?.snapshot.title;
 
     return (
         <motion.div
@@ -61,13 +59,13 @@ export function AgentPanel() {
             >
                 <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.panel.resize")} />
                 {/* 顶部标明当前作用画布 */}
-                <div className="flex h-7 shrink-0 items-center justify-between border-b px-3 text-[11px] bg-stone-100/50 dark:bg-stone-900/50" style={{ borderColor: theme.node.stroke }}>
+                <div className="flex h-7 shrink-0 items-center justify-between border-b px-3 text-[11px] " style={{ borderColor: theme.node.stroke }}>
                     <span className="opacity-50">当前作用画布</span>
                     <span className="max-w-[200px] truncate font-medium text-amber-600 dark:text-amber-400" title={canvasTitle || "未连接画布"}>
                         {canvasTitle || "未连接画布"}
                     </span>
                 </div>
-                <DirectorAgentPanel />
+                <CanvasAgentChat />
             </motion.aside>
         </motion.div>
     );
