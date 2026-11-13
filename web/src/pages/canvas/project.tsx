@@ -39,9 +39,8 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
-import { DirectorLoopOverlay } from "@/components/canvas/director/director-loop-overlay";
-import { buildWastelandPresetPlan } from "@/lib/canvas/director-loop-runner";
-import { useDirectorLoopStore } from "@/stores/canvas/use-director-loop-store";
+import { CloneDialog } from "@/components/canvas/clone/clone-dialog";
+import { useCloneStore } from "@/stores/canvas/use-clone-store";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -4319,7 +4318,7 @@ function InfiniteCanvasPage() {
                     />
                 ) : null}
 
-                <DirectorLoopOverlay projectId={params.id || "default"} />
+                <CloneDialog />
 
                 <CanvasToolbar
                     onOpenTemplates={() => setTemplatePanelOpen(true)}
@@ -4338,18 +4337,13 @@ function InfiniteCanvasPage() {
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     extraButtons={[
                         {
-                            id: "tool-director-loop",
-                            label: "导演循环（画布导演组）",
+                            id: "tool-clone",
+                            label: "爆款复刻（选中一个视频节点）",
                             icon: <Film className="size-4.5" />,
                             onClick: () => {
-                                const pid = params.id || "default";
-                                const store = useDirectorLoopStore.getState();
-                                const cur = store.getProject(pid);
-                                if (cur.stage === "idle") {
-                                    store.initFromPlan(pid, buildWastelandPresetPlan());
-                                } else {
-                                    store.patchProject(pid, { groupVisible: !cur.groupVisible });
-                                }
+                                const video = nodesRef.current.find((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Video) || nodesRef.current.find((node) => node.type === CanvasNodeType.Video && node.metadata?.content);
+                                if (!video) return void message.info("先往画布里放一个视频节点");
+                                useCloneStore.getState().open(projectId, video.id);
                             },
                         },
                         { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },

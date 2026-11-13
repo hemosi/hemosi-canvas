@@ -135,6 +135,7 @@ export const OFFICIAL_CHANNEL_PRESETS: Array<{ id: string; name: string; apiForm
     { id: "official-bfl", name: "Black Forest Labs 官方（FLUX）", apiFormat: "bfl", keyHint: "dashboard.bfl.ai → API Keys（请求头 x-key）", models: [] },
     { id: "official-kling", name: "可灵 Kling 官方", apiFormat: "kling", keyHint: "kling.ai 开发者控制台 → API Key（国内账号把地址改成 https://api-beijing.klingai.com）", models: [] },
     { id: "official-runway", name: "Runway 官方", apiFormat: "runway", keyHint: "dev.runwayml.com → API Keys", models: [] },
+    { id: "local-ollama", name: "本机 Ollama（免 Key）", apiFormat: "openai", baseUrl: "http://127.0.0.1:11434", keyHint: "本机服务不需要 Key，留空即可；先在终端执行 ollama pull qwen2.5vl:7b 等模型", models: [] },
     { id: "official-ark", name: "火山方舟官方（Seedance）", apiFormat: "ark", keyHint: "console.volcengine.com/ark → API Key 管理；先在「开通管理」开通对应模型", models: [] },
 ];
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
@@ -272,13 +273,18 @@ export function modelNotReadyReason(config: AiConfig, model: string) {
     const match = findChannelModel(config, model);
     if (!match) return `模型「${name}」不在任何渠道里（渠道可能已删除）。请为本节点换一个模型，或在 设置→模型渠道 里重新添加`;
     if (!match.channel.baseUrl.trim()) return `渠道「${match.channel.name}」没有填接口地址，请在 设置→模型渠道 填写`;
-    if (!match.channel.apiKey.trim()) return `渠道「${match.channel.name}」还没填 API Key，模型「${name}」不可用。请在 设置→模型渠道→${match.channel.name} 填 Key，或为本节点换模型`;
+    if (!match.channel.apiKey.trim() && !isLocalBaseUrl(match.channel.baseUrl)) return `渠道「${match.channel.name}」还没填 API Key，模型「${name}」不可用。请在 设置→模型渠道→${match.channel.name} 填 Key，或为本节点换模型`;
     return "";
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const match = findChannelModel(config, model);
-    return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
+    return Boolean(match && match.channel.baseUrl.trim() && (match.channel.apiKey.trim() || isLocalBaseUrl(match.channel.baseUrl)));
+}
+
+/** A channel on this machine or the LAN (Ollama, LM Studio, a local whisper server) needs no API Key. */
+export function isLocalBaseUrl(baseUrl: string) {
+    return /^(https?:\/\/)?(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\]|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?(\/|$)/i.test(baseUrl.trim());
 }
 
 export const useConfigStore = create<ConfigStore>()(
