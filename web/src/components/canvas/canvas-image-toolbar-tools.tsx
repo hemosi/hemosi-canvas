@@ -1,15 +1,16 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, ClipboardCopy, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, ClipboardCopy, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scaling, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
-export type ImageNodeActionToolId = "view" | "copyImage" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "replace" | "resize" | "superResolve" | "angle";
-export type ImageQuickToolId = "view" | "copyImage" | "download" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "saveAsset" | "replace" | "resize" | "superResolve" | "angle" | "info" | "delete";
+export type ImageNodeActionToolId = "view" | "copyImage" | "shortResize" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "replace" | "resize" | "superResolve" | "angle";
+export type ImageQuickToolId = "view" | "copyImage" | "download" | "shortResize" | "crop" | "maskEdit" | "upscale" | "split" | "copyPrompt" | "reversePrompt" | "saveAsset" | "replace" | "resize" | "superResolve" | "angle" | "info" | "delete";
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
+    onShortResize: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
@@ -37,13 +38,14 @@ export type ImageQuickToolsConfig = {
     showLabels: boolean;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v8";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v9";
 
 // Weighted by real-world frequency:高频操作左置，低频信息与高危删除右置
 export const WEIGHTED_IMAGE_TOOL_ORDER: ImageQuickToolId[] = [
     "view",
     "copyImage",
     "download",
+    "shortResize",
     "crop",
     "maskEdit",
     "upscale",
@@ -75,6 +77,14 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         title: () => "复制到粘贴板",
         icon: () => <ClipboardCopy className="size-4" />,
         run: (node, handlers) => handlers.onCopyImage(node),
+    },
+    {
+        id: "shortResize",
+        defaultVisible: true,
+        label: () => "短边缩放",
+        title: () => "短边缩放（按最短边等比生成新图）",
+        icon: () => <Scaling className="size-4" />,
+        run: (node, handlers) => handlers.onShortResize(node),
     },
     {
         id: "crop",

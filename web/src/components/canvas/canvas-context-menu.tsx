@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Copy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
 import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -50,6 +50,8 @@ export function CanvasNodeContextMenu({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const primaryImageId = node?.metadata?.primaryImageId;
     const imageSrc = node?.type === "image" ? (node.metadata?.images?.find((i) => i.id === primaryImageId)?.content || node.metadata?.images?.[0]?.content || node.metadata?.content) : undefined;
+    const primaryTextId = node?.metadata?.primaryTextId;
+    const textContent = node?.type === "text" ? (node.metadata?.texts?.find((i) => i.id === primaryTextId)?.content || node.metadata?.texts?.[0]?.content || node.metadata?.content || node.metadata?.prompt || "").trim() : "";
     const handleCopyImage = async () => {
         if (!imageSrc) return;
         onClose();
@@ -58,6 +60,16 @@ export function CanvasNodeContextMenu({
             message.success("已复制到粘贴板");
         } catch (err) {
             message.error(err instanceof Error ? err.message : "复制图片失败");
+        }
+    };
+    const handleCopyText = async () => {
+        if (!textContent) return;
+        onClose();
+        try {
+            await navigator.clipboard.writeText(textContent);
+            message.success("已复制到粘贴板");
+        } catch {
+            message.error("复制文本失败");
         }
     };
 
@@ -86,9 +98,9 @@ export function CanvasNodeContextMenu({
                 </>
             ) : null}
             {menu.type === "node" && imageSrc ? <MenuButton icon={<ClipboardCopy className="size-4" />} label="复制到粘贴板" onClick={() => void handleCopyImage()} /> : null}
+            {menu.type === "node" && textContent ? <MenuButton icon={<ClipboardCopy className="size-4" />} label="复制到粘贴板" onClick={() => void handleCopyText()} /> : null}
             {menu.type === "node" && canGroup ? <MenuButton icon={<Group className="size-4" />} label={t("canvas.nodeToolbar.group")} onClick={onGroup} /> : null}
             {menu.type === "node" && canUngroup ? <MenuButton icon={<Ungroup className="size-4" />} label={t("canvas.nodeToolbar.ungroup")} onClick={onUngroup} /> : null}
-            {menu.type === "node" ? <MenuButton icon={<Copy className="size-4" />} label={t("p1.menu.duplicate")} onClick={() => onDuplicate(false)} /> : null}
             {menu.type === "node" ? <MenuButton icon={<Link2 className="size-4" />} label={t("p1.menu.duplicateWithLinks")} onClick={() => onDuplicate(true)} /> : null}
             {menu.type === "node" && onToggleLock ? <MenuButton icon={node?.metadata?.locked ? <LockOpen className="size-4" /> : <Lock className="size-4" />} label={t(node?.metadata?.locked ? "p1.menu.unlock" : "p1.menu.lock")} onClick={onToggleLock} /> : null}
             {menu.type === "node" && onToggleCollapse && node?.type !== "group" ? <MenuButton icon={node?.metadata?.collapsed ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />} label={t(node?.metadata?.collapsed ? "p1.menu.expand" : "p1.menu.collapse")} onClick={onToggleCollapse} /> : null}

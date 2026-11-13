@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, SkipForward, Sparkles, Trash2, Camera, Clapperboard, Ungroup, Upload, Video } from "lucide-react";
+import { ClipboardCopy, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, SkipForward, Sparkles, Trash2, Camera, Clapperboard, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -26,6 +26,7 @@ type CanvasNodeHoverToolbarProps = {
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
     onSaveAsset: (node: CanvasNodeData) => void;
+    onShortResize: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
@@ -71,6 +72,7 @@ export function CanvasNodeHoverToolbar({
     onUpload,
     onDownload,
     onSaveAsset,
+    onShortResize,
     onMaskEdit,
     onCrop,
     onSplit,
@@ -141,6 +143,16 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, t("common.promptCopied"));
     };
+    const copyNodeText = (target: CanvasNodeData) => {
+        const primaryTextId = target.metadata?.primaryTextId;
+        const primaryText = target.metadata?.texts?.find((item) => item.id === primaryTextId)?.content || target.metadata?.texts?.[0]?.content;
+        const text = (primaryText || target.metadata?.content || target.metadata?.prompt || "").trim();
+        if (!text) {
+            message.warning("当前文本节点暂无内容");
+            return;
+        }
+        copyText(text, "已复制到粘贴板");
+    };
     const copyImageFile = async (target: CanvasNodeData) => {
         const primaryId = target.metadata?.primaryImageId;
         const primaryImg = target.metadata?.images?.find((item) => item.id === primaryId) || target.metadata?.images?.[0];
@@ -156,7 +168,7 @@ export function CanvasNodeHoverToolbar({
             message.error(err instanceof Error ? err.message : "复制图片失败");
         }
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyImage: (target) => void copyImageFile(target), onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onShortResize, onMaskEdit, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyImage: (target) => void copyImageFile(target), onCopyPrompt: copyImagePrompt, onReversePrompt });
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -175,6 +187,7 @@ export function CanvasNodeHoverToolbar({
         ...(canRetry ? [{ id: "retry", title: t("canvas.nodeToolbar.retryTitle"), label: t("canvas.node.retry"), icon: <RefreshCw className="size-4" />, onClick: () => onRetry(node) }] : []),
         ...(hasImage ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
         ...(hasImage || hasAudio ? [{ id: "download", title: t(hasAudio ? "canvas.nodeToolbar.downloadAudio" : "canvas.nodeToolbar.downloadImage"), label: t("common.download"), icon: <Download className="size-4" />, onClick: () => onDownload(node) }] : []),
+        ...(isText ? [{ id: "copyText", title: "复制到粘贴板", label: "复制文本", icon: <ClipboardCopy className="size-4" />, onClick: () => copyNodeText(node) }] : []),
         ...(hasImage || hasVideo || isText ? [{ id: "saveAsset", title: t("common.addToAssets"), label: t("canvas.nodeToolbar.saveAsset"), icon: <FolderPlus className="size-4" />, onClick: () => onSaveAsset(node) }] : []),
         ...(isVideo ? [{ id: "edit", title: t("common.edit"), label: t("common.edit"), icon: <MessageSquare className="size-4" />, onClick: () => onToggleDialog(node) }] : []),
         ...(isText ? [{ id: "generateImage", title: t("canvas.node.generateImage"), label: t("canvas.node.generate"), icon: <ImageIcon className="size-4" />, onClick: () => onGenerateImage(node) }] : []),

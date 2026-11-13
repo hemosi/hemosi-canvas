@@ -126,16 +126,16 @@ export const OFFICIAL_BASE_URLS: Record<ApiCallFormat, string> = {
     ark: "https://ark.cn-beijing.volces.com",
 };
 
-/** One-click official channels (Key left empty for the user). Model names are each vendor's current official IDs. */
+/** One-click official channels (Key left empty for the user; models are fetched from the upstream API or added by the user). */
 export const OFFICIAL_CHANNEL_PRESETS: Array<{ id: string; name: string; apiFormat: ApiCallFormat; baseUrl?: string; models: ChannelModel[]; keyHint: string }> = [
-    { id: "official-deepseek", name: "DeepSeek 官方", apiFormat: "openai", baseUrl: "https://api.deepseek.com", keyHint: "platform.deepseek.com → API keys（sk-…）", models: [{ name: "deepseek-chat", capability: "text" }, { name: "deepseek-reasoner", capability: "text" }] },
-    { id: "official-openai", name: "OpenAI 官方", apiFormat: "openai", baseUrl: "https://api.openai.com", keyHint: "platform.openai.com → API keys（sk-…）", models: [{ name: "gpt-image-2.6-sunburst", capability: "image" }, { name: "gpt-image-2.6-flare", capability: "image" }, { name: "gpt-5.5", capability: "text" }] },
-    { id: "official-gemini", name: "Google Gemini 官方", apiFormat: "gemini", keyHint: "aistudio.google.com → Get API key", models: [{ name: "gemini-3-pro-image", capability: "image" }, { name: "gemini-omni-1.2-flash", capability: "video" }, { name: "gemini-3.8-flash", capability: "text" }] },
-    { id: "official-anthropic", name: "Anthropic 官方", apiFormat: "anthropic", keyHint: "console.anthropic.com → API Keys（sk-ant-…）", models: [{ name: "claude-opus-5-5", capability: "text" }, { name: "claude-sonnet-5-5", capability: "text" }] },
-    { id: "official-bfl", name: "Black Forest Labs 官方（FLUX）", apiFormat: "bfl", keyHint: "dashboard.bfl.ai → API Keys（请求头 x-key）", models: [{ name: "flux-2-max", capability: "image" }, { name: "flux-2-pro-preview", capability: "image" }] },
-    { id: "official-kling", name: "可灵 Kling 官方", apiFormat: "kling", keyHint: "kling.ai 开发者控制台 → API Key（国内账号把地址改成 https://api-beijing.klingai.com）", models: [{ name: "kling-4.0", capability: "video" }] },
-    { id: "official-runway", name: "Runway 官方", apiFormat: "runway", keyHint: "dev.runwayml.com → API Keys", models: [{ name: "gen4.5", capability: "video" }] },
-    { id: "official-ark", name: "火山方舟官方（Seedance）", apiFormat: "ark", keyHint: "console.volcengine.com/ark → API Key 管理；先在「开通管理」开通 Seedance 2.5", models: [{ name: "doubao-seedance-2-5-260628", capability: "video" }] },
+    { id: "official-deepseek", name: "DeepSeek 官方", apiFormat: "openai", baseUrl: "https://api.deepseek.com", keyHint: "platform.deepseek.com → API keys（sk-…）", models: [] },
+    { id: "official-openai", name: "OpenAI 官方", apiFormat: "openai", baseUrl: "https://api.openai.com", keyHint: "platform.openai.com → API keys（sk-…）", models: [] },
+    { id: "official-gemini", name: "Google Gemini 官方", apiFormat: "gemini", keyHint: "aistudio.google.com → Get API key", models: [] },
+    { id: "official-anthropic", name: "Anthropic 官方", apiFormat: "anthropic", keyHint: "console.anthropic.com → API Keys（sk-ant-…）", models: [] },
+    { id: "official-bfl", name: "Black Forest Labs 官方（FLUX）", apiFormat: "bfl", keyHint: "dashboard.bfl.ai → API Keys（请求头 x-key）", models: [] },
+    { id: "official-kling", name: "可灵 Kling 官方", apiFormat: "kling", keyHint: "kling.ai 开发者控制台 → API Key（国内账号把地址改成 https://api-beijing.klingai.com）", models: [] },
+    { id: "official-runway", name: "Runway 官方", apiFormat: "runway", keyHint: "dev.runwayml.com → API Keys", models: [] },
+    { id: "official-ark", name: "火山方舟官方（Seedance）", apiFormat: "ark", keyHint: "console.volcengine.com/ark → API Key 管理；先在「开通管理」开通对应模型", models: [] },
 ];
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
@@ -152,19 +152,14 @@ export const defaultConfig: AiConfig = {
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
-            models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
-            ],
+            models: [],
         },
     ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    model: "",
+    imageModel: "",
+    videoModel: "",
+    textModel: "",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -176,7 +171,7 @@ export const defaultConfig: AiConfig = {
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: [],
     quality: "auto",
     size: "1024x1024",
     background: "",

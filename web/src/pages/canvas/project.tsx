@@ -17,7 +17,7 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
+import { cropDataUrl, resizeByShortEdgeDataUrl, resolveShortEdgeSize, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { captureVideoFrameSafe, VideoFrameTaintedError, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Input, Modal } from "antd";
@@ -39,6 +39,9 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
+import { DirectorLoopOverlay } from "@/components/canvas/director/director-loop-overlay";
+import { buildWastelandPresetPlan } from "@/lib/canvas/director-loop-runner";
+import { useDirectorLoopStore } from "@/stores/canvas/use-director-loop-store";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -288,6 +291,8 @@ function InfiniteCanvasPage() {
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
+    const [shortResizeNodeId, setShortResizeNodeId] = useState<string | null>(null);
+    const [shortResizeEdge, setShortResizeEdge] = useState<string>("768");
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
@@ -978,6 +983,7 @@ function InfiniteCanvasPage() {
     const toolbarNode = (toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null) || (singleSelectedNodeId ? nodeById.get(singleSelectedNodeId) || null : null);
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
+    const shortResizeNode = shortResizeNodeId ? nodeById.get(shortResizeNodeId) || null : null;
     const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
     const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
     const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
@@ -2771,6 +2777,32 @@ function InfiniteCanvasPage() {
         setDialogNodeId(childId);
     }, []);
 
+    const shortResizeImageNode = useCallback(async (node: CanvasNodeData, rawEdge: string) => {
+        if (!node.metadata?.content) return;
+        const targetShortEdge = Math.max(16, Math.min(4096, Math.round(Number(rawEdge) || 768)));
+        setShortResizeNodeId(null);
+        const resized = await resizeByShortEdgeDataUrl(node.metadata.content, targetShortEdge);
+        const image = await uploadImage(resized);
+        const size = fitNodeSize(image.width, image.height);
+        const childId = nanoid();
+        const child: CanvasNodeData = {
+            id: childId,
+            type: CanvasNodeType.Image,
+            title: `${node.title || "图片"} (${image.width}×${image.height})`,
+            position: { x: node.position.x + node.width + 96, y: node.position.y },
+            width: size.width,
+            height: size.height,
+            metadata: {
+                ...imageMetadata(image),
+                prompt: node.metadata?.prompt,
+            },
+        };
+        setNodes((prev) => [...prev, child]);
+        setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+        setSelectedNodeIds(new Set([childId]));
+        setDialogNodeId(childId);
+    }, []);
+
     // Image-to-image result as a new connected node (改角度 / 超分): confirm card, record, loading state, error text kept.
     const runImageEditChild = useCallback(
         async (node: CanvasNodeData, prompt: string, title: string) => {
@@ -4239,6 +4271,7 @@ function InfiniteCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onShortResize={(node) => setShortResizeNodeId(node.id)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -4286,6 +4319,8 @@ function InfiniteCanvasPage() {
                     />
                 ) : null}
 
+                <DirectorLoopOverlay projectId={params.id || "default"} />
+
                 <CanvasToolbar
                     onOpenTemplates={() => setTemplatePanelOpen(true)}
                     selectedCount={selectedNodeIds.size}
@@ -4302,6 +4337,21 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     extraButtons={[
+                        {
+                            id: "tool-director-loop",
+                            label: "导演循环（画布导演组）",
+                            icon: <Film className="size-4.5" />,
+                            onClick: () => {
+                                const pid = params.id || "default";
+                                const store = useDirectorLoopStore.getState();
+                                const cur = store.getProject(pid);
+                                if (cur.stage === "idle") {
+                                    store.initFromPlan(pid, buildWastelandPresetPlan());
+                                } else {
+                                    store.patchProject(pid, { groupVisible: !cur.groupVisible });
+                                }
+                            },
+                        },
                         { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
                         { id: "tool-anchor", label: "锚点（角色/场景/风格）", icon: <Anchor className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Anchor) },
                         { id: "tool-compare", label: "双图拉帘对比", icon: <Columns2 className="size-4.5" />, onClick: () => createNode(HemosiNodeType.ImageCompare) },
@@ -4394,6 +4444,55 @@ function InfiniteCanvasPage() {
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
+
+                <Modal
+                    title="短边缩放"
+                    open={Boolean(shortResizeNode?.metadata?.content)}
+                    centered
+                    width={420}
+                    okText="生成缩放图"
+                    cancelText="取消"
+                    onOk={() => shortResizeNode && void shortResizeImageNode(shortResizeNode, shortResizeEdge)}
+                    onCancel={() => setShortResizeNodeId(null)}
+                >
+                    {shortResizeNode ? (() => {
+                        const srcW = shortResizeNode.metadata?.naturalWidth || shortResizeNode.width || 0;
+                        const srcH = shortResizeNode.metadata?.naturalHeight || shortResizeNode.height || 0;
+                        const out = srcW && srcH ? resolveShortEdgeSize(srcW, srcH, Math.max(16, Math.min(4096, Math.round(Number(shortResizeEdge) || 768)))) : null;
+                        return (
+                            <div className="space-y-3 py-1">
+                                <div className="flex items-center justify-between text-xs opacity-70">
+                                    <span>原图真实像素：{srcW && srcH ? `${srcW} × ${srcH} px（短边 ${Math.min(srcW, srcH)} px）` : "读取中"}</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <div className="text-xs font-medium opacity-80">目标最短边像素（回车直接生成）</div>
+                                    <Input
+                                        type="number"
+                                        min={16}
+                                        max={4096}
+                                        value={shortResizeEdge}
+                                        autoFocus
+                                        suffix="px"
+                                        onChange={(e) => setShortResizeEdge(e.target.value)}
+                                        onPressEnter={() => void shortResizeImageNode(shortResizeNode, shortResizeEdge)}
+                                    />
+                                    <div className="flex flex-wrap gap-1.5 pt-1">
+                                        {[512, 768, 1024, 1280].map((preset) => (
+                                            <Button key={preset} size="small" type={Number(shortResizeEdge) === preset ? "primary" : "default"} onClick={() => setShortResizeEdge(String(preset))}>
+                                                {preset}px
+                                            </Button>
+                                        ))}
+                                    </div>
+                                </div>
+                                {out ? (
+                                    <div className="rounded-lg border border-white/10 bg-black/5 px-3 py-2 text-xs dark:bg-white/5">
+                                        输出尺寸：<span className="font-semibold">{out.width} × {out.height} px</span>（保持原图比例）
+                                    </div>
+                                ) : null}
+                            </div>
+                        );
+                    })() : null}
+                </Modal>
 
                 {maskEditNode?.metadata?.content ? (
                     <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />

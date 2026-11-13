@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { OFFICIAL_CHANNEL_PRESETS, buildApiUrl, configSeed, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, configSeed, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { requestBflImage } from "./official-providers";
 import { requestAnthropicText } from "./anthropic";
@@ -968,8 +968,6 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
-    // These official APIs have no model-list endpoint usable from the browser: offer the vendor's current model IDs.
-    if (config.apiFormat !== "openai" && config.apiFormat !== "gemini") return OFFICIAL_CHANNEL_PRESETS.filter((preset) => preset.apiFormat === config.apiFormat).flatMap((preset) => preset.models.map((model) => model.name));
     try {
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
@@ -979,11 +977,11 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
-            headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-            },
-        });
+        const headers: Record<string, string> =
+            config.apiFormat === "anthropic"
+                ? { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01" }
+                : { Authorization: `Bearer ${config.apiKey}` };
+        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), { headers });
         return (response.data.data || [])
             .map((model) => model.id)
             .filter((id): id is string => Boolean(id))

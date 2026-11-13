@@ -34,7 +34,7 @@ export const NODE_SPECS = {
     },
     [CanvasNodeType.Video]: {
         width: 420, height: 236, get title() { return NODE_DEFAULT_SIZE[CanvasNodeType.Video].title; },
-        metadata: { content: "", status: "idle" },
+        metadata: { content: "", status: "idle", vquality: "720", size: "1280x720" },
     },
     [CanvasNodeType.Audio]: {
         width: 340, height: 120, get title() { return NODE_DEFAULT_SIZE[CanvasNodeType.Audio].title; },

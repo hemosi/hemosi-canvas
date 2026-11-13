@@ -122,6 +122,30 @@ export function resolveUpscaleSize(width: number, height: number, targetLongEdge
     return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
+export function resolveShortEdgeSize(width: number, height: number, targetShortEdge: number) {
+    const shortEdge = Math.max(1, Math.min(width, height));
+    const target = Math.min(MAX_UPSCALE_LONG_EDGE, Math.max(16, Math.round(targetShortEdge)));
+    const scale = target / shortEdge;
+    return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+export async function resizeByShortEdgeDataUrl(dataUrl: string, targetShortEdge: number) {
+    const image = await loadImage(dataUrl);
+    const { width, height } = resolveShortEdgeSize(image.width, image.height, targetShortEdge);
+    if (width >= image.width && height >= image.height) return drawStepUpscale(image, width, height);
+    let source: CanvasImageSource = image;
+    let sourceWidth = image.width;
+    let sourceHeight = image.height;
+    while (sourceWidth * 0.5 > width && sourceHeight * 0.5 > height) {
+        const nextWidth = Math.max(width, Math.round(sourceWidth * 0.5));
+        const nextHeight = Math.max(height, Math.round(sourceHeight * 0.5));
+        source = drawResizeCanvas(source, sourceWidth, sourceHeight, nextWidth, nextHeight, "high");
+        sourceWidth = nextWidth;
+        sourceHeight = nextHeight;
+    }
+    return drawResize(source, sourceWidth, sourceHeight, width, height, "high");
+}
+
 function drawCrop(image: HTMLImageElement, sx: number, sy: number, sw: number, sh: number) {
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, sw);

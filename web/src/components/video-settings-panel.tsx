@@ -34,9 +34,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const { t } = useTranslation();
     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
     const videoMode = normalizeVideoModeValue(config.videoMode);
-    const resolution = parseVideoResolution(config.vquality);
-    const selectedRatio = inferVideoRatio(config.size || "auto");
-    const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
+    const resolution = parseVideoResolution(config.vquality || "720");
+    const selectedRatio = inferVideoRatio(config.size || "16:9");
+    const dimensions = readVideoDimensions(config.size || computeVideoSize(resolution, "16:9"), resolution, selectedRatio);
     const applySize = (nextResolution: string, ratio: string) => {
         onConfigChange("vquality", nextResolution);
         onConfigChange("size", computeVideoSize(nextResolution, ratio));
