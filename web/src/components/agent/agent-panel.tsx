@@ -22,6 +22,7 @@ type DirectorMessage =
     | {
           id: string;
           role: "plan";
+          storyboardNodeId: string;
           plan: Plan;
           enabledIds: string[];
           status: "pending" | "applied" | "rejected";
@@ -88,10 +89,12 @@ export function AgentPanel() {
     );
 
     const pendingPreview = useMemo(() => {
-        if (!pendingPlanMsg || !targetSb) return null;
-        const data = targetSb.metadata?.storyboard || createEmptyStoryboardData();
-        return previewPlan(data, pendingPlanMsg.plan, new Set(pendingPlanMsg.enabledIds), allNodes, targetSb);
-    }, [allNodes, pendingPlanMsg, targetSb]);
+        if (!pendingPlanMsg) return null;
+        const planSb = allNodes.find((n) => n.id === pendingPlanMsg.storyboardNodeId);
+        if (!planSb) return null;
+        const data = planSb.metadata?.storyboard || createEmptyStoryboardData();
+        return previewPlan(data, pendingPlanMsg.plan, new Set(pendingPlanMsg.enabledIds), allNodes, planSb);
+    }, [allNodes, pendingPlanMsg]);
 
     useEffect(() => {
         host?.setStoryboardGhostNodes?.(pendingPreview?.diff.ghostNodes || []);
@@ -110,6 +113,11 @@ export function AgentPanel() {
             return;
         }
 
+        const sbSnapshot = targetSb;
+        const matchedRow = sbSnapshot.metadata?.storyboard?.rows.find(
+            (r) => selectedIds.includes(r.imageNodeId) || selectedIds.includes(r.videoNodeId),
+        );
+
         setInput("");
         setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
         setRunning(true);
@@ -119,9 +127,10 @@ export function AgentPanel() {
         try {
             const res = await requestStoryboardPlan({
                 config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
-                storyboardNode: targetSb,
+                storyboardNode: sbSnapshot,
                 nodes: allNodes,
                 instruction: text,
+                selectedRowId: matchedRow?.code || null,
                 signal: controller.signal,
             });
             if (res.ok) {
@@ -130,6 +139,7 @@ export function AgentPanel() {
                     {
                         id: `p-${Date.now()}`,
                         role: "plan",
+                        storyboardNodeId: sbSnapshot.id,
                         plan: res.plan,
                         enabledIds: res.plan.changes.map((c) => c.id),
                         status: "pending",
@@ -168,8 +178,13 @@ export function AgentPanel() {
 
     const handleApplyPlan = (msgId: string) => {
         const msg = messages.find((m) => m.id === msgId);
-        if (!msg || msg.role !== "plan" || !targetSb || !host?.applyStoryboardPlan) return;
-        const result = host.applyStoryboardPlan(targetSb.id, msg.plan, new Set(msg.enabledIds), removeOrphan);
+        if (!msg || msg.role !== "plan" || !host?.applyStoryboardPlan) return;
+        const planSb = allNodes.find((n) => n.id === msg.storyboardNodeId);
+        if (!planSb) {
+            message.warning("原分镜表节点已不存在");
+            return;
+        }
+        const result = host.applyStoryboardPlan(planSb.id, msg.plan, new Set(msg.enabledIds), removeOrphan);
         host.setStoryboardGhostNodes?.([]);
         setMessages((prev) => prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)));
         if (result?.warnings?.length) {
@@ -339,7 +354,11 @@ export function AgentPanel() {
                                             </button>
                                         </div>
                                     </div>
-                                ) : m.status === "applied" && m.plan.suggestRun && targetSb ? (
+                                ) : m.status === "applied" && m.plan.suggestRun ? (
+                                    (() => {
+                                        const planSb = allNodes.find((n) => n.id === m.storyboardNodeId);
+                                        if (!planSb) return null;
+                                        return (
                                     <div className="flex items-center gap-2 pt-1">
                                         {m.plan.suggestRun.kind === "image" || m.plan.suggestRun.kind === "both" ? (
                                             <button
@@ -347,7 +366,7 @@ export function AgentPanel() {
                                                 className="flex-1 rounded-lg border py-1 text-[11px] font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
                                                 style={{ borderColor: border }}
                                                 onClick={() => {
-                                                    const rows = targetSb.metadata?.storyboard?.rows || [];
+                                                    const rows = planSb.metadata?.storyboard?.rows || [];
                                                     const wanted = new Set(m.plan.suggestRun!.rowIds);
                                                     const tasks: StoryboardQueueTask[] = rows
                                                         .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
@@ -363,7 +382,7 @@ export function AgentPanel() {
                                                 type="button"
                                                 className="flex-1 rounded-lg bg-sky-500 py-1 text-[11px] font-medium text-white transition hover:bg-sky-600"
                                                 onClick={() => {
-                                                    const rows = targetSb.metadata?.storyboard?.rows || [];
+                                                    const rows = planSb.metadata?.storyboard?.rows || [];
                                                     const wanted = new Set(m.plan.suggestRun!.rowIds);
                                                     const tasks: StoryboardQueueTask[] = rows
                                                         .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
@@ -375,6 +394,8 @@ export function AgentPanel() {
                                             </button>
                                         ) : null}
                                     </div>
+                                        );
+                                    })()
                                 ) : null}
                             </div>
                         );
