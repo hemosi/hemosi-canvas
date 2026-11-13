@@ -1,10 +1,11 @@
 import { useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
-import { Anchor, ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, Flame, History, Image as ImageIcon, Loader2, Mic, Plus, RefreshCw, Rows3, Sparkles, Video, Wand2, X } from "lucide-react";
+import { ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, Flame, History, Image as ImageIcon, Loader2, Plus, RefreshCw, Rows3, Table2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { analyzeBlueprintWithFreeLlm, buildLocalHeuristicBlueprint, extractLocalVideoCuts, resolveTemplateVariables } from "@/lib/canvas/viral-clone";
+import { StoryboardContent } from "@/components/canvas/nodes/storyboard-node";
+import { createEmptyStoryboardData } from "@/lib/canvas/storyboard-utils";
 import { CanvasDraftToggle } from "@/components/canvas/canvas-draft-toggle";
 import { CanvasImageSettingsPopover } from "@/components/canvas/canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "@/components/canvas/canvas-video-settings-popover";
@@ -13,10 +14,9 @@ import { LightingEditor } from "@/components/canvas/canvas-cinematography-popove
 import { CAMERA_ANGLES, lightingSummary, multiAngleCameras, resolveNodeLighting } from "@/lib/canvas/canvas-cinematography";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { registerNodeDefinitions } from "@/lib/canvas/node-registry";
-import { ANCHOR_KINDS, ANCHOR_KIND_LABEL, IMAGE_ROLES, IMAGE_ROLE_LABEL } from "@/lib/canvas/canvas-reference-roles";
+import { IMAGE_ROLES, IMAGE_ROLE_LABEL } from "@/lib/canvas/canvas-reference-roles";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import { uploadImage } from "@/services/image-storage";
-import { uploadMediaFile } from "@/services/file-storage";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, HemosiNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeMetadata, type CanvasShotRef } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasNodeDefinition } from "@/types/canvas-plugin";
@@ -74,112 +74,6 @@ function IconButton({ title, onClick, children, disabled }: { title: string; onC
         <button type="button" {...stop} title={title} disabled={disabled} className="rounded p-0.5 hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10" onClick={onClick}>
             {children}
         </button>
-    );
-}
-
-// ---------------------------------------------------------------- Anchor
-
-const ANCHOR_HINT = {
-    character: { images: "定妆照（可多张多角度）", text: "外形、年龄、发型、服装、标志性特征…" },
-    scene: { images: "场景参考图", text: "地点、时代、陈设、光线、氛围…" },
-    style: { images: "风格样图", text: "风格提示词：画风、色调、镜头质感…" },
-} as const;
-
-function AnchorContent({ ctx }: { ctx: CanvasNodeContext }) {
-    const { message } = App.useApp();
-    const meta = ctx.node.metadata || {};
-    const kind = meta.anchorKind || "character";
-    const images = meta.anchorImages || [];
-    const textValue = meta.anchorText || "";
-    const imageInput = useRef<HTMLInputElement>(null);
-    const voiceInput = useRef<HTMLInputElement>(null);
-    const refs = getShotHost()?.downstreamCount(ctx.node.id) || 0;
-    const upstreamImages = ctx
-        .getUpstream()
-        .filter((n) => n.type === CanvasNodeType.Image && n.metadata?.content);
-
-    const addImages = async (event: ChangeEvent<HTMLInputElement>) => {
-        try {
-            const added = await filesToImages(event.target.files);
-            const cur = ctx.getNode(ctx.node.id)?.metadata?.anchorImages || [];
-            ctx.updateMetadata({ anchorImages: [...cur, ...added] });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "图片读取失败");
-        } finally {
-            event.target.value = "";
-        }
-    };
-    const addVoice = async (event: ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        event.target.value = "";
-        if (!file) return;
-        const uploaded = await uploadMediaFile(file, "audio");
-        ctx.updateMetadata({ anchorVoice: { content: uploaded.url, storageKey: uploaded.storageKey, mimeType: uploaded.mimeType, name: file.name } });
-    };
-    return (
-        <div className="flex size-full flex-col gap-2 overflow-auto p-3 text-xs" style={{ color: ctx.theme.node.text }}>
-            <div className="flex items-center gap-2">
-                <Anchor className="size-4 shrink-0" style={{ color: "var(--hemosi-accent)" }} />
-                <div className="flex rounded-lg border p-0.5" style={{ borderColor: ctx.theme.node.stroke }}>
-                    {ANCHOR_KINDS.map((item) => (
-                        <button
-                            key={item}
-                            type="button"
-                            {...stop}
-                            className="rounded-md px-2 py-0.5"
-                            style={item === kind ? { background: ctx.theme.toolbar.activeBg, color: ctx.theme.node.text } : { color: ctx.theme.node.muted }}
-                            onClick={() => ctx.updateMetadata({ anchorKind: item })}
-                        >
-                            {ANCHOR_KIND_LABEL[item]}
-                        </button>
-                    ))}
-                </div>
-                <span className="ml-auto shrink-0 opacity-60">{refs ? `已连 ${refs} 处` : "连给分镜/生成节点即生效"}</span>
-            </div>
-            <Field label={ANCHOR_HINT[kind].images}>
-                <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
-                    {upstreamImages.map((upNode) => (
-                        <Thumb key={`up-${upNode.id}`} ctx={ctx} image={{ id: upNode.id, status: "success", content: upNode.metadata?.content || "", naturalWidth: upNode.metadata?.naturalWidth || 0, naturalHeight: upNode.metadata?.naturalHeight || 0, bytes: upNode.metadata?.bytes || 0, mimeType: upNode.metadata?.mimeType || "image/png" }}>
-                            <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(0,208,196,.85)", color: "#061010" }}>连入</span>
-                        </Thumb>
-                    ))}
-                    {images.map((image, index) => (
-                        <Thumb key={image.id} ctx={ctx} image={image}>
-                            <span className="absolute left-0 top-0 rounded-br-md px-1 text-[9px]" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }}>{index + 1}</span>
-                            <button type="button" {...stop} className="absolute right-0.5 top-0.5 hidden rounded-full p-0.5 group-hover/thumb:block" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }} title="移除" onClick={() => ctx.updateMetadata({ anchorImages: images.filter((item) => item.id !== image.id) })}>
-                                <X className="size-3" />
-                            </button>
-                        </Thumb>
-                    ))}
-                    <button type="button" {...stop} className="grid size-14 shrink-0 place-items-center rounded-lg border border-dashed" style={{ borderColor: ctx.theme.node.stroke, color: ctx.theme.node.muted }} title="上传图片" onClick={() => imageInput.current?.click()}>
-                        <Plus className="size-4" />
-                    </button>
-                </div>
-            </Field>
-            <Field label="简介说明 / 固定设定词（连线后自动注入下游提示词）">
-                <TextArea ctx={ctx} rows={kind === "character" ? 4 : 5} value={textValue} placeholder={ANCHOR_HINT[kind].text} onChange={(anchorText) => ctx.updateMetadata({ anchorText })} />
-            </Field>
-            {kind === "character" ? (
-                <Field label="声线（可选）" extra={meta.anchorVoice ? <IconButton title="移除声线" onClick={() => ctx.updateMetadata({ anchorVoice: undefined })}><X className="size-3" /></IconButton> : null}>
-                    {meta.anchorVoice?.content ? (
-                        <audio {...stop} src={meta.anchorVoice.content} controls className="h-8 w-full" />
-                    ) : (
-                        <button type="button" {...stop} className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed py-1.5" style={{ borderColor: ctx.theme.node.stroke, color: ctx.theme.node.muted }} onClick={() => voiceInput.current?.click()}>
-                            <Mic className="size-3.5" /> 上传声线音频
-                        </button>
-                    )}
-                </Field>
-            ) : null}
-            {kind === "scene" ? (
-                <Field label="场景灯光（连到的分镜共用，跨镜头一致）">
-                    <div {...stop}>
-                        <LightingEditor value={meta.lighting} onChange={(lighting) => ctx.updateMetadata({ lighting })} />
-                    </div>
-                </Field>
-            ) : null}
-            <input ref={imageInput} type="file" accept="image/*" multiple className="hidden" onChange={(event) => void addImages(event)} />
-            <input ref={voiceInput} type="file" accept="audio/*" className="hidden" onChange={(event) => void addVoice(event)} />
-        </div>
     );
 }
 
@@ -370,10 +264,6 @@ function extractNodeImage(node: CanvasNodeData | undefined): { url: string; widt
     if (node.type === HemosiNodeType.Shot && node.metadata?.shotImage?.content) {
         return { url: node.metadata.shotImage.content, width: node.metadata.shotImage.naturalWidth, height: node.metadata.shotImage.naturalHeight, title: node.title };
     }
-    if (node.type === HemosiNodeType.Anchor && node.metadata?.anchorImages?.[0]?.content) {
-        const img = node.metadata.anchorImages[0];
-        return { url: img.content, width: img.naturalWidth, height: img.naturalHeight, title: node.title };
-    }
     const primaryId = node.metadata?.primaryImageId;
     const primary = node.metadata?.images?.find((i) => i.id === primaryId) || node.metadata?.images?.[0];
     const url = primary?.content || node.metadata?.content;
@@ -544,157 +434,30 @@ function ImageCompareContent({ ctx }: { ctx: CanvasNodeContext }) {
 }
 
 function ViralCloneContent({ ctx }: { ctx: CanvasNodeContext }) {
-    const { message } = App.useApp();
-    const [busyText, setBusyText] = useState("");
     const meta = ctx.node.metadata || {};
-    const bp = meta.viralBlueprint;
     const upstreamVideos = ctx.getUpstream().filter((n) => n.type === CanvasNodeType.Video && n.metadata?.content);
     const sourceVideo = upstreamVideos[0] || (meta.viralSourceNodeId ? ctx.getNode(meta.viralSourceNodeId) : undefined);
-    const videoUrl = sourceVideo?.metadata?.content || "";
-    const videoTitle = sourceVideo?.title || ctx.node.title || "参考视频";
-
-    const runBreakdown = async (mode: "local" | "llm") => {
-        setBusyText(mode === "llm" ? "正在切镜并调用 AI 语义拆解…" : "正在本地切镜秒拆…");
-        ctx.updateMetadata({ status: "loading" });
-        try {
-            const cuts = videoUrl
-                ? await extractLocalVideoCuts(videoUrl)
-                : [
-                      { index: 1, startSec: 0, endSec: 3, durationSec: 3, frameDataUrl: "" },
-                      { index: 2, startSec: 3, endSec: 7, durationSec: 4, frameDataUrl: "" },
-                      { index: 3, startSec: 7, endSec: 12, durationSec: 5, frameDataUrl: "" },
-                  ];
-            const nextBp =
-                mode === "llm"
-                    ? await analyzeBlueprintWithFreeLlm(videoTitle, cuts, "")
-                    : buildLocalHeuristicBlueprint(videoTitle, cuts, "");
-            ctx.updateMetadata({
-                status: "success",
-                viralBlueprint: nextBp,
-                viralSourceNodeId: sourceVideo?.id || meta.viralSourceNodeId,
-            });
-            message.success(`已生成《${nextBp.title}》共 ${nextBp.beats.length} 镜蓝图`);
-        } catch (err) {
-            ctx.updateMetadata({ status: "error", errorDetails: err instanceof Error ? err.message : String(err) });
-            message.error(err instanceof Error ? err.message : "拆解失败");
-        } finally {
-            setBusyText("");
-        }
-    };
-
-    const updateVarValue = (key: string, value: string) => {
-        if (!bp) return;
-        const nextBp = {
-            ...bp,
-            variables: bp.variables.map((v) => (v.key === key ? { ...v, value } : v)),
-        };
-        ctx.updateMetadata({ viralBlueprint: nextBp });
-    };
 
     return (
         <div className="flex size-full flex-col gap-2 overflow-auto p-3 text-xs" style={{ color: ctx.theme.node.text }} {...stop}>
             <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 font-semibold">
                     <Flame className="size-4 text-amber-500" />
-                    <span>{bp ? `${bp.beats.length} 镜蓝图已就绪` : sourceVideo ? `已连入《${sourceVideo.title || "视频"}》` : "请连入源视频节点"}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                    <button
-                        type="button"
-                        disabled={Boolean(busyText)}
-                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => void runBreakdown("local")}
-                        title="零 API 本地规则秒拆"
-                    >
-                        <RefreshCw className="size-3" /> 秒拆
-                    </button>
-                    <button
-                        type="button"
-                        disabled={Boolean(busyText)}
-                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-amber-500 transition hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => void runBreakdown("llm")}
-                        title="调用画布免费/已配渠道做语义深拆"
-                    >
-                        <Wand2 className="size-3" /> AI深拆
-                    </button>
+                    <span>{sourceVideo ? `已连入《${sourceVideo.title || "视频"}》` : "请连入源视频节点"}</span>
                 </div>
             </div>
-
-            {busyText ? (
-                <div className="flex items-center gap-2 rounded-lg border p-3 opacity-80" style={{ borderColor: ctx.theme.node.stroke }}>
-                    <Loader2 className="size-4 animate-spin text-amber-500" />
-                    <span>{busyText}</span>
-                </div>
-            ) : null}
-
-            {bp ? (
-                <>
-                    <div className="rounded-lg border p-2 text-[11px] opacity-85" style={{ borderColor: ctx.theme.node.stroke }}>
-                        <div className="font-medium">{bp.hookSummary}</div>
-                        <div className="mt-0.5 opacity-65">{bp.rhythmNote}</div>
-                    </div>
-
-                    <Field label="变量面板（改值后点「展开到画布」即可生成新设定工作组）">
-                        <div className="space-y-1.5">
-                            {bp.variables.map((v) => (
-                                <div key={v.key} className="flex items-center gap-1.5">
-                                    <span className="w-24 shrink-0 truncate opacity-70" title={`{{${v.key}}}`}>
-                                        {v.label}
-                                    </span>
-                                    <input
-                                        {...stop}
-                                        className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-xs outline-none"
-                                        style={{ borderColor: ctx.theme.node.stroke, color: ctx.theme.node.text }}
-                                        value={v.value}
-                                        onChange={(e) => updateVarValue(v.key, e.target.value)}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                    </Field>
-
-                    <div className="thin-scrollbar max-h-32 space-y-1 overflow-y-auto rounded-lg border p-2 text-[11px]" style={{ borderColor: ctx.theme.node.stroke }}>
-                        {bp.beats.map((b) => (
-                            <div key={b.id} className="truncate opacity-80">
-                                <span className="font-semibold">#{b.shotNumber} [{b.role}]</span>：{resolveTemplateVariables(b.newLine, bp.variables)}
-                            </div>
-                        ))}
-                    </div>
-                </>
-            ) : (
-                <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-center opacity-60" style={{ borderColor: ctx.theme.node.stroke }}>
-                    <span>将视频节点连入本节点左侧端口，或点击下方「工作台精修」导入字幕与切点</span>
-                </div>
-            )}
-
-            <div className="mt-auto flex items-center justify-between border-t pt-2" style={{ borderColor: ctx.theme.node.stroke }}>
-                <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] opacity-75">
-                    <input
-                        type="checkbox"
-                        checked={Boolean(meta.viralAttachKeyframes)}
-                        onChange={(e) => ctx.updateMetadata({ viralAttachKeyframes: e.target.checked })}
-                    />
-                    <span>带原片关键帧参考</span>
-                </label>
-                <div className="flex items-center gap-1.5">
-                    <button
-                        type="button"
-                        className="rounded border px-2 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
-                        style={{ borderColor: ctx.theme.node.stroke }}
-                        onClick={() => getShotHost()?.openViralCloneWorkbench?.(ctx.node.id)}
-                    >
-                        工作台精修
-                    </button>
-                    <button
-                        type="button"
-                        disabled={!bp}
-                        className="inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold text-amber-500 transition hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10"
-                        style={{ borderColor: ctx.theme.node.stroke }}
-                        onClick={() => void getShotHost()?.expandViralNodeToCanvas?.(ctx.node.id)}
-                    >
-                        <Sparkles className="size-3" /> 展开到画布
-                    </button>
-                </div>
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-center opacity-60" style={{ borderColor: ctx.theme.node.stroke }}>
+                <span>将视频节点连入本节点左侧端口，或打开右侧复刻工作区</span>
+            </div>
+            <div className="mt-auto flex items-center justify-end border-t pt-2" style={{ borderColor: ctx.theme.node.stroke }}>
+                <button
+                    type="button"
+                    className="rounded border px-2.5 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
+                    style={{ borderColor: ctx.theme.node.stroke }}
+                    onClick={() => getShotHost()?.openViralCloneWorkbench?.(ctx.node.id)}
+                >
+                    打开复刻工作区
+                </button>
             </div>
         </div>
     );
@@ -702,16 +465,26 @@ function ViralCloneContent({ ctx }: { ctx: CanvasNodeContext }) {
 
 const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
     {
+        type: HemosiNodeType.Storyboard,
+        title: "分镜表",
+        icon: <Table2 className="size-4" />,
+        defaultSize: { width: 1120, height: 560 },
+        defaultMetadata: { status: "idle", storyboard: createEmptyStoryboardData() },
+        minimapColor: "#0ea5e9",
+        hidePanel: true,
+        Content: StoryboardContent,
+    },
+    {
         type: HemosiNodeType.ViralClone,
         title: "复刻分析",
         icon: <Flame className="size-4 text-amber-500" />,
         defaultSize: { width: 380, height: 420 },
-        defaultMetadata: { status: "idle", viralAttachKeyframes: false },
+        defaultMetadata: { status: "idle" },
         minimapColor: "#f59e0b",
         hidePanel: true,
         resource: (node) =>
-            node.metadata?.viralBlueprint
-                ? { kind: "text", text: JSON.stringify(node.metadata.viralBlueprint) }
+            node.metadata?.cloneProject
+                ? { kind: "text", text: JSON.stringify(node.metadata.cloneProject) }
                 : null,
         Content: ViralCloneContent,
     },
@@ -725,24 +498,6 @@ const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
         hidePanel: true,
         resource: (node) => (node.metadata?.shotVideo?.content ? { kind: "video", url: node.metadata.shotVideo.content } : node.metadata?.shotImage?.content ? { kind: "image", url: node.metadata.shotImage.content } : null),
         Content: ShotContent,
-    },
-    {
-        type: HemosiNodeType.Anchor,
-        title: "锚点",
-        icon: <Anchor className="size-4" />,
-        defaultSize: { width: 340, height: 400 },
-        defaultMetadata: { status: "idle", anchorKind: "character", anchorImages: [] },
-        minimapColor: "#f59e0b",
-        hidePanel: true,
-        resource: (node) => {
-            const meta = node.metadata;
-            const slots = meta?.anchorSlots;
-            const hasSlot = slots && (["character", "scene", "style"] as const).some((k) => Boolean(slots[k]?.text?.trim() || slots[k]?.images?.length));
-            return hasSlot || meta?.anchorText?.trim() || meta?.anchorImages?.length || meta?.anchorVoice?.content
-                ? { kind: "text", text: meta?.anchorText || node.title }
-                : { kind: "text", text: node.title || "锚点" };
-        },
-        Content: AnchorContent,
     },
     {
         type: HemosiNodeType.ImageCompare,

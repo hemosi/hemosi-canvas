@@ -57,13 +57,13 @@ export function autoLayoutNodes(nodes: CanvasNodeData[], connections: CanvasConn
     });
 }
 
-/** Nodes whose title or text matches the query (title, text, prompt, shot description, anchor text). */
+/** Nodes whose title or text matches the query (title, text, prompt, shot description). */
 export function searchNodes(nodes: CanvasNodeData[], query: string) {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     return nodes.filter((node) => {
         const meta = node.metadata || {};
         const shot = meta.shotNo !== undefined ? `镜头 ${meta.shotNo} #${meta.shotNo}` : "";
-        return [node.title, meta.content?.startsWith("blob:") || meta.content?.startsWith("data:") ? "" : meta.content, meta.prompt, meta.shotDescription, meta.anchorText, shot].some((value) => value?.toLowerCase().includes(q));
+        return [node.title, meta.content?.startsWith("blob:") || meta.content?.startsWith("data:") ? "" : meta.content, meta.prompt, meta.shotDescription, shot].some((value) => value?.toLowerCase().includes(q));
     });
 }

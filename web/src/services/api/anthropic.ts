@@ -13,7 +13,7 @@ export async function requestAnthropicText(config: AiConfig, messages: AiTextMes
         max_tokens: 16000,
         stream: true,
         ...(system ? { system } : {}),
-        messages: messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role, content: typeof message.content === "string" ? message.content : message.content.map((part) => (part.type === "text" ? { type: "text", text: part.text } : imageBlock(part.image_url.url))) })),
+        messages: messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role, content: typeof message.content === "string" ? message.content : message.content.map((part) => { if (part.type === "text") return { type: "text", text: part.text }; if (part.type === "image_url") return imageBlock(part.image_url.url); throw new Error("该渠道格式不支持视频输入"); }) })),
     };
     const response = await fetch(withLocalProxy(`${base}/v1/messages`), {
         method: "POST",

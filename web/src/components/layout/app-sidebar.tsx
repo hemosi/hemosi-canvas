@@ -41,7 +41,7 @@ export function AppSidebar() {
     const renderItem = (tool: NavigationTool) => {
         const Icon = tool.icon;
         const active = tool.slug === activeToolSlug;
-        const label = tool.slug === "storyboard" ? "分镜表" : t(`navigation.${tool.slug}`);
+        const label = t(`navigation.${tool.slug}`);
         return (
             <Tooltip key={tool.slug} title={label} placement="right" mouseEnterDelay={0.3} classNames={{ root: manualCollapsed ? undefined : "lg:hidden" }}>
                 <Link

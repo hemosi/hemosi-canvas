@@ -33,7 +33,7 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
         onUpdateNode?.(nodeId, { refOrder: next });
     };
     const toggle = (id: string) => onUpdateNode?.(nodeId, { refDisabled: disabled.has(id) ? [...disabled].filter((item) => item !== id) : [...disabled, id] });
-    const slots: ReferenceSlot[] = references.map(({ node }) => ({ id: node.id, title: node.title, kind: node.type === CanvasNodeType.Image ? "image" : node.type === HemosiNodeType.Anchor ? "anchor" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "text", role: node.metadata?.imageRole, enabled: !disabled.has(node.id) }));
+    const slots: ReferenceSlot[] = references.map(({ node }) => ({ id: node.id, title: node.title, kind: node.type === CanvasNodeType.Image ? "image" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "text", role: node.metadata?.imageRole, enabled: !disabled.has(node.id) }));
     const frames = video ? videoFrameSlots(slots) : null;
     const slotLabel = (id: string) => (frames?.first?.id === id ? "首帧" : frames?.last?.id === id ? "尾帧" : undefined);
     let imageIndex = 0;
@@ -92,7 +92,7 @@ function ReferenceItem({ node, badge, onRemove }: { node: CanvasNodeData; badge?
         <Popover placement="topLeft" mouseEnterDelay={0.15} content={<ReferencePreview node={node} content={content} />}>
             <div className="group relative grid size-12 shrink-0 place-items-center rounded-xl border" style={{ background: theme.toolbar.activeBg, borderColor: theme.toolbar.border }}>
                 <span className="grid size-full place-items-center overflow-hidden rounded-[inherit]">
-                    {(resource?.kind === "image" || node.type === CanvasNodeType.Image) && thumbnail ? <img src={thumbnail} alt="" className="size-full object-cover" /> : (resource?.kind === "video" || node.type === CanvasNodeType.Video) && content ? <video src={content} className="size-full object-cover" muted /> : node.type === HemosiNodeType.Anchor && node.metadata?.anchorImages?.[0]?.content ? <img src={node.metadata.anchorImages[0].content} alt="" className="size-full object-cover" /> : <Icon className="size-4 opacity-65" />}
+                    {(resource?.kind === "image" || node.type === CanvasNodeType.Image) && thumbnail ? <img src={thumbnail} alt="" className="size-full object-cover" /> : (resource?.kind === "video" || node.type === CanvasNodeType.Video) && content ? <video src={content} className="size-full object-cover" muted /> : <Icon className="size-4 opacity-65" />}
                 </span>
                 {badge ? <span className="pointer-events-none absolute bottom-0 left-0 rounded-tr-md rounded-bl-xl px-1 text-[9px] font-semibold" style={{ background: "rgba(10,12,14,.72)", color: "#fff" }}>{badge}</span> : null}
                 <button type="button" className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} aria-label={t("canvas.references.disconnect")} title={t("canvas.references.disconnect")} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X className="size-3" /></button>

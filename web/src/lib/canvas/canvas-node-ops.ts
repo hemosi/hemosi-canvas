@@ -68,7 +68,6 @@ export function nodeTextContent(node: CanvasNodeData) {
     const meta = node.metadata || {};
     if (node.type === CanvasNodeType.Text) return meta.content || meta.prompt || "";
     if (node.type === HemosiNodeType.Shot) return [`镜头 ${meta.shotNo ?? ""}`, meta.shotDescription ? `画面：${meta.shotDescription}` : "", meta.prompt ? `提示词：${meta.prompt}` : ""].filter(Boolean).join("\n");
-    if (node.type === HemosiNodeType.Anchor) return meta.anchorText || "";
     return meta.prompt || "";
 }
 
@@ -86,14 +85,12 @@ export async function collectNodeFiles(node: CanvasNodeData): Promise<{ base: st
     } else if (node.type === HemosiNodeType.Shot) {
         await push("-图", meta.shotImage?.content, meta.shotImage?.storageKey, "png");
         await push("-视频", meta.shotVideo?.content, meta.shotVideo?.storageKey, "mp4");
-    } else if (node.type === HemosiNodeType.Anchor) {
-        for (const [index, image] of (meta.anchorImages || []).entries()) await push(`-${index + 1}`, image.content, image.storageKey, "png");
     } else if (meta.content && !meta.content.startsWith("data:") && node.type !== CanvasNodeType.Text) {
         // plugin nodes with media content
         await push("", meta.content, meta.storageKey, "bin");
     }
     const text = nodeTextContent(node);
-    if (text && (node.type === CanvasNodeType.Text || node.type === HemosiNodeType.Shot || node.type === HemosiNodeType.Anchor)) files.push({ base: node.type === CanvasNodeType.Text ? "" : "-文字", ext: "txt", data: text });
+    if (text && (node.type === CanvasNodeType.Text || node.type === HemosiNodeType.Shot)) files.push({ base: node.type === CanvasNodeType.Text ? "" : "-文字", ext: "txt", data: text });
     return files;
 }
 

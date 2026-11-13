@@ -14,7 +14,6 @@ import VideoPage from "@/pages/video";
 import ShortcutsPage from "@/pages/shortcuts";
 import ProjectsPage from "@/pages/projects";
 import ProjectDetailPage from "@/pages/projects/detail";
-import StoryboardPage from "@/pages/storyboard";
 
 export const router = createBrowserRouter([
     {
@@ -36,7 +35,6 @@ export const router = createBrowserRouter([
             { path: "/shortcuts", element: <ShortcutsPage /> },
             { path: "/projects", element: <ProjectsPage /> },
             { path: "/projects/:id", element: <ProjectDetailPage /> },
-            { path: "/storyboard", element: <StoryboardPage /> },
         ],
     },
     { path: "*", element: <NotFound /> },

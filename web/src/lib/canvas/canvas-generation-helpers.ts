@@ -49,33 +49,20 @@ async function hydrateMediaItem<T extends { content?: string; storageKey?: strin
     return { ...item, content };
 }
 
-/** Object URLs die with the page: re-resolve media kept inside metadata (anchors, shots, versions) from local storage. */
+/** Object URLs die with the page: re-resolve media kept inside metadata (shots, versions) from local storage. */
 async function hydrateNestedMedia(node: CanvasNodeData): Promise<CanvasNodeData> {
     const meta = node.metadata;
-    if (!meta || !(meta.anchorImages || meta.anchorSlots || meta.shotRefs || meta.shotImage || meta.shotVideo || meta.anchorVoice || meta.versions || meta.compareImageA || meta.compareImageB)) return node;
+    if (!meta || !(meta.shotRefs || meta.shotImage || meta.shotVideo || meta.versions || meta.compareImageA || meta.compareImageB)) return node;
     const list = <T extends { content?: string; storageKey?: string }>(items?: T[]) => (items ? Promise.all(items.map((item) => hydrateMediaItem(item) as Promise<T>)) : Promise.resolve(undefined));
-    const [anchorImages, shotRefs, shotImage, shotVideo, anchorVoice, versions, compareImageA, compareImageB, charImgs, sceneImgs, styleImgs] = await Promise.all([
-        list(meta.anchorImages),
+    const [shotRefs, shotImage, shotVideo, versions, compareImageA, compareImageB] = await Promise.all([
         list(meta.shotRefs),
         hydrateMediaItem(meta.shotImage),
         hydrateMediaItem(meta.shotVideo),
-        hydrateMediaItem(meta.anchorVoice),
         list(meta.versions),
         hydrateMediaItem(meta.compareImageA),
         hydrateMediaItem(meta.compareImageB),
-        list(meta.anchorSlots?.character?.images),
-        list(meta.anchorSlots?.scene?.images),
-        list(meta.anchorSlots?.style?.images),
     ]);
-    const anchorSlots = meta.anchorSlots
-        ? {
-              ...meta.anchorSlots,
-              ...(meta.anchorSlots.character ? { character: { ...meta.anchorSlots.character, images: charImgs } } : {}),
-              ...(meta.anchorSlots.scene ? { scene: { ...meta.anchorSlots.scene, images: sceneImgs } } : {}),
-              ...(meta.anchorSlots.style ? { style: { ...meta.anchorSlots.style, images: styleImgs } } : {}),
-          }
-        : undefined;
-    return { ...node, metadata: { ...meta, anchorImages, anchorSlots, shotRefs, shotImage, shotVideo, anchorVoice, versions, compareImageA, compareImageB } };
+    return { ...node, metadata: { ...meta, shotRefs, shotImage, shotVideo, versions, compareImageA, compareImageB } };
 }
 
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {

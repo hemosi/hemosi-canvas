@@ -1,29 +1,15 @@
 import type { NodeGenerationResourceInput } from "@/components/canvas/canvas-node-generation";
-import { CanvasNodeType, HemosiNodeType, type CanvasAnchorKind, type CanvasAudioRole, type CanvasConnection, type CanvasImageRole, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasAudioRole, type CanvasConnection, type CanvasImageRole, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export const IMAGE_ROLES: CanvasImageRole[] = ["reference", "firstFrame", "lastFrame", "character", "scene", "style"];
 export const IMAGE_ROLE_LABEL: Record<CanvasImageRole, string> = { reference: "参考图", firstFrame: "首帧", lastFrame: "尾帧", character: "角色定妆", scene: "场景参考", style: "风格参考" };
 export const AUDIO_ROLES: CanvasAudioRole[] = ["voice", "bgm", "sfx"];
 export const AUDIO_ROLE_LABEL: Record<CanvasAudioRole, string> = { voice: "配音", bgm: "BGM", sfx: "音效" };
-export const ANCHOR_KINDS: CanvasAnchorKind[] = ["character", "scene", "style"];
-export const ANCHOR_KIND_LABEL: Record<CanvasAnchorKind, string> = { character: "角色", scene: "场景", style: "风格" };
-
-/** The text an anchor puts into every prompt it feeds: its kind, name and description. */
-export function anchorPromptBlock(node: CanvasNodeData) {
-    const meta = node.metadata || {};
-    const kind = meta.anchorKind || "character";
-    const text = (meta.anchorText || "").trim();
-    if (!text) return null;
-    const label = `${ANCHOR_KIND_LABEL[kind]}锚点·${node.title || ANCHOR_KIND_LABEL[kind]}`;
-    const hint = kind === "character" ? "保持该角色外形、服装与参考定妆照一致" : kind === "scene" ? "保持场景布局、陈设与参考图一致" : "整体画面风格遵循以下风格设定与样图";
-    return { label, text: `${hint}：\n${text}` };
-}
 
 const baseId = (nodeId: string) => nodeId.split("#")[0];
 
 /**
  * Apply a generation node's reference order (refOrder) and switches (refDisabled) to its upstream inputs.
- * Anchor sub-resources (`<anchorId>#<imageId>`) follow their anchor's position and can be switched one by one.
  * For video runs, first frames go first and last frames second so they land in the first/last-frame slots.
  */
 export function orderReferenceInputs(inputs: NodeGenerationResourceInput[], meta: CanvasNodeMetadata | undefined, video: boolean) {
@@ -41,7 +27,7 @@ export function orderReferenceInputs(inputs: NodeGenerationResourceInput[], meta
     return sorted.map((input, index) => ({ input, index })).sort((a, b) => frameRank(a.input) - frameRank(b.input) || a.index - b.index).map((item) => item.input);
 }
 
-export type ReferenceSlot = { id: string; title: string; kind: "image" | "video" | "audio" | "text" | "anchor"; previewUrl?: string; role?: CanvasImageRole; audioRole?: CanvasAudioRole; enabled: boolean };
+export type ReferenceSlot = { id: string; title: string; kind: "image" | "video" | "audio" | "text"; previewUrl?: string; role?: CanvasImageRole; audioRole?: CanvasAudioRole; enabled: boolean };
 
 /** Upstream references of a generation node in the order the generation will use them, for the reference strip UI. */
 export function listReferenceSlots(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): ReferenceSlot[] {
@@ -53,7 +39,6 @@ export function listReferenceSlots(node: CanvasNodeData, nodes: CanvasNodeData[]
         if (source.type === CanvasNodeType.Image && meta.content) return [{ id: source.id, title: source.title, kind: "image", previewUrl: meta.content, role: meta.imageRole, enabled: !disabled.has(source.id) }];
         if (source.type === CanvasNodeType.Video && meta.content) return [{ id: source.id, title: source.title, kind: "video", previewUrl: meta.content, enabled: !disabled.has(source.id) }];
         if (source.type === CanvasNodeType.Audio && meta.content) return [{ id: source.id, title: source.title, kind: "audio", audioRole: meta.audioRole, enabled: !disabled.has(source.id) }];
-        if (source.type === HemosiNodeType.Anchor) return [{ id: source.id, title: `${ANCHOR_KIND_LABEL[meta.anchorKind || "character"]}·${source.title}`, kind: "anchor", previewUrl: meta.anchorImages?.[0]?.content, enabled: !disabled.has(source.id) }];
         if (source.type === HemosiNodeType.Shot && (meta.shotImage?.content || meta.shotVideo?.content)) return [{ id: source.id, title: source.title, kind: meta.shotVideo?.content ? "video" : "image", previewUrl: meta.shotImage?.content, enabled: !disabled.has(source.id) }];
         if (source.type === CanvasNodeType.Text && (meta.content || meta.prompt)) return [{ id: source.id, title: source.title, kind: "text", enabled: !disabled.has(source.id) }];
         return [];
@@ -74,7 +59,7 @@ export function moveReferenceSlot(slots: ReferenceSlot[], id: string, delta: -1 
 
 /** Which slot of a video generation each image lands in: 首帧 / 尾帧 / 参考. Mirrors orderReferenceInputs + video API frame mode. */
 export function videoFrameSlots(slots: ReferenceSlot[]) {
-    const images = slots.filter((slot) => slot.enabled && (slot.kind === "image" || slot.kind === "anchor"));
+    const images = slots.filter((slot) => slot.enabled && slot.kind === "image");
     const sorted = [...images].sort((a, b) => (a.role === "firstFrame" ? 0 : a.role === "lastFrame" ? 1 : 2) - (b.role === "firstFrame" ? 0 : b.role === "lastFrame" ? 1 : 2));
     const framed = sorted.some((slot) => slot.role === "firstFrame" || slot.role === "lastFrame") || sorted.length <= 2;
     if (!framed) return { first: undefined, last: undefined, references: sorted };

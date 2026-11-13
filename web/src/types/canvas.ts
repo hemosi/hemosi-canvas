@@ -22,7 +22,7 @@ export enum CanvasNodeType {
 /** Hemosi node types registered through the node registry (rendered by their own Content component). */
 export const HemosiNodeType = {
     Shot: "shot",
-    Anchor: "anchor",
+    Storyboard: "storyboard",
     Bookmark: "bookmark",
     ImageCompare: "image-compare",
     ViralClone: "viral-clone",
@@ -126,12 +126,6 @@ export type CanvasNodeMetadata = {
     versions?: CanvasNodeVersion[];
     /** Text node history, newest last. */
     textVersions?: CanvasTextVersion[];
-    /** Anchor node. */
-    anchorKind?: CanvasAnchorKind;
-    anchorText?: string;
-    anchorImages?: CanvasNodeImage[];
-    anchorSlots?: Partial<Record<CanvasAnchorKind, { text?: string; images?: CanvasNodeImage[] }>>;
-    anchorVoice?: { content: string; storageKey?: string; mimeType?: string; name?: string };
     /** Storyboard shot node. */
     shotNo?: number;
     shotDescription?: string;
@@ -155,15 +149,25 @@ export type CanvasNodeMetadata = {
     compareImageB?: CanvasNodeImage;
     compareSwap?: boolean;
     compareMode?: "hover" | "drag";
-    /** 爆款复刻分析节点（保存完整可编辑蓝图与源视频关联） */
-    viralBlueprint?: import("@/lib/canvas/viral-clone").ViralBlueprint;
+    /** Fixed short node ID (e.g. 图1, 视1, 表1). */
+    refId?: string;
+    /** True when user manually dragged this node, skipping auto-layout. */
+    manualPos?: boolean;
+    /** True when user manually edited this node's prompt. */
+    manualPrompt?: boolean;
+    /** Deterministic hash of upstream inputs for stale detection. */
+    inputsHash?: string;
+    /** Hash at the time the current node content was generated. */
+    generatedInputsHash?: string;
+    /** Storyboard node data. */
+    storyboard?: import("@/lib/canvas/storyboard-types").StoryboardData;
+    /** 爆款复刻工程（S5 完整结构接入） */
     viralSourceNodeId?: string;
-    viralAttachKeyframes?: boolean;
+    cloneProject?: unknown;
 };
 
 export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";
 export type CanvasAudioRole = "voice" | "bgm" | "sfx";
-export type CanvasAnchorKind = "character" | "scene" | "style";
 
 export type CanvasShotRef = CanvasNodeImage & { enabled: boolean; role?: CanvasImageRole };
 

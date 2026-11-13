@@ -14,9 +14,20 @@ import type { ReferenceImage } from "@/types/image";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
+export type AiTextVideoPart = {
+    type: "video";
+    video: {
+        url: string;
+        mimeType: string;
+        startOffsetSec?: number;
+        endOffsetSec?: number;
+        fps?: number;
+    };
+};
+
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
-    content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+    content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } } | AiTextVideoPart>;
 };
 
 type ResponseToolCall = {
@@ -84,6 +95,7 @@ type GeminiPart = {
     inlineData?: { mimeType?: string; data?: string };
     inline_data?: { mime_type?: string; mimeType?: string; data?: string };
     fileData?: { mimeType?: string; fileUri?: string };
+    videoMetadata?: { startOffset?: string; endOffset?: string; fps?: number };
     functionCall?: { id?: string; name?: string; args?: Record<string, unknown> };
     functionResponse?: { id?: string; name?: string; response?: Record<string, unknown> };
     thoughtSignature?: string;
@@ -361,7 +373,11 @@ function toResponseInput(messages: ResponseInputMessage[]): ResponseInputItem[] 
 
 function toResponseContent(content: ResponseMessageContent): string | ResponseInputContent[] {
     if (!Array.isArray(content)) return String(content || "");
-    return content.map((item) => (item.type === "text" ? { type: "input_text" as const, text: item.text } : { type: "input_image" as const, image_url: item.image_url.url }));
+    return content.map((item) => {
+        if (item.type === "text") return { type: "input_text" as const, text: item.text };
+        if (item.type === "image_url") return { type: "input_image" as const, image_url: item.image_url.url };
+        throw new Error("该渠道格式不支持视频输入");
+    });
 }
 
 function toResponseTool(tool: ResponseFunctionTool): ResponseApiToolDefinition {
@@ -534,7 +550,24 @@ function toGeminiContents(messages: ResponseInputMessage[]): GeminiContent[] {
 
 function toGeminiParts(content: ResponseMessageContent): GeminiPart[] {
     if (!Array.isArray(content)) return [{ text: String(content || "") }];
-    return content.map((item) => (item.type === "text" ? { text: item.text } : toGeminiImagePart(item.image_url.url)));
+    return content.map((item) => {
+        if (item.type === "text") return { text: item.text };
+        if (item.type === "video") return toGeminiVideoPart(item.video);
+        return toGeminiImagePart(item.image_url.url);
+    });
+}
+
+function toGeminiVideoPart(video: AiTextVideoPart["video"]): GeminiPart {
+    const match = video.url.match(/^data:([^;,]+);base64,(.+)$/);
+    const base: GeminiPart = match
+        ? { inlineData: { mimeType: match[1] || video.mimeType, data: match[2] } }
+        : { fileData: { fileUri: video.url, mimeType: video.mimeType || "video/mp4" } };
+    const meta: GeminiPart["videoMetadata"] = {};
+    if (typeof video.startOffsetSec === "number") meta.startOffset = `${video.startOffsetSec}s`;
+    if (typeof video.endOffsetSec === "number") meta.endOffset = `${video.endOffsetSec}s`;
+    if (typeof video.fps === "number") meta.fps = video.fps;
+    if (Object.keys(meta).length > 0) base.videoMetadata = meta;
+    return base;
 }
 
 function toGeminiImagePart(url: string): GeminiPart {
@@ -545,7 +578,9 @@ function toGeminiImagePart(url: string): GeminiPart {
 
 function geminiTextContent(content: ResponseMessageContent) {
     if (!Array.isArray(content)) return String(content || "");
-    return content.map((item) => (item.type === "text" ? item.text : item.image_url.url)).join("\n");
+    return content
+        .map((item) => (item.type === "text" ? item.text : item.type === "video" ? item.video.url : item.image_url.url))
+        .join("\n");
 }
 
 function jsonObject(value: string): Record<string, unknown> {
@@ -851,7 +886,11 @@ async function requestChatCompletionsStream(
     const chatMessages = (withSystemMessage(config, messages) as AiTextMessage[]).map((m) => ({
         role: m.role,
         content: Array.isArray(m.content)
-            ? m.content.map((part) => (part.type === "text" ? { type: "text", text: part.text } : { type: "image_url", image_url: { url: part.image_url.url } }))
+            ? m.content.map((part) => {
+                  if (part.type === "text") return { type: "text", text: part.text };
+                  if (part.type === "image_url") return { type: "image_url", image_url: { url: part.image_url.url } };
+                  throw new Error("该渠道格式不支持视频输入");
+              })
             : String(m.content || ""),
     }));
     const response = await fetch(aiApiUrl(config, "/chat/completions"), {
@@ -910,8 +949,51 @@ async function requestChatCompletionsStream(
     return fullText;
 }
 
+export async function uploadGeminiFile(config: AiConfig, file: Blob, mimeType: string, signal?: AbortSignal): Promise<string> {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    if (requestConfig.apiFormat !== "gemini") {
+        throw new Error("该渠道格式不支持视频输入");
+    }
+    const base = requestConfig.baseUrl.replace(/\/+$/, "").replace(/\/v1beta$/, "");
+    const uploadUrl = withLocalProxy(`${base}/upload/v1beta/files?key=${encodeURIComponent(requestConfig.apiKey)}`);
+    const form = new FormData();
+    form.append("metadata", new Blob([JSON.stringify({ file: { display_name: `viral_${Date.now()}` } })], { type: "application/json" }));
+    form.append("file", file, "video.mp4");
+
+    const uploadRes = await fetch(uploadUrl, { method: "POST", body: form, signal });
+    if (!uploadRes.ok) {
+        const err = await uploadRes.text().catch(() => "");
+        throw new Error(err || `Gemini File API 上传失败 (${uploadRes.status})`);
+    }
+    const uploaded = (await uploadRes.json()) as { file?: { name?: string; uri?: string; state?: string } };
+    const name = uploaded.file?.name;
+    let uri = uploaded.file?.uri;
+    let state = uploaded.file?.state;
+
+    for (let i = 0; i < 30 && state === "PROCESSING" && name; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (signal?.aborted) throw new Error("已取消上传");
+        const pollUrl = withLocalProxy(`${base}/v1beta/${name}?key=${encodeURIComponent(requestConfig.apiKey)}`);
+        const pollRes = await fetch(pollUrl, { signal });
+        if (!pollRes.ok) break;
+        const polled = (await pollRes.json()) as { name?: string; uri?: string; state?: string };
+        state = polled.state;
+        uri = polled.uri || uri;
+        if (state === "FAILED") throw new Error("Gemini 视频处理失败");
+    }
+    if (!uri) throw new Error("Gemini File API 未返回 fileUri");
+    return uri;
+}
+
+function hasVideoPart(messages: AiTextMessage[]) {
+    return messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "video"));
+}
+
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    if (hasVideoPart(messages) && requestConfig.apiFormat !== "gemini") {
+        throw new Error("该渠道格式不支持视频输入");
+    }
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {
         try {

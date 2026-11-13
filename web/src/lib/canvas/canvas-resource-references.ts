@@ -137,21 +137,11 @@ function resourceText(node: CanvasNodeData): string | undefined {
     return resource?.kind === "text" ? resource.text : undefined;
 }
 
-function hasAnchorContent(node: CanvasNodeData): boolean {
-    const meta = node.metadata;
-    if (!meta) return true;
-    if (meta.anchorText?.trim() || meta.anchorImages?.length || meta.anchorVoice?.content) return true;
-    const slots = meta.anchorSlots;
-    if (slots && (["character", "scene", "style"] as const).some((k) => Boolean(slots[k]?.text?.trim() || slots[k]?.images?.length))) return true;
-    return true;
-}
-
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
     if (node.type === CanvasNodeType.Image && node.metadata?.content) return "image";
     if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
     if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";
     if (node.type === CanvasNodeType.Text && (node.metadata?.content || node.metadata?.prompt)) return "text";
-    if (node.type === HemosiNodeType.Anchor) return hasAnchorContent(node) ? "text" : null;
     if (node.type === HemosiNodeType.Shot) return node.metadata?.shotVideo?.content ? "video" : node.metadata?.shotImage?.content ? "image" : null;
     // Plugin nodes declare their input eligibility through definition.resource.
     return getNodeDefinition(node.type)?.resource?.(node)?.kind || null;

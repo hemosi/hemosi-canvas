@@ -1,9 +1,12 @@
 import { getNodeSpec } from "@/constant/canvas";
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { getGroupWrapRect } from "@/lib/canvas/canvas-node-geometry";
+import type { GhostPreviewNode, Plan } from "@/lib/canvas/storyboard-plan";
+import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
+import type { StoryboardData } from "@/lib/canvas/storyboard-types";
 import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
-/** Canvas-page actions that shot/anchor node content calls; registered by the canvas page while it is mounted. */
+/** Canvas-page actions that shot/storyboard node content calls; registered by the canvas page while it is mounted. */
 export type ShotHost = {
     generate: (nodeId: string, kind: "image" | "video") => Promise<boolean>;
     selectRow: (nodeId: string) => void;
@@ -15,6 +18,22 @@ export type ShotHost = {
     getCurrentZoom?: () => number;
     openViralCloneWorkbench?: (nodeId: string) => void;
     expandViralNodeToCanvas?: (nodeId: string) => Promise<void>;
+    /** Storyboard node actions (single-step transaction with downstream node/connection sync). */
+    commitStoryboard?: (storyboardNodeId: string, nextData: StoryboardData, autoLayout?: boolean) => void;
+    applyStoryboardPlan?: (
+        storyboardNodeId: string,
+        plan: Plan,
+        enabledIds: Set<string>,
+        removeOrphanDownstream?: boolean,
+    ) => { warnings: string[] } | void;
+    runStoryboardBatch?: (
+        tasks: StoryboardQueueTask[],
+        options?: { skipConfirm?: boolean; title?: string },
+    ) => Promise<{ ok: number; failed: number; canceled: boolean }>;
+    setStoryboardGhostNodes?: (ghosts: GhostPreviewNode[]) => void;
+    getAllNodes?: () => CanvasNodeData[];
+    getSelectedNodeIds?: () => string[];
+    setStoryboardHover?: (nodeIds: string[]) => void;
 };
 
 let host: ShotHost | null = null;

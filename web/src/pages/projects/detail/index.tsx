@@ -73,7 +73,6 @@ export default function ProjectDetailPage() {
                 const media = [
                     ...(node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio ? [{ kind: node.type, storageKey: meta.storageKey }] : []),
                     ...(node.type === HemosiNodeType.Shot ? [{ kind: "image", storageKey: meta.shotImage?.storageKey }, { kind: "video", storageKey: meta.shotVideo?.storageKey }] : []),
-                    ...(meta.anchorImages || []).map((image) => ({ kind: "image", storageKey: image.storageKey })),
                 ];
                 media.forEach(({ kind, storageKey }) => {
                     if (!storageKey || seen.has(storageKey)) return;

@@ -357,7 +357,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     ) : (
                         <button
                             type="button"
-                            className="block max-w-full truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
+                            className="flex max-w-full items-center gap-1.5 truncate border-b border-dashed border-transparent px-0 py-0.5 text-left text-xs font-medium opacity-75 transition hover:border-current hover:opacity-100"
                             style={{ color: theme.node.text }}
                             title={t("canvas.node.renameHint")}
                             onDoubleClick={(event) => {
@@ -365,7 +365,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                                 setIsEditingTitle(true);
                             }}
                         >
-                            {data.title || t("canvas.node.untitled")}
+                            {data.metadata?.refId ? (
+                                <span className="shrink-0 rounded px-1 py-0 text-[10px] font-semibold" style={{ background: theme.toolbar.activeBg }}>
+                                    {data.metadata.refId}
+                                </span>
+                            ) : null}
+                            <span className="truncate">{data.title || t("canvas.node.untitled")}</span>
                         </button>
                     )}
                 </div>

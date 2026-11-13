@@ -29,7 +29,6 @@ export function connectionKindProblem(kind: CanvasConnectionKind, from: CanvasNo
     if (kind === "reference" && isText(from)) return "文本节点是提示词来源，应标为「输入」";
     if (from.type === CanvasNodeType.Audio && (to.type === CanvasNodeType.Image || to.type === CanvasNodeType.Text)) return "音频不能喂给图片/文本生成，只能连给视频节点作声音来源";
     if (isVideo(from) && to.type === CanvasNodeType.Image) return "图片生成不接受视频参考";
-    if (from.type === HemosiNodeType.Anchor && (to.type === CanvasNodeType.Audio || to.type === HemosiNodeType.Anchor)) return "锚点只能连给分镜或图片/视频生成节点";
     if (!isGenerationTarget(to)) return "目标节点不会发起生成，这条线不会生效";
     return null;
 }

@@ -154,21 +154,17 @@ export function lightingSummary(lighting?: LightingSettings | null) {
     return [find(LIGHT_MOODS, lighting.mood)?.label.replace(/（.*）/, ""), isSet(lighting.brightness) ? `亮度 ${lighting.brightness}` : "", lighting.colorTemp ? `${lighting.colorTemp}K` : "", lighting.key?.enabled ? `主光${find(LIGHT_DIRECTIONS, lighting.key.direction)?.label || ""}${isSet(lighting.key.intensity) ? ` ${lighting.key.intensity}%` : ""}` : "", lighting.rim?.enabled ? `轮廓光${isSet(lighting.rim.intensity) ? ` ${lighting.rim.intensity}%` : ""}` : ""].filter(Boolean).join(" · ");
 }
 
-export type ResolvedLighting = { lighting?: LightingSettings; source?: { nodeId: string; title: string; kind: "node" | "group" | "anchor" } };
+export type ResolvedLighting = { lighting?: LightingSettings; source?: { nodeId: string; title: string; kind: "node" | "group" } };
 
 /**
- * Lighting a node generates with: its own setup when it has one, else its group's (one scene = one setup),
- * else a linked scene anchor's. Every shot in the same group/anchor therefore gets the identical block.
+ * Lighting a node generates with: its own setup when it has one, else its group's (one scene = one setup).
  */
-export function resolveNodeLighting(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): ResolvedLighting {
+export function resolveNodeLighting(nodeId: string, nodes: CanvasNodeData[], _connections: CanvasConnection[]): ResolvedLighting {
     const node = nodes.find((item) => item.id === nodeId);
     if (!node) return {};
     if (hasLighting(node.metadata?.lighting)) return { lighting: node.metadata!.lighting, source: { nodeId: node.id, title: node.title, kind: "node" } };
     const group = node.metadata?.groupId ? nodes.find((item) => item.id === node.metadata!.groupId && item.type === CanvasNodeType.Group) : undefined;
     if (group && hasLighting(group.metadata?.lighting)) return { lighting: group.metadata!.lighting, source: { nodeId: group.id, title: group.title, kind: "group" } };
-    const upstream = connections.filter((connection) => connection.toNodeId === nodeId || (group && connection.toNodeId === group.id)).map((connection) => nodes.find((item) => item.id === connection.fromNodeId));
-    const anchor = upstream.find((item) => item?.type === HemosiNodeType.Anchor && item.metadata?.anchorKind === "scene" && hasLighting(item.metadata?.lighting));
-    if (anchor) return { lighting: anchor.metadata!.lighting, source: { nodeId: anchor.id, title: anchor.title, kind: "anchor" } };
     return {};
 }
 

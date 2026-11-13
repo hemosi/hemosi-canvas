@@ -7,6 +7,11 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- 画布分镜表节点（`storyboard`）：在画布新建「分镜表」节点，验证极简 10 列分镜编辑、顶栏「提示词模板」折叠编辑、行内 `▸ S01` 折叠的图片/视频提示词抽屉、新增设定自动建左侧参考图节点、新增分镜自动建右侧首帧图与视频节点并连线、悬停高亮与时间条跳转。
+- 导演 Agent 与 Plan 联动：在右侧「导演 Agent」面板输入指令，验证 Zod 校验后生成 PlanCard、逐条勾选实时更新画布幽灵节点、应用后一次事务同步写入分镜表与左右画布节点并支持撤销。
+- 分镜生成队列与本地合成：验证生成确认卡（渠道/模型/完整提示词/并发数）、远程并发 3 与本机串行 1、上游变更后下游自动变 `stale` 及「重生过期」、Web 版「预览拼接」与桌面端 sidecar `/compose` 真实 MP4 合成，以及半自动/全自动「一键出片」。
+- 爆款复刻工作区（`viral-clone`）：验证未配 Gemini 渠道时的明确提示、非 Gemini 渠道拦截视频输入、Gemini File API 拆解原片、高帧率「重看此段」与工程包 `.zip` 导出。
+
 - Viral Clone (爆款复刻): clicking「爆款复刻」on a video node's hover toolbar, context menu, or the bottom canvas toolbar should open the Viral Clone workbench, automatically run zero-cost local browser frame-diffing cut detection, allow importing `.srt` / transcript text, support both zero-API local instant breakdown (`穷鬼本地秒拆（0 API）`) and free-LLM semantic breakdown (`AI 语义深拆`), update all shot lines/prompts in real time when editing variables (`{{protagonist}}`, `{{topic}}`, `{{highlight}}`), optionally call local TTS (`Faster-Qwen3-TTS` / `AuK-TTS`) to measure real audio duration and export `.srt` subtitles, and expand into either a connected canvas group (`Anchor + Shot` nodes) or the in-canvas `Director Group`.
 - Director Loop (in-canvas Director Group): clicking「导演循环（画布导演组）」on the bottom toolbar or「一键载入废土案例」in the Director Agent panel should open the in-canvas Director Group and top status bar; approving all left-column anchors (character/scene/style without voice cards) unlocks「确认开跑」in Checkpoint A; production tracks clip count (`已跑 + 在途 ≤ 上限`), auto-selects candidates with deterministic checks, and allows clicking any segment row to expand inline candidate comparison alongside the character reference and previous segment's last frame (`Space` sync play, `1~4` select, `Enter` confirm); changing a selected clip with active downstream segments prompts「连带重跑 / 断开接续」; clicking「合成」opens the manual compose modal (highlighting TTS overflow in red) and creates the final composed video node on the canvas.
 - Text node copy & context menu: hovering a text node shows「复制文本」with the clipboard icon, and right-clicking shows「复制到粘贴板」(while only「带连线复制」remains for node duplication).

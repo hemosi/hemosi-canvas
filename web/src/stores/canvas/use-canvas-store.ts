@@ -23,6 +23,8 @@ export type CanvasProject = {
     workspaceId?: string;
     /** Canvas this one was forked from. */
     forkedFrom?: string;
+    /** Monotonic per-prefix counters for node refIds (never reused on delete). */
+    refCounters?: Record<string, number>;
 };
 
 export type CanvasDeletedProject = {
@@ -41,7 +43,7 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "workspaceId">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport" | "workspaceId" | "refCounters">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
