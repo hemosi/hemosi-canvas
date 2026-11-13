@@ -7,6 +7,7 @@ const { createServer } = require("node:http");
 const { createReadStream, promises: fs } = require("node:fs");
 const path = require("node:path");
 const { Readable } = require("node:stream");
+const { handleSidecarRoute } = require("./sidecar-routes");
 
 const PROXY_PREFIX = "/__proxy";
 
@@ -144,6 +145,12 @@ function createAppServer({ root, log = () => {} }) {
     const staticRoot = path.resolve(root);
     return createServer((req, res) => {
         const url = req.url || "/";
+        if (url.startsWith("/health") || url.startsWith("/probe") || url.startsWith("/cut") || url.startsWith("/frames") || url.startsWith("/compose")) {
+            handleSidecarRoute(req, res, { readBody, sendJson, corsHeaders: CORS_HEADERS }).catch((err) => {
+                if (!res.headersSent) sendJson(res, 500, { error: String(err) });
+            });
+            return;
+        }
         if (url === PROXY_PREFIX || url.startsWith(`${PROXY_PREFIX}/`)) {
             if (req.method === "OPTIONS") {
                 res.writeHead(204, CORS_HEADERS);

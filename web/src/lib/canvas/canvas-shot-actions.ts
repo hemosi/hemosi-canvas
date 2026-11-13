@@ -13,6 +13,8 @@ export type ShotHost = {
     updateMetadata: (nodeId: string, patch: CanvasNodeData["metadata"]) => void;
     jumpToBookmark?: (nodeId: string) => void;
     getCurrentZoom?: () => number;
+    openViralCloneWorkbench?: (nodeId: string) => void;
+    expandViralNodeToCanvas?: (nodeId: string) => Promise<void>;
 };
 
 let host: ShotHost | null = null;

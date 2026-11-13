@@ -25,6 +25,7 @@ export const HemosiNodeType = {
     Anchor: "anchor",
     Bookmark: "bookmark",
     ImageCompare: "image-compare",
+    ViralClone: "viral-clone",
 } as const;
 
 // Node types are open strings: built-ins use CanvasNodeType and plugins use "<pluginId>:<name>".
@@ -154,6 +155,10 @@ export type CanvasNodeMetadata = {
     compareImageB?: CanvasNodeImage;
     compareSwap?: boolean;
     compareMode?: "hover" | "drag";
+    /** 爆款复刻分析节点（保存完整可编辑蓝图与源视频关联） */
+    viralBlueprint?: import("@/lib/canvas/viral-clone").ViralBlueprint;
+    viralSourceNodeId?: string;
+    viralAttachKeyframes?: boolean;
 };
 
 export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, BookmarkPlus, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Download, Flame, GalleryHorizontalEnd, GalleryHorizontal, Group, Link2, Lock, LockOpen, Trash2, Ungroup } from "lucide-react";
 import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -18,6 +18,7 @@ export function CanvasNodeContextMenu({
     canUngroup,
     onClose,
     onCaptureVideoFrame,
+    onViralClone,
     onDuplicate,
     onGroup,
     onUngroup,
@@ -35,6 +36,7 @@ export function CanvasNodeContextMenu({
     canUngroup?: boolean;
     onClose: () => void;
     onCaptureVideoFrame: (position: VideoFramePosition) => void;
+    onViralClone?: () => void;
     onDuplicate: (withConnections: boolean) => void;
     onGroup?: () => void;
     onUngroup?: () => void;
@@ -94,6 +96,7 @@ export function CanvasNodeContextMenu({
                     <MenuButton icon={<BetweenHorizontalStart className="size-4" />} label={t("canvas.videoFrames.first")} onClick={() => onCaptureVideoFrame("first")} />
                     <MenuButton icon={<GalleryHorizontalEnd className="size-4" />} label={t("canvas.videoFrames.last")} onClick={() => onCaptureVideoFrame("last")} />
                     <MenuButton icon={<GalleryHorizontal className="size-4" />} label={t("canvas.videoFrames.current")} onClick={() => onCaptureVideoFrame("current")} />
+                    {onViralClone ? <MenuButton icon={<Flame className="size-4 text-amber-500" />} label="爆款复刻（拆蓝图换壳）" onClick={onViralClone} /> : null}
                     <div className="my-1 border-t" style={{ borderColor: theme.toolbar.border }} />
                 </>
             ) : null}

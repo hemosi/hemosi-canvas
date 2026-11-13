@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Anchor, Bookmark, Box, Clapperboard, Columns2, Copy, Film, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
+import { Anchor, Bookmark, Box, Clapperboard, Columns2, Copy, Film, Flame, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, Play, Ratio, RotateCcw, Rows3, Search, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -39,9 +39,8 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
-import { DirectorLoopOverlay } from "@/components/canvas/director/director-loop-overlay";
-import { buildWastelandPresetPlan } from "@/lib/canvas/director-loop-runner";
-import { useDirectorLoopStore } from "@/stores/canvas/use-director-loop-store";
+import { CanvasViralCloneModal } from "@/components/canvas/canvas-viral-clone-modal";
+import { resolveTemplateVariables, type ViralBlueprint } from "@/lib/canvas/viral-clone";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -440,6 +439,18 @@ function InfiniteCanvasPage() {
                 updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
                 jumpToBookmark,
                 getCurrentZoom: () => viewportRef.current.k,
+                openViralCloneWorkbench: (nodeId) => {
+                    const target = nodesRef.current.find((n) => n.id === nodeId);
+                    const srcId = target?.type === HemosiNodeType.ViralClone ? target.metadata?.viralSourceNodeId || nodeId : nodeId;
+                    setViralCloneNodeId(srcId);
+                    setViralCloneModalOpen(true);
+                },
+                expandViralNodeToCanvas: async (nodeId) => {
+                    const target = nodesRef.current.find((n) => n.id === nodeId);
+                    const bp = target?.metadata?.viralBlueprint;
+                    if (!target || !bp) return;
+                    await expandViralBlueprintRef.current?.(bp, target, 0, Boolean(target.metadata?.viralAttachKeyframes));
+                },
             }),
         [jumpToBookmark, runShot],
     );
@@ -1450,6 +1461,147 @@ function InfiniteCanvasPage() {
     );
 
     const [refTargetSourceId, setRefTargetSourceId] = useState<string | null>(null);
+    const [viralCloneModalOpen, setViralCloneModalOpen] = useState(false);
+    const [viralCloneNodeId, setViralCloneNodeId] = useState<string | null>(null);
+    const expandViralBlueprintRef = useRef<((blueprint: ViralBlueprint, sourceNode: CanvasNodeData | null, batchOffsetY?: number, attachKeyframes?: boolean) => Promise<void>) | null>(null);
+
+    const expandViralBlueprintToCanvas = useCallback(
+        async (blueprint: ViralBlueprint, sourceNode: CanvasNodeData | null, batchOffsetY = 0, attachKeyframes = false) => {
+            const shotSpec = getNodeSpec(HemosiNodeType.Shot);
+            const anchorSpec = getNodeSpec(HemosiNodeType.Anchor);
+            const textSpec = getNodeSpec(CanvasNodeType.Text);
+            const cloneSpec = getNodeSpec(HemosiNodeType.ViralClone);
+            const startNo = nextShotNo(nodesRef.current);
+            const baseX = sourceNode ? sourceNode.position.x + sourceNode.width + 160 : 240;
+            const y0 = (sourceNode ? sourceNode.position.y : 180) + batchOffsetY;
+            const vars = blueprint.variables;
+
+            // 1. 若源节点是视频，则在左侧创建/复用一个「复刻分析」节点承载蓝图 JSON
+            let cloneAnalysisNode: CanvasNodeData | null = null;
+            if (sourceNode?.type === HemosiNodeType.ViralClone) {
+                setNodes((prev) =>
+                    prev.map((n) =>
+                        n.id === sourceNode.id
+                            ? { ...n, title: blueprint.title, metadata: { ...n.metadata, status: "success", viralBlueprint: blueprint } }
+                            : n,
+                    ),
+                );
+            } else if (batchOffsetY === 0) {
+                const createdClone = createCanvasNode(
+                    HemosiNodeType.ViralClone,
+                    { x: baseX + cloneSpec.width / 2, y: y0 + cloneSpec.height / 2 },
+                    {
+                        status: "success",
+                        viralBlueprint: blueprint,
+                        viralSourceNodeId: sourceNode?.id,
+                        viralAttachKeyframes: attachKeyframes,
+                    },
+                );
+                cloneAnalysisNode = { ...createdClone, title: blueprint.title };
+            }
+
+            const workX0 = cloneAnalysisNode ? baseX + cloneSpec.width + 120 : baseX;
+
+            // 2. 创建完整「台词稿」文本节点（可被 @ 引用）
+            const fullScriptText = blueprint.beats
+                .map((b) => `[镜#${b.shotNumber} ${b.startSec}s-${b.endSec}s · ${b.role}]\n${resolveTemplateVariables(b.newLine, vars)}`)
+                .join("\n\n");
+            const scriptNode = {
+                ...createCanvasNode(
+                    CanvasNodeType.Text,
+                    { x: workX0 + textSpec.width / 2, y: y0 + anchorSpec.height / 2 },
+                    { content: fullScriptText, status: "success", fontSize: 13 },
+                ),
+                title: `${blueprint.title} · 台词稿`,
+                height: anchorSpec.height,
+            };
+
+            // 3. 创建「角色 / 场景 / 风格」锚点节点
+            const anchorX0 = workX0 + textSpec.width + 36;
+            const anchorNodes: CanvasNodeData[] = blueprint.anchors.map((a, idx) => {
+                const text = resolveTemplateVariables(a.prompt, vars);
+                const created = createCanvasNode(
+                    HemosiNodeType.Anchor,
+                    { x: anchorX0 + idx * (anchorSpec.width + 36) + anchorSpec.width / 2, y: y0 + anchorSpec.height / 2 },
+                    { anchorKind: a.role, anchorText: text, prompt: text },
+                );
+                return { ...created, title: a.name };
+            });
+
+            // 4. 创建 N 个「分镜」节点（真实对接 shotDescription 首帧词 + prompt 视频运镜词 + 可选原片关键帧参考）
+            const shotY = y0 + anchorSpec.height + 80;
+            const shotNodes: CanvasNodeData[] = [];
+            for (const [idx, b] of blueprint.beats.entries()) {
+                const newLine = resolveTemplateVariables(b.newLine, vars);
+                const imgPrompt = resolveTemplateVariables(b.imagePrompt, vars);
+                const vidPrompt = resolveTemplateVariables(b.videoPrompt, vars);
+                const durationSec = String(Math.max(4, Math.min(15, Math.round(b.endSec - b.startSec) || 5)));
+
+                const shotRefs = [];
+                if (attachKeyframes && b.keyframeDataUrl) {
+                    try {
+                        const uploaded = await uploadImage(b.keyframeDataUrl);
+                        shotRefs.push({
+                            id: nanoid(),
+                            status: "success" as const,
+                            content: uploaded.url,
+                            storageKey: uploaded.storageKey,
+                            naturalWidth: uploaded.width,
+                            naturalHeight: uploaded.height,
+                            bytes: uploaded.bytes,
+                            mimeType: uploaded.mimeType || "image/png",
+                            enabled: true,
+                            role: "reference" as const,
+                        });
+                    } catch {}
+                }
+
+                const created = createCanvasNode(
+                    HemosiNodeType.Shot,
+                    { x: workX0 + idx * (shotSpec.width + 40) + shotSpec.width / 2, y: shotY + shotSpec.height / 2 },
+                    {
+                        shotNo: startNo + idx,
+                        shotDescription: imgPrompt,
+                        prompt: `[${b.role} | 台词：${newLine}] ${vidPrompt}`,
+                        seconds: durationSec,
+                        size: "16:9",
+                        videoSize: "16:9",
+                        vquality: "720p",
+                        shotRefs,
+                    },
+                );
+                shotNodes.push({ ...created, title: `镜头 ${startNo + idx} · ${b.role}` });
+            }
+
+            const groupMembers = [scriptNode, ...anchorNodes, ...shotNodes];
+            const createdAll = cloneAnalysisNode ? [cloneAnalysisNode, ...groupMembers] : groupMembers;
+            const upstreamHubId = cloneAnalysisNode?.id || sourceNode?.id;
+            const newLinks = [
+                ...(sourceNode && cloneAnalysisNode ? [{ id: nanoid(), fromNodeId: sourceNode.id, toNodeId: cloneAnalysisNode.id, kind: "input" as const }] : []),
+                ...(upstreamHubId ? [scriptNode, ...anchorNodes].map(( target) => ({ id: nanoid(), fromNodeId: upstreamHubId, toNodeId: target.id, kind: "input" as const })) : []),
+                ...anchorNodes.flatMap((a) => shotNodes.map((s) => ({ id: nanoid(), fromNodeId: a.id, toNodeId: s.id, kind: "reference" as const }))),
+            ];
+            const withCreated = [...nodesRef.current, ...createdAll];
+            const rect = getGroupWrapRect(groupMembers);
+            const groupNode = createCanvasNode(CanvasNodeType.Group, { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+            const grouped = applyGroupSelection(
+                new Set(groupMembers.map((n) => n.id)),
+                withCreated,
+                [...connectionsRef.current, ...newLinks],
+                { ...groupNode, title: `${blueprint.title} · 复刻工作组`, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height },
+            );
+            const nextNodes = grouped ? grouped.nodes : withCreated;
+            const nextConnections = grouped ? grouped.connections : [...connectionsRef.current, ...newLinks];
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            setSelectedNodeIds(new Set(shotNodes.map((s) => s.id)));
+            message.success(`已展开复刻工作组：1 份台词稿 + ${anchorNodes.length} 个锚点 + ${shotNodes.length} 个分镜节点`);
+        },
+        [message],
+    );
+    expandViralBlueprintRef.current = expandViralBlueprintToCanvas;
     // Toolbar items are built before these callbacks exist in the file; refs keep them current.
     const batchExecuteRef = useRef<((ids: string[]) => void) | null>(null);
     const copySelectedNodesRef = useRef<(() => void) | null>(null);
@@ -4284,6 +4436,10 @@ function InfiniteCanvasPage() {
                     onHdRegenerate={(node) => void rerunIntoNewNode(node, "hd")}
                     onCaptureFrame={(node) => void captureVideoNodeFrame(node.id, "current")}
                     onSplitVideoShots={(node) => void splitVideoToShots(node.id)}
+                    onViralCloneVideo={(node) => {
+                        setViralCloneNodeId(node.id);
+                        setViralCloneModalOpen(true);
+                    }}
                     onContinueFromLastFrame={(node) => void continueVideoFromLastFrame(node)}
                     onReshoot={(node) => void rerunIntoNewNode(node, "reshoot")}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -4319,8 +4475,6 @@ function InfiniteCanvasPage() {
                     />
                 ) : null}
 
-                <DirectorLoopOverlay projectId={params.id || "default"} />
-
                 <CanvasToolbar
                     onOpenTemplates={() => setTemplatePanelOpen(true)}
                     selectedCount={selectedNodeIds.size}
@@ -4338,18 +4492,13 @@ function InfiniteCanvasPage() {
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     extraButtons={[
                         {
-                            id: "tool-director-loop",
-                            label: "导演循环（画布导演组）",
-                            icon: <Film className="size-4.5" />,
+                            id: "tool-viral-clone",
+                            label: "爆款复刻（本地零成本拆解换壳）",
+                            icon: <Flame className="size-4.5 text-amber-500" />,
                             onClick: () => {
-                                const pid = params.id || "default";
-                                const store = useDirectorLoopStore.getState();
-                                const cur = store.getProject(pid);
-                                if (cur.stage === "idle") {
-                                    store.initFromPlan(pid, buildWastelandPresetPlan());
-                                } else {
-                                    store.patchProject(pid, { groupVisible: !cur.groupVisible });
-                                }
+                                const selectedVideo = selectedNodes.find((n) => n.type === CanvasNodeType.Video) || nodes.find((n) => n.type === CanvasNodeType.Video) || null;
+                                setViralCloneNodeId(selectedVideo?.id || null);
+                                setViralCloneModalOpen(true);
                             },
                         },
                         { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
@@ -4392,6 +4541,15 @@ function InfiniteCanvasPage() {
                             if (contextMenu.type !== "node") return;
                             void captureVideoNodeFrame(contextMenu.nodeId, position);
                         }}
+                        onViralClone={
+                            contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)
+                                ? () => {
+                                      setViralCloneNodeId(contextMenuNode.id);
+                                      setViralCloneModalOpen(true);
+                                      setContextMenu(null);
+                                  }
+                                : undefined
+                        }
                         onDuplicate={(withConnections) => {
                             if (contextMenu.type !== "node") return;
                             duplicateNode(contextMenu.nodeId, withConnections);
@@ -4441,6 +4599,13 @@ function InfiniteCanvasPage() {
                 <input ref={imageInputRef} type="file" multiple accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
+                <CanvasViralCloneModal
+                    open={viralCloneModalOpen}
+                    projectId={params.id || "default"}
+                    sourceNode={viralCloneNodeId ? nodeById.get(viralCloneNodeId) || null : null}
+                    onClose={() => setViralCloneModalOpen(false)}
+                    onExpandToCanvas={expandViralBlueprintToCanvas}
+                />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}

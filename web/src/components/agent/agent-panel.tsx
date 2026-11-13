@@ -1,8 +1,6 @@
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
-import { useTranslation } from "react-i18next";
 
-import { DirectorAgentPanel } from "./director-agent-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -10,65 +8,40 @@ import { useThemeStore } from "@/stores/use-theme-store";
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 
 export function AgentPanel() {
-    const { t } = useTranslation();
+    const navigate = useNavigate();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const width = useAgentStore((state) => state.width);
-    const [resizing, setResizing] = useState(false);
     const panelMounted = useAgentStore((state) => state.panelMounted);
     const panelOpen = useAgentStore((state) => state.panelOpen);
     const panelClosing = useAgentStore((state) => state.panelClosing);
-    const setAgentState = useAgentStore((state) => state.setAgentState);
-    const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-        event.preventDefault();
-        const startX = event.clientX;
-        const startWidth = width;
-        let nextWidth = startWidth;
-        const onMove = (moveEvent: PointerEvent) => {
-            nextWidth = Math.min(760, Math.max(360, startWidth + startX - moveEvent.clientX));
-            setAgentState({ width: nextWidth });
-        };
-        const onUp = () => {
-            localStorage.setItem("canvas-agent-panel-width", String(nextWidth));
-            window.removeEventListener("pointermove", onMove);
-            window.removeEventListener("pointerup", onUp);
-            setResizing(false);
-        };
-        setResizing(true);
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-    };
 
     if (!panelMounted) return null;
-
-    const canvas = useAgentStore((state) => state.canvasContext);
-    const canvasTitle = canvas?.snapshot.title;
 
     return (
         <motion.div
             className="relative z-[70] flex h-full shrink-0"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: panelOpen ? width + 1 : 0, opacity: panelOpen ? 1 : 0 }}
-            transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
             style={{ overflow: "clip", pointerEvents: panelOpen && !panelClosing ? undefined : "none" }}
         >
-            <motion.aside
-                className="relative flex h-full shrink-0 flex-col border-l"
+            <aside
+                className="relative flex h-full shrink-0 flex-col items-center justify-center gap-3 border-l p-6 text-center"
                 data-canvas-shortcuts-ignore
-                initial={{ x: 48 }}
-                animate={{ x: panelClosing ? 28 : 0 }}
-                transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
-                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.panel.resize")} />
-                {/* 顶部标明当前作用画布 */}
-                <div className="flex h-7 shrink-0 items-center justify-between border-b px-3 text-[11px] bg-stone-100/50 dark:bg-stone-900/50" style={{ borderColor: theme.node.stroke }}>
-                    <span className="opacity-50">当前作用画布</span>
-                    <span className="max-w-[200px] truncate font-medium text-amber-600 dark:text-amber-400" title={canvasTitle || "未连接画布"}>
-                        {canvasTitle || "未连接画布"}
-                    </span>
+                <div className="text-sm font-medium">导演 Agent 已升级为独立「分镜表」</div>
+                <div className="text-xs opacity-60">
+                    旧版表单式 Agent 已下线，新版支持幽灵预览、方案逐条勾选、事务级撤销与本地优先流水线。
                 </div>
-                <DirectorAgentPanel />
-            </motion.aside>
+                <button
+                    type="button"
+                    onClick={() => navigate("/storyboard")}
+                    className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-medium text-white hover:bg-amber-700"
+                >
+                    前往分镜表 (/storyboard)
+                </button>
+            </aside>
         </motion.div>
     );
 }

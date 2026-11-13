@@ -1,9 +1,10 @@
 import { useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
-import { Anchor, ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, History, Image as ImageIcon, Loader2, Mic, Plus, Rows3, Video, X } from "lucide-react";
+import { Anchor, ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, Flame, History, Image as ImageIcon, Loader2, Mic, Plus, RefreshCw, Rows3, Sparkles, Video, Wand2, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { analyzeBlueprintWithFreeLlm, buildLocalHeuristicBlueprint, extractLocalVideoCuts, resolveTemplateVariables } from "@/lib/canvas/viral-clone";
 import { CanvasDraftToggle } from "@/components/canvas/canvas-draft-toggle";
 import { CanvasImageSettingsPopover } from "@/components/canvas/canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "@/components/canvas/canvas-video-settings-popover";
@@ -542,7 +543,178 @@ function ImageCompareContent({ ctx }: { ctx: CanvasNodeContext }) {
     );
 }
 
+function ViralCloneContent({ ctx }: { ctx: CanvasNodeContext }) {
+    const { message } = App.useApp();
+    const [busyText, setBusyText] = useState("");
+    const meta = ctx.node.metadata || {};
+    const bp = meta.viralBlueprint;
+    const upstreamVideos = ctx.getUpstream().filter((n) => n.type === CanvasNodeType.Video && n.metadata?.content);
+    const sourceVideo = upstreamVideos[0] || (meta.viralSourceNodeId ? ctx.getNode(meta.viralSourceNodeId) : undefined);
+    const videoUrl = sourceVideo?.metadata?.content || "";
+    const videoTitle = sourceVideo?.title || ctx.node.title || "参考视频";
+
+    const runBreakdown = async (mode: "local" | "llm") => {
+        setBusyText(mode === "llm" ? "正在切镜并调用 AI 语义拆解…" : "正在本地切镜秒拆…");
+        ctx.updateMetadata({ status: "loading" });
+        try {
+            const cuts = videoUrl
+                ? await extractLocalVideoCuts(videoUrl)
+                : [
+                      { index: 1, startSec: 0, endSec: 3, durationSec: 3, frameDataUrl: "" },
+                      { index: 2, startSec: 3, endSec: 7, durationSec: 4, frameDataUrl: "" },
+                      { index: 3, startSec: 7, endSec: 12, durationSec: 5, frameDataUrl: "" },
+                  ];
+            const nextBp =
+                mode === "llm"
+                    ? await analyzeBlueprintWithFreeLlm(videoTitle, cuts, "")
+                    : buildLocalHeuristicBlueprint(videoTitle, cuts, "");
+            ctx.updateMetadata({
+                status: "success",
+                viralBlueprint: nextBp,
+                viralSourceNodeId: sourceVideo?.id || meta.viralSourceNodeId,
+            });
+            message.success(`已生成《${nextBp.title}》共 ${nextBp.beats.length} 镜蓝图`);
+        } catch (err) {
+            ctx.updateMetadata({ status: "error", errorDetails: err instanceof Error ? err.message : String(err) });
+            message.error(err instanceof Error ? err.message : "拆解失败");
+        } finally {
+            setBusyText("");
+        }
+    };
+
+    const updateVarValue = (key: string, value: string) => {
+        if (!bp) return;
+        const nextBp = {
+            ...bp,
+            variables: bp.variables.map((v) => (v.key === key ? { ...v, value } : v)),
+        };
+        ctx.updateMetadata({ viralBlueprint: nextBp });
+    };
+
+    return (
+        <div className="flex size-full flex-col gap-2 overflow-auto p-3 text-xs" style={{ color: ctx.theme.node.text }} {...stop}>
+            <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-semibold">
+                    <Flame className="size-4 text-amber-500" />
+                    <span>{bp ? `${bp.beats.length} 镜蓝图已就绪` : sourceVideo ? `已连入《${sourceVideo.title || "视频"}》` : "请连入源视频节点"}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        disabled={Boolean(busyText)}
+                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={() => void runBreakdown("local")}
+                        title="零 API 本地规则秒拆"
+                    >
+                        <RefreshCw className="size-3" /> 秒拆
+                    </button>
+                    <button
+                        type="button"
+                        disabled={Boolean(busyText)}
+                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-amber-500 transition hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={() => void runBreakdown("llm")}
+                        title="调用画布免费/已配渠道做语义深拆"
+                    >
+                        <Wand2 className="size-3" /> AI深拆
+                    </button>
+                </div>
+            </div>
+
+            {busyText ? (
+                <div className="flex items-center gap-2 rounded-lg border p-3 opacity-80" style={{ borderColor: ctx.theme.node.stroke }}>
+                    <Loader2 className="size-4 animate-spin text-amber-500" />
+                    <span>{busyText}</span>
+                </div>
+            ) : null}
+
+            {bp ? (
+                <>
+                    <div className="rounded-lg border p-2 text-[11px] opacity-85" style={{ borderColor: ctx.theme.node.stroke }}>
+                        <div className="font-medium">{bp.hookSummary}</div>
+                        <div className="mt-0.5 opacity-65">{bp.rhythmNote}</div>
+                    </div>
+
+                    <Field label="变量面板（改值后点「展开到画布」即可生成新设定工作组）">
+                        <div className="space-y-1.5">
+                            {bp.variables.map((v) => (
+                                <div key={v.key} className="flex items-center gap-1.5">
+                                    <span className="w-24 shrink-0 truncate opacity-70" title={`{{${v.key}}}`}>
+                                        {v.label}
+                                    </span>
+                                    <input
+                                        {...stop}
+                                        className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-xs outline-none"
+                                        style={{ borderColor: ctx.theme.node.stroke, color: ctx.theme.node.text }}
+                                        value={v.value}
+                                        onChange={(e) => updateVarValue(v.key, e.target.value)}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </Field>
+
+                    <div className="thin-scrollbar max-h-32 space-y-1 overflow-y-auto rounded-lg border p-2 text-[11px]" style={{ borderColor: ctx.theme.node.stroke }}>
+                        {bp.beats.map((b) => (
+                            <div key={b.id} className="truncate opacity-80">
+                                <span className="font-semibold">#{b.shotNumber} [{b.role}]</span>：{resolveTemplateVariables(b.newLine, bp.variables)}
+                            </div>
+                        ))}
+                    </div>
+                </>
+            ) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-center opacity-60" style={{ borderColor: ctx.theme.node.stroke }}>
+                    <span>将视频节点连入本节点左侧端口，或点击下方「工作台精修」导入字幕与切点</span>
+                </div>
+            )}
+
+            <div className="mt-auto flex items-center justify-between border-t pt-2" style={{ borderColor: ctx.theme.node.stroke }}>
+                <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] opacity-75">
+                    <input
+                        type="checkbox"
+                        checked={Boolean(meta.viralAttachKeyframes)}
+                        onChange={(e) => ctx.updateMetadata({ viralAttachKeyframes: e.target.checked })}
+                    />
+                    <span>带原片关键帧参考</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                    <button
+                        type="button"
+                        className="rounded border px-2 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
+                        style={{ borderColor: ctx.theme.node.stroke }}
+                        onClick={() => getShotHost()?.openViralCloneWorkbench?.(ctx.node.id)}
+                    >
+                        工作台精修
+                    </button>
+                    <button
+                        type="button"
+                        disabled={!bp}
+                        className="inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold text-amber-500 transition hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10"
+                        style={{ borderColor: ctx.theme.node.stroke }}
+                        onClick={() => void getShotHost()?.expandViralNodeToCanvas?.(ctx.node.id)}
+                    >
+                        <Sparkles className="size-3" /> 展开到画布
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
+    {
+        type: HemosiNodeType.ViralClone,
+        title: "复刻分析",
+        icon: <Flame className="size-4 text-amber-500" />,
+        defaultSize: { width: 380, height: 420 },
+        defaultMetadata: { status: "idle", viralAttachKeyframes: false },
+        minimapColor: "#f59e0b",
+        hidePanel: true,
+        resource: (node) =>
+            node.metadata?.viralBlueprint
+                ? { kind: "text", text: JSON.stringify(node.metadata.viralBlueprint) }
+                : null,
+        Content: ViralCloneContent,
+    },
     {
         type: HemosiNodeType.Shot,
         title: "分镜",
