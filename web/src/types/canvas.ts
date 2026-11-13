@@ -25,7 +25,6 @@ export const HemosiNodeType = {
     Storyboard: "storyboard",
     Bookmark: "bookmark",
     ImageCompare: "image-compare",
-    ViralClone: "viral-clone",
 } as const;
 
 // Node types are open strings: built-ins use CanvasNodeType and plugins use "<pluginId>:<name>".
@@ -161,9 +160,6 @@ export type CanvasNodeMetadata = {
     generatedInputsHash?: string;
     /** Storyboard node data. */
     storyboard?: import("@/lib/canvas/storyboard-types").StoryboardData;
-    /** 爆款复刻工程（S5 完整结构接入） */
-    viralSourceNodeId?: string;
-    cloneProject?: unknown;
 };
 
 export type CanvasImageRole = "reference" | "firstFrame" | "lastFrame" | "character" | "scene" | "style";

@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App } from "antd";
-import { Flame, Loader2, Send, Sparkles, Square, X } from "lucide-react";
+import { Hand, Loader2, Send, Sparkles, Square, Video, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
-import { previewPlan, requestStoryboardPlan, type Change, type Plan } from "@/lib/canvas/storyboard-plan";
+import { previewPlan, requestStoryboardPlan, type AgentHistoryTurn, type Change, type Plan } from "@/lib/canvas/storyboard-plan";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
 import { createEmptyStoryboardData } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { HemosiNodeType, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 
 type DirectorMessage =
-    | { id: string; role: "user"; text: string }
+    | { id: string; role: "user"; text: string; mediaLabels?: string[] }
+    | { id: string; role: "assistant"; text: string }
     | { id: string; role: "error"; text: string; raw?: string }
     | {
           id: string;
@@ -69,6 +70,8 @@ export function AgentPanel() {
     const [running, setRunning] = useState(false);
     const [messages, setMessages] = useState<DirectorMessage[]>([]);
     const [removeOrphan, setRemoveOrphan] = useState(true);
+    const [mediaPickEnabled, setMediaPickEnabled] = useState(false);
+    const [attachedNodeIds, setAttachedNodeIds] = useState<string[]>([]);
     const abortRef = useRef<AbortController | null>(null);
 
     const host = getShotHost();
@@ -83,8 +86,42 @@ export function AgentPanel() {
         return selected || storyboardNodes[0] || null;
     }, [selectedIds, storyboardNodes]);
 
+    useEffect(() => {
+        const onDropNodes = (event: Event) => {
+            const detail = (event as CustomEvent<{ nodeIds?: string[] }>).detail;
+            const ids = detail?.nodeIds || [];
+            if (!ids.length) return;
+            const validIds = ids.filter((id) => {
+                const n = (getShotHost()?.getAllNodes?.() || []).find((item) => item.id === id);
+                return (
+                    n &&
+                    (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) &&
+                    Boolean(n.metadata?.content)
+                );
+            });
+            if (!validIds.length) return;
+            setAttachedNodeIds((prev) => Array.from(new Set([...prev, ...validIds])));
+        };
+        window.addEventListener("director-agent-drop-nodes", onDropNodes);
+        return () => window.removeEventListener("director-agent-drop-nodes", onDropNodes);
+    }, []);
+
+    const attachedNodes = useMemo(
+        () =>
+            attachedNodeIds
+                .map((id) => allNodes.find((n) => n.id === id))
+                .filter((n): n is CanvasNodeData => Boolean(n && n.metadata?.content)),
+        [allNodes, attachedNodeIds],
+    );
+
     const pendingPlanMsg = useMemo(
-        () => [...messages].reverse().find((m): m is Extract<DirectorMessage, { role: "plan" }> => m.role === "plan" && m.status === "pending") || null,
+        () =>
+            [...messages]
+                .reverse()
+                .find(
+                    (m): m is Extract<DirectorMessage, { role: "plan" }> =>
+                        m.role === "plan" && m.status === "pending",
+                ) || null,
         [messages],
     );
 
@@ -102,24 +139,38 @@ export function AgentPanel() {
 
     const handleSend = async () => {
         const text = input.trim();
-        if (!text || running) return;
-        if (!targetSb) {
-            message.warning("请先在画布中添加一个「分镜表」节点");
-            return;
-        }
+        if ((!text && attachedNodes.length === 0) || running) return;
         const activeTextModel = textModel || effectiveConfig.textModel || effectiveConfig.model;
         if (!activeTextModel) {
-            message.warning("请先在顶部选择一个文本模型");
+            message.warning("请先在顶部选择一个模型");
             return;
         }
 
         const sbSnapshot = targetSb;
-        const matchedRow = sbSnapshot.metadata?.storyboard?.rows.find(
+        const matchedRow = sbSnapshot?.metadata?.storyboard?.rows.find(
             (r) => selectedIds.includes(r.imageNodeId) || selectedIds.includes(r.videoNodeId),
         );
 
+        const currentAttachedIds = [...attachedNodeIds];
+        const mediaLabels = attachedNodes.map((n) => `@${n.metadata?.refId || n.title || n.type}`);
+        const history: AgentHistoryTurn[] = messages.flatMap((m): AgentHistoryTurn[] => {
+            if (m.role === "user") return [{ role: "user", text: m.text }];
+            if (m.role === "assistant") return [{ role: "assistant", text: m.text }];
+            if (m.role === "plan") return [{ role: "assistant", text: m.plan.summary }];
+            return [];
+        });
+
         setInput("");
-        setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+        setAttachedNodeIds([]);
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: `u-${Date.now()}`,
+                role: "user",
+                text: text || "请看我附上的画布素材",
+                mediaLabels: mediaLabels.length ? mediaLabels : undefined,
+            },
+        ]);
         setRunning(true);
         const controller = new AbortController();
         abortRef.current = controller;
@@ -129,22 +180,31 @@ export function AgentPanel() {
                 config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
                 storyboardNode: sbSnapshot,
                 nodes: allNodes,
-                instruction: text,
+                instruction: text || "请分析我拖入的素材",
                 selectedRowId: matchedRow?.code || null,
+                attachedNodeIds: currentAttachedIds,
+                history,
                 signal: controller.signal,
             });
             if (res.ok) {
-                setMessages((prev) => [
-                    ...prev,
-                    {
-                        id: `p-${Date.now()}`,
-                        role: "plan",
-                        storyboardNodeId: sbSnapshot.id,
-                        plan: res.plan,
-                        enabledIds: res.plan.changes.map((c) => c.id),
-                        status: "pending",
-                    },
-                ]);
+                if (res.plan.changes.length === 0 || !sbSnapshot) {
+                    setMessages((prev) => [
+                        ...prev,
+                        { id: `a-${Date.now()}`, role: "assistant", text: res.plan.summary },
+                    ]);
+                } else {
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: `p-${Date.now()}`,
+                            role: "plan",
+                            storyboardNodeId: sbSnapshot.id,
+                            plan: res.plan,
+                            enabledIds: res.plan.changes.map((c) => c.id),
+                            status: "pending",
+                        },
+                    ]);
+                }
             } else {
                 setMessages((prev) => [
                     ...prev,
@@ -214,6 +274,7 @@ export function AgentPanel() {
             <aside
                 className="relative flex h-full shrink-0 flex-col border-l text-xs"
                 data-canvas-shortcuts-ignore
+                data-director-agent-drop={mediaPickEnabled ? "active" : "off"}
                 style={{ width, background: theme.node.panel, borderColor: border, color: theme.node.text }}
             >
                 {/* Top Header */}
@@ -227,18 +288,11 @@ export function AgentPanel() {
                             </span>
                         ) : null}
                     </div>
-                    <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
-                        onClick={() => host?.openViralCloneWorkbench?.("")}
-                    >
-                        <Flame className="size-3.5 text-amber-500" /> 爆款复刻
-                    </button>
                 </div>
 
                 {/* Model Selector */}
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5" style={{ borderColor: border }}>
-                    <span className="shrink-0 opacity-65">文本模型</span>
+                    <span className="shrink-0 opacity-65">模型</span>
                     <div className="min-w-0 flex-1">
                         <ModelPicker
                             config={effectiveConfig}
@@ -254,16 +308,30 @@ export function AgentPanel() {
                 <div className="thin-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
                     {messages.length === 0 ? (
                         <div className="rounded-xl border border-dashed p-4 text-center opacity-60" style={{ borderColor: border }}>
-                            {targetSb
-                                ? "输入剧情想法或修改指令，我会生成 10 列分镜与折叠图片/视频提示词方案，勾选确认后再写入画布。"
-                                : "请先从左侧工具栏添加一个「分镜表」节点。"}
+                            开启下方「拾取画布素材」开关后，直接把画布上的图片或视频拖进这里（或点击节点），即可边看素材边讨论剧情、生成分镜表。
                         </div>
                     ) : null}
 
                     {messages.map((m) => {
                         if (m.role === "user") {
                             return (
-                                <div key={m.id} className="ml-6 rounded-xl px-3 py-2" style={{ background: theme.toolbar.activeBg }}>
+                                <div key={m.id} className="ml-6 space-y-1 rounded-xl px-3 py-2" style={{ background: theme.toolbar.activeBg }}>
+                                    {m.mediaLabels?.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {m.mediaLabels.map((lb) => (
+                                                <span key={lb} className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-medium text-sky-400">
+                                                    {lb}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                    <div className="whitespace-pre-wrap">{m.text}</div>
+                                </div>
+                            );
+                        }
+                        if (m.role === "assistant") {
+                            return (
+                                <div key={m.id} className="mr-4 whitespace-pre-wrap rounded-xl border p-2.5 leading-relaxed" style={{ borderColor: border }}>
                                     {m.text}
                                 </div>
                             );
@@ -359,41 +427,51 @@ export function AgentPanel() {
                                         const planSb = allNodes.find((n) => n.id === m.storyboardNodeId);
                                         if (!planSb) return null;
                                         return (
-                                    <div className="flex items-center gap-2 pt-1">
-                                        {m.plan.suggestRun.kind === "image" || m.plan.suggestRun.kind === "both" ? (
-                                            <button
-                                                type="button"
-                                                className="flex-1 rounded-lg border py-1 text-[11px] font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
-                                                style={{ borderColor: border }}
-                                                onClick={() => {
-                                                    const rows = planSb.metadata?.storyboard?.rows || [];
-                                                    const wanted = new Set(m.plan.suggestRun!.rowIds);
-                                                    const tasks: StoryboardQueueTask[] = rows
-                                                        .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
-                                                        .map((r) => ({ nodeId: r.imageNodeId, kind: "image", label: `${r.code} · 首帧图`, prompt: r.imgPrompt }));
-                                                    if (tasks.length) void host?.runStoryboardBatch?.(tasks, { title: "生成首帧图" });
-                                                }}
-                                            >
-                                                生成首帧图
-                                            </button>
-                                        ) : null}
-                                        {m.plan.suggestRun.kind === "video" || m.plan.suggestRun.kind === "both" ? (
-                                            <button
-                                                type="button"
-                                                className="flex-1 rounded-lg bg-sky-500 py-1 text-[11px] font-medium text-white transition hover:bg-sky-600"
-                                                onClick={() => {
-                                                    const rows = planSb.metadata?.storyboard?.rows || [];
-                                                    const wanted = new Set(m.plan.suggestRun!.rowIds);
-                                                    const tasks: StoryboardQueueTask[] = rows
-                                                        .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
-                                                        .map((r) => ({ nodeId: r.videoNodeId, kind: "video", label: `${r.code} · 视频`, prompt: r.vidPrompt }));
-                                                    if (tasks.length) void host?.runStoryboardBatch?.(tasks, { title: "生成视频" });
-                                                }}
-                                            >
-                                                生成视频
-                                            </button>
-                                        ) : null}
-                                    </div>
+                                            <div className="flex items-center gap-2 pt-1">
+                                                {m.plan.suggestRun.kind === "image" || m.plan.suggestRun.kind === "both" ? (
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 rounded-lg border py-1 text-[11px] font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+                                                        style={{ borderColor: border }}
+                                                        onClick={() => {
+                                                            const rows = planSb.metadata?.storyboard?.rows || [];
+                                                            const wanted = new Set(m.plan.suggestRun!.rowIds);
+                                                            const tasks: StoryboardQueueTask[] = rows
+                                                                .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
+                                                                .map((r) => ({
+                                                                    nodeId: r.imageNodeId,
+                                                                    kind: "image",
+                                                                    label: `${r.code} · 首帧图`,
+                                                                    prompt: r.imgPrompt,
+                                                                }));
+                                                            if (tasks.length) void host?.runStoryboardBatch?.(tasks, { title: "生成首帧图" });
+                                                        }}
+                                                    >
+                                                        生成首帧图
+                                                    </button>
+                                                ) : null}
+                                                {m.plan.suggestRun.kind === "video" || m.plan.suggestRun.kind === "both" ? (
+                                                    <button
+                                                        type="button"
+                                                        className="flex-1 rounded-lg bg-sky-500 py-1 text-[11px] font-medium text-white transition hover:bg-sky-600"
+                                                        onClick={() => {
+                                                            const rows = planSb.metadata?.storyboard?.rows || [];
+                                                            const wanted = new Set(m.plan.suggestRun!.rowIds);
+                                                            const tasks: StoryboardQueueTask[] = rows
+                                                                .filter((r) => wanted.size === 0 || wanted.has(r.id) || wanted.has(r.code))
+                                                                .map((r) => ({
+                                                                    nodeId: r.videoNodeId,
+                                                                    kind: "video",
+                                                                    label: `${r.code} · 视频`,
+                                                                    prompt: r.vidPrompt,
+                                                                }));
+                                                            if (tasks.length) void host?.runStoryboardBatch?.(tasks, { title: "生成视频" });
+                                                        }}
+                                                    >
+                                                        生成视频
+                                                    </button>
+                                                ) : null}
+                                            </div>
                                         );
                                     })()
                                 ) : null}
@@ -404,36 +482,89 @@ export function AgentPanel() {
                     {running ? (
                         <div className="flex items-center gap-2 opacity-70">
                             <Loader2 className="size-3.5 animate-spin" />
-                            <span>正在规划分镜与提示词…</span>
+                            <span>正在思考…</span>
                         </div>
                     ) : null}
                 </div>
 
                 {/* Composer */}
-                <div className="shrink-0 border-t p-3" style={{ borderColor: border }}>
-                    {selectedIds.length > 0 ? (
-                        <div className="mb-1.5 flex flex-wrap gap-1">
-                            {selectedIds.map((id) => {
-                                const node = allNodes.find((n) => n.id === id);
-                                if (!node) return null;
-                                return (
-                                    <span
-                                        key={id}
-                                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]"
-                                        style={{ background: theme.toolbar.activeBg }}
+                <div
+                    className={`shrink-0 border-t p-3 transition ${mediaPickEnabled ? "ring-1 ring-inset ring-sky-500/60" : ""}`}
+                    style={{ borderColor: border }}
+                >
+                    {/* Fixed Switch: 拾取画布素材 */}
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                        <button
+                            type="button"
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition ${
+                                mediaPickEnabled
+                                    ? "bg-sky-500 text-white"
+                                    : "hover:bg-black/5 dark:hover:bg-white/10"
+                            }`}
+                            style={mediaPickEnabled ? undefined : { border: `1px solid ${border}` }}
+                            onClick={() => setMediaPickEnabled((v) => !v)}
+                        >
+                            <Hand className="size-3.5" />
+                            <span>{mediaPickEnabled ? "拾取画布素材：已开启（拖入或点选图/视频）" : "拾取画布素材"}</span>
+                        </button>
+                        {attachedNodes.length > 0 ? (
+                            <button
+                                type="button"
+                                className="text-[11px] opacity-60 hover:opacity-100"
+                                onClick={() => setAttachedNodeIds([])}
+                            >
+                                清空
+                            </button>
+                        ) : null}
+                    </div>
+
+                    {/* Attached Image / Video Thumbnails */}
+                    {attachedNodes.length > 0 ? (
+                        <div className="mb-2 flex flex-wrap gap-2">
+                            {attachedNodes.map((n) => (
+                                <div
+                                    key={n.id}
+                                    className="group relative flex items-center gap-1.5 rounded-lg border p-1 pr-2"
+                                    style={{ borderColor: border, background: theme.toolbar.activeBg }}
+                                >
+                                    {n.type === CanvasNodeType.Image ? (
+                                        <img
+                                            src={n.metadata?.content}
+                                            alt={n.title}
+                                            className="size-9 rounded object-cover"
+                                        />
+                                    ) : (
+                                        <div className="relative grid size-9 place-items-center overflow-hidden rounded bg-black">
+                                            <video
+                                                src={n.metadata?.content}
+                                                className="size-full object-cover"
+                                                muted
+                                            />
+                                            <Video className="pointer-events-none absolute size-3.5 text-white/90" />
+                                        </div>
+                                    )}
+                                    <div className="max-w-[96px] truncate text-[11px]">
+                                        <div className="font-semibold">@{n.metadata?.refId || n.type}</div>
+                                        <div className="truncate text-[10px] opacity-70">{n.title}</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="ml-1 rounded-full p-0.5 opacity-60 hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+                                        onClick={() => setAttachedNodeIds((prev) => prev.filter((id) => id !== n.id))}
                                     >
-                                        @{node.metadata?.refId || node.title}
-                                    </span>
-                                );
-                            })}
+                                        <X className="size-3" />
+                                    </button>
+                                </div>
+                            ))}
                         </div>
                     ) : null}
+
                     <div className="flex items-end gap-2">
                         <textarea
                             rows={2}
                             className="min-w-0 flex-1 resize-none rounded-lg border bg-transparent px-2.5 py-1.5 text-xs outline-none"
                             style={{ borderColor: border }}
-                            placeholder="告诉导演你想怎么拍，例如：写 3 镜开场，或改 @S02 动作…"
+                            placeholder="直接聊天讨论素材，或输入指令生成/修改分镜表…"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
@@ -457,7 +588,7 @@ export function AgentPanel() {
                             <button
                                 type="button"
                                 className="grid size-8 shrink-0 place-items-center rounded-lg bg-sky-500 text-white transition hover:bg-sky-600 disabled:opacity-40"
-                                disabled={!input.trim()}
+                                disabled={!input.trim() && attachedNodes.length === 0}
                                 title="发送"
                                 onClick={() => void handleSend()}
                             >

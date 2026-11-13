@@ -11,7 +11,6 @@ const REF_PREFIX_MAP: Record<string, string> = {
     [HemosiNodeType.Shot]: "镜",
     [HemosiNodeType.Bookmark]: "签",
     [HemosiNodeType.ImageCompare]: "比",
-    [HemosiNodeType.ViralClone]: "复",
 };
 
 export function refPrefixForType(type: CanvasNodeTypeId): string {

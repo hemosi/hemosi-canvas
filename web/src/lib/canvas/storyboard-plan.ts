@@ -8,8 +8,10 @@ import {
     nextShotCode,
     reconcileStoryboardGraph,
 } from "@/lib/canvas/storyboard-utils";
-import { requestImageQuestion, type AiTextMessage } from "@/services/api/image";
-import type { AiConfig } from "@/stores/use-config-store";
+import { requestImageQuestion, uploadGeminiFile, type AiTextMessage } from "@/services/api/image";
+import { getMediaBlob } from "@/services/file-storage";
+import { imageToDataUrl } from "@/services/image-storage";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export const RowInputSchema = z.object({
@@ -339,16 +341,94 @@ export function applyPlan(params: {
     };
 }
 
-export function buildStoryboardAgentMessages(
-    storyboardNode: CanvasNodeData,
+export type AgentHistoryTurn = {
+    role: "user" | "assistant";
+    text: string;
+};
+
+async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
+    const mime = blob.type || fallbackMime;
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return `data:${mime};base64,${btoa(binary)}`;
+}
+
+async function resolveAttachedMedia(params: {
+    config: AiConfig;
+    nodes: CanvasNodeData[];
+    attachedNodeIds: string[];
+    instruction: string;
+    signal?: AbortSignal;
+}): Promise<{
+    labels: string[];
+    parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }>;
+}> {
+    const mentionedRefs = new Set(extractAtTokens(params.instruction));
+    const targetNodes = params.nodes.filter(
+        (n) =>
+            (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) &&
+            Boolean(n.metadata?.content) &&
+            (params.attachedNodeIds.includes(n.id) || (n.metadata?.refId && mentionedRefs.has(n.metadata.refId))),
+    );
+    const labels: string[] = [];
+    const parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }> = [];
+    const reqCfg = resolveModelRequestConfig(params.config, params.config.model || params.config.textModel);
+
+    for (const n of targetNodes) {
+        try {
+            const content = n.metadata?.content || "";
+            if (n.type === CanvasNodeType.Image) {
+                const dataUrl = content.startsWith("data:")
+                    ? content
+                    : await imageToDataUrl({
+                          dataUrl: content,
+                          storageKey: n.metadata?.storageKey,
+                      });
+                if (dataUrl) {
+                    labels.push(`@${n.metadata?.refId || n.id} (图片: ${n.title || "未命名"})`);
+                    parts.push({ type: "image_url", image_url: { url: dataUrl } });
+                }
+            } else if (n.type === CanvasNodeType.Video) {
+                const storedBlob = n.metadata?.storageKey ? await getMediaBlob(n.metadata.storageKey) : null;
+                const blob = storedBlob || (await (await fetch(content)).blob());
+                const mimeType = blob.type || n.metadata?.mimeType || "video/mp4";
+                let videoUrl = "";
+                if (reqCfg.apiFormat === "gemini" && blob.size > 8 * 1024 * 1024) {
+                    videoUrl = await uploadGeminiFile(params.config, blob, mimeType, params.signal);
+                } else {
+                    videoUrl = await blobToDataUrl(blob, mimeType);
+                }
+                if (videoUrl) {
+                    labels.push(`@${n.metadata?.refId || n.id} (视频: ${n.title || "未命名"})`);
+                    parts.push({ type: "video", video: { url: videoUrl, mimeType } });
+                }
+            }
+        } catch {}
+    }
+    return { labels, parts };
+}
+
+export async function buildStoryboardAgentMessages(
+    config: AiConfig,
+    storyboardNode: CanvasNodeData | null,
     nodes: CanvasNodeData[],
     instruction: string,
-    selectedRowId?: string | null,
-): AiTextMessage[] {
-    const sb = storyboardNode.metadata?.storyboard;
-    const imageNodes = nodes
-        .filter((n) => n.type === CanvasNodeType.Image && n.metadata?.refId)
-        .map((n) => `@${n.metadata!.refId} (${n.title || "图片"})`);
+    options?: {
+        selectedRowId?: string | null;
+        attachedNodeIds?: string[];
+        history?: AgentHistoryTurn[];
+        signal?: AbortSignal;
+    },
+): Promise<AiTextMessage[]> {
+    const sb = storyboardNode?.metadata?.storyboard;
+    const mediaNodes = nodes
+        .filter((n) => (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) && n.metadata?.refId)
+        .map((n) => `@${n.metadata!.refId} (${n.title || n.type})`);
 
     const snapshot = {
         imageModelRule: sb?.imageModelRule || "",
@@ -369,17 +449,17 @@ export function buildStoryboardAgentMessages(
             imgPrompt: r.imgPrompt,
             vidPrompt: r.vidPrompt,
         })),
-        selectedRowId: selectedRowId || null,
-        availableImages: imageNodes,
+        selectedRowId: options?.selectedRowId || null,
+        availableCanvasMedia: mediaNodes,
     };
 
     const systemPrompt = [
-        "你是 HemosiTV 导演 Agent。请根据当前分镜表快照与用户指令，输出严格合法的 JSON 格式修改方案（Plan）。",
-        "输出必须是纯 JSON 对象（不要 markdown 代码块或多余文字），结构如下：",
+        "你是 HemosiTV 导演 Agent，既是和用户自然交流的创作搭档，也能帮用户把角色/场景设定与分镜写进画布分镜表。",
+        "请输出 JSON 对象（不要加多余包裹），结构如下：",
         `{
-  "summary": "一句话说明本次修改",
+  "summary": "你对用户的自然回复（当用户在聊天、询问图片/视频内容、讨论剧情或角色设定时，在这里详细、自然地回答用户；当生成了分镜表改动时，在这里写改动说明）",
   "changes": [
-    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称", "desc": "外观描述" } },
+    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称", "desc": "外观描述（可带 @图1）" } },
     { "id": "c2", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 / @S1", "note": "备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
     { "id": "c3", "kind": "row.update", "rowId": "S01或rowId", "patch": { ... } },
     { "id": "c4", "kind": "row.remove", "rowId": "S01或rowId" },
@@ -388,18 +468,32 @@ export function buildStoryboardAgentMessages(
   "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" }
 }`,
         "铁律：",
-        "1. staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作。",
-        "2. 必须结合全剧上下文以及 imageModelRule / videoModelRule 直接写出每镜的 imgPrompt（图片提示词）与 vidPrompt（视频提示词）。",
-        "3. 引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
+        "1. 如果用户本轮只是在和你讨论、让你看图分析角色卡、看视频拆解或闲聊，直接把回答写在 summary 中，且必须将 changes 设为空数组 []！",
+        "2. 当用户附带了图片或视频（如 @图1、@视1）时，你已收到真实的图像/视频数据，请直接观察画面细节回答或提取特征。",
+        "3. 当用户明确要求生成或修改分镜表时：staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与模板直接写出每镜的 imgPrompt 与 vidPrompt；引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
     ].join("\n");
 
-    return [
-        { role: "system", content: systemPrompt },
-        {
-            role: "user",
-            content: `【当前分镜表快照】\n${JSON.stringify(snapshot, null, 2)}\n\n【用户指令】\n${instruction}`,
-        },
-    ];
+    const historyMessages: AiTextMessage[] = (options?.history || []).slice(-8).map((turn) => ({
+        role: turn.role,
+        content: turn.text,
+    }));
+
+    const media = await resolveAttachedMedia({
+        config,
+        nodes,
+        attachedNodeIds: options?.attachedNodeIds || [],
+        instruction,
+        signal: options?.signal,
+    });
+
+    const userText = `【当前分镜表快照】\n${JSON.stringify(snapshot, null, 2)}\n\n${
+        media.labels.length ? `【本轮拖入/附带的画布素材（已附上真实视觉内容）】${media.labels.join("、")}\n\n` : ""
+    }【用户消息】\n${instruction}`;
+
+    const userContent: AiTextMessage["content"] =
+        media.parts.length > 0 ? [...media.parts, { type: "text" as const, text: userText }] : userText;
+
+    return [{ role: "system", content: systemPrompt }, ...historyMessages, { role: "user", content: userContent }];
 }
 
 function extractJsonObject(raw: string): string {
@@ -414,17 +508,25 @@ function extractJsonObject(raw: string): string {
 
 export async function requestStoryboardPlan(params: {
     config: AiConfig;
-    storyboardNode: CanvasNodeData;
+    storyboardNode: CanvasNodeData | null;
     nodes: CanvasNodeData[];
     instruction: string;
     selectedRowId?: string | null;
+    attachedNodeIds?: string[];
+    history?: AgentHistoryTurn[];
     signal?: AbortSignal;
 }): Promise<{ ok: true; plan: Plan; raw: string } | { ok: false; raw: string; error: string }> {
-    const messages = buildStoryboardAgentMessages(
+    const messages = await buildStoryboardAgentMessages(
+        params.config,
         params.storyboardNode,
         params.nodes,
         params.instruction,
-        params.selectedRowId,
+        {
+            selectedRowId: params.selectedRowId,
+            attachedNodeIds: params.attachedNodeIds,
+            history: params.history,
+            signal: params.signal,
+        },
     );
 
     let lastRaw = "";
@@ -439,12 +541,11 @@ export async function requestStoryboardPlan(params: {
                       { role: "assistant", content: lastRaw },
                       {
                           role: "user",
-                          content: `上次输出校验失败：${lastError}\n请严格修正并只输出合法 JSON 对象。`,
+                          content: `上次输出校验失败：${lastError}\n请严格修正并输出合法 JSON 对象。`,
                       },
                   ];
 
-        let raw = "";
-        raw = await requestImageQuestion(
+        const raw = await requestImageQuestion(
             params.config,
             retryMessages,
             () => {},
@@ -453,6 +554,14 @@ export async function requestStoryboardPlan(params: {
         lastRaw = raw;
 
         try {
+            const trimmed = raw.trim();
+            if (!trimmed.includes('"changes"')) {
+                return {
+                    ok: true,
+                    plan: { summary: trimmed, changes: [] },
+                    raw,
+                };
+            }
             const parsed = JSON.parse(extractJsonObject(raw));
             const validated = PlanSchema.safeParse(parsed);
             if (validated.success) {

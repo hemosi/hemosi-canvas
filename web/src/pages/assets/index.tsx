@@ -80,9 +80,8 @@ export default function AssetsPage() {
             } else if (activeNav.startsWith("folder:")) {
                 const folderKey = activeNav.replace("folder:", "");
                 const folderObj = SUBJECT_FOLDERS.find((f) => f.key === folderKey);
-                const matchesFolder = asset.folder === folderKey || (folderObj && asset.folder === folderObj.label);
-                if (!matchesFolder && asset.category !== "subject") return false;
-                if (!matchesFolder && asset.folder) return false;
+                const matchesFolder = asset.folder === folderKey || Boolean(folderObj && asset.folder === folderObj.label);
+                if (!matchesFolder) return false;
             }
 
             if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
@@ -238,11 +237,30 @@ export default function AssetsPage() {
         updateAsset(asset.id, { category: next });
     };
 
-    // 文件夹/文件拖拽入库
+    // 文件夹/文件拖拽入库 或 已有素材卡片拖拽归类
     const handleDropInFolder = async (event: React.DragEvent, targetNavKey: string) => {
         event.preventDefault();
         event.stopPropagation();
         setIsDraggingOverNav(null);
+
+        const draggedAssetId = event.dataTransfer.getData("application/x-hemosi-asset-id");
+        if (draggedAssetId) {
+            if (targetNavKey === "favorite") {
+                updateAsset(draggedAssetId, { category: "favorite" });
+                message.success("已移入「收藏」");
+            } else if (targetNavKey === "subject") {
+                updateAsset(draggedAssetId, { category: "subject" });
+                message.success("已移入「主体库」");
+            } else if (targetNavKey.startsWith("folder:")) {
+                const folderKey = targetNavKey.replace("folder:", "");
+                const label = SUBJECT_FOLDERS.find((f) => f.key === folderKey)?.label || folderKey;
+                updateAsset(draggedAssetId, { category: "subject", folder: folderKey });
+                message.success(`已归类到「${label}」`);
+            } else {
+                updateAsset(draggedAssetId, { category: "other", folder: undefined });
+            }
+            return;
+        }
 
         const items = await getFilesFromDataTransfer(event.dataTransfer);
         if (!items.length) return;
@@ -643,7 +661,14 @@ function WaterfallAssetCard({
     const isFav = asset.category === "favorite";
 
     return (
-        <div className="group break-inside-avoid rounded-xl border border-stone-200/90 bg-white shadow-sm transition hover:shadow-md dark:border-stone-800 dark:bg-stone-900/90 overflow-hidden flex flex-col">
+        <div
+            draggable
+            onDragStart={(e) => {
+                e.dataTransfer.setData("application/x-hemosi-asset-id", asset.id);
+                e.dataTransfer.effectAllowed = "move";
+            }}
+            className="group break-inside-avoid rounded-xl border border-stone-200/90 bg-white shadow-sm transition hover:shadow-md dark:border-stone-800 dark:bg-stone-900/90 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
+        >
             <div className="relative cursor-pointer overflow-hidden bg-stone-100 dark:bg-stone-950" onClick={onOpen}>
                 {cover ? (
                     <img src={cover} alt={asset.title} className="w-full h-auto object-contain transition duration-200 group-hover:scale-[1.02]" loading="lazy" />

@@ -39,7 +39,6 @@ type CanvasNodeHoverToolbarProps = {
     onHdRegenerate?: (node: CanvasNodeData) => void;
     onCaptureFrame?: (node: CanvasNodeData) => void;
     onSplitVideoShots?: (node: CanvasNodeData) => void;
-    onViralCloneVideo?: (node: CanvasNodeData) => void;
     onContinueFromLastFrame?: (node: CanvasNodeData) => void;
     onReshoot?: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
@@ -86,7 +85,6 @@ export function CanvasNodeHoverToolbar({
     onHdRegenerate,
     onCaptureFrame,
     onSplitVideoShots,
-    onViralCloneVideo,
     onContinueFromLastFrame,
     onReshoot,
     onToggleFreeResize,
@@ -207,7 +205,6 @@ export function CanvasNodeHoverToolbar({
         ...(hasVideo && onCaptureFrame ? [{ id: "captureFrame", title: t("hemosi.videoTools.frameTitle"), label: t("hemosi.videoTools.frame"), icon: <Camera className="size-4" />, onClick: () => onCaptureFrame(node) }] : []),
         ...(hasVideo && onContinueFromLastFrame ? [{ id: "continueLastFrame", title: t("hemosi.videoTools.continueTitle"), label: t("hemosi.videoTools.continue"), icon: <SkipForward className="size-4" />, onClick: () => onContinueFromLastFrame(node) }] : []),
         ...(hasVideo && onSplitVideoShots ? [{ id: "splitVideoShots", title: "按镜头切换把视频拆成一排分镜节点", label: "拆分镜", icon: <Clapperboard className="size-4" />, onClick: () => onSplitVideoShots(node) }] : []),
-        ...(hasVideo && onViralCloneVideo ? [{ id: "viralCloneVideo", title: "零成本本地拆解爆款基因、变量换壳并生成分镜/导演组", label: "爆款复刻", icon: <Flame className="size-4 text-amber-500" />, onClick: () => onViralCloneVideo(node) }] : []),
         ...(hasVideo && onReshoot && node.metadata?.prompt?.trim() && node.metadata?.status !== "loading" ? [{ id: "reshoot", title: t("hemosi.videoTools.reshootTitle"), label: t("hemosi.videoTools.reshoot"), icon: <Clapperboard className="size-4" />, onClick: () => onReshoot(node) }] : []),
         ...(onHdRegenerate && node.metadata?.draftResult && (hasImage || hasVideo || (!isBuiltinNodeType(node.type) && Boolean(node.metadata?.content) && Boolean(getNodeDefinition(node.type)?.useBuiltinPanel?.writeBackToSelf))) ? [{ id: "hdRegenerate", title: t("hemosi.draft.hdRegenerateTitle"), label: t("hemosi.draft.hdRegenerate"), icon: <Sparkles className="size-4" />, onClick: () => onHdRegenerate(node) }] : []),
     ];

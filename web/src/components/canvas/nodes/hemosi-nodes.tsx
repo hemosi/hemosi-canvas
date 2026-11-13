@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
-import { ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, Flame, History, Image as ImageIcon, Loader2, Plus, RefreshCw, Rows3, Table2, Video, X } from "lucide-react";
+import { ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Columns2, Crosshair, Eye, EyeOff, History, Image as ImageIcon, Loader2, Plus, RefreshCw, Rows3, Table2, Video, X } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { StoryboardContent } from "@/components/canvas/nodes/storyboard-node";
@@ -433,60 +433,16 @@ function ImageCompareContent({ ctx }: { ctx: CanvasNodeContext }) {
     );
 }
 
-function ViralCloneContent({ ctx }: { ctx: CanvasNodeContext }) {
-    const meta = ctx.node.metadata || {};
-    const upstreamVideos = ctx.getUpstream().filter((n) => n.type === CanvasNodeType.Video && n.metadata?.content);
-    const sourceVideo = upstreamVideos[0] || (meta.viralSourceNodeId ? ctx.getNode(meta.viralSourceNodeId) : undefined);
-
-    return (
-        <div className="flex size-full flex-col gap-2 overflow-auto p-3 text-xs" style={{ color: ctx.theme.node.text }} {...stop}>
-            <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 font-semibold">
-                    <Flame className="size-4 text-amber-500" />
-                    <span>{sourceVideo ? `已连入《${sourceVideo.title || "视频"}》` : "请连入源视频节点"}</span>
-                </div>
-            </div>
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-center opacity-60" style={{ borderColor: ctx.theme.node.stroke }}>
-                <span>将视频节点连入本节点左侧端口，或打开右侧复刻工作区</span>
-            </div>
-            <div className="mt-auto flex items-center justify-end border-t pt-2" style={{ borderColor: ctx.theme.node.stroke }}>
-                <button
-                    type="button"
-                    className="rounded border px-2.5 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
-                    style={{ borderColor: ctx.theme.node.stroke }}
-                    onClick={() => getShotHost()?.openViralCloneWorkbench?.(ctx.node.id)}
-                >
-                    打开复刻工作区
-                </button>
-            </div>
-        </div>
-    );
-}
-
 const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
     {
         type: HemosiNodeType.Storyboard,
         title: "分镜表",
-        icon: <Table2 className="size-4" />,
+        icon: <Clapperboard className="size-4" />,
         defaultSize: { width: 1120, height: 560 },
         defaultMetadata: { status: "idle", storyboard: createEmptyStoryboardData() },
         minimapColor: "#0ea5e9",
         hidePanel: true,
         Content: StoryboardContent,
-    },
-    {
-        type: HemosiNodeType.ViralClone,
-        title: "复刻分析",
-        icon: <Flame className="size-4 text-amber-500" />,
-        defaultSize: { width: 380, height: 420 },
-        defaultMetadata: { status: "idle" },
-        minimapColor: "#f59e0b",
-        hidePanel: true,
-        resource: (node) =>
-            node.metadata?.cloneProject
-                ? { kind: "text", text: JSON.stringify(node.metadata.cloneProject) }
-                : null,
-        Content: ViralCloneContent,
     },
     {
         type: HemosiNodeType.Shot,
@@ -496,6 +452,7 @@ const HEMOSI_DEFINITIONS: CanvasNodeDefinition[] = [
         defaultMetadata: { status: "idle", shotRefs: [] },
         minimapColor: "#22d3ee",
         hidePanel: true,
+        showInCreateMenu: false,
         resource: (node) => (node.metadata?.shotVideo?.content ? { kind: "video", url: node.metadata.shotVideo.content } : node.metadata?.shotImage?.content ? { kind: "image", url: node.metadata.shotImage.content } : null),
         Content: ShotContent,
     },

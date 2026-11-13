@@ -376,7 +376,7 @@ function toResponseContent(content: ResponseMessageContent): string | ResponseIn
     return content.map((item) => {
         if (item.type === "text") return { type: "input_text" as const, text: item.text };
         if (item.type === "image_url") return { type: "input_image" as const, image_url: item.image_url.url };
-        throw new Error("该渠道格式不支持视频输入");
+        return { type: "input_image" as const, image_url: item.video.url };
     });
 }
 
@@ -889,7 +889,7 @@ async function requestChatCompletionsStream(
             ? m.content.map((part) => {
                   if (part.type === "text") return { type: "text", text: part.text };
                   if (part.type === "image_url") return { type: "image_url", image_url: { url: part.image_url.url } };
-                  throw new Error("该渠道格式不支持视频输入");
+                  return { type: "image_url", image_url: { url: part.video.url } };
               })
             : String(m.content || ""),
     }));
@@ -985,15 +985,8 @@ export async function uploadGeminiFile(config: AiConfig, file: Blob, mimeType: s
     return uri;
 }
 
-function hasVideoPart(messages: AiTextMessage[]) {
-    return messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "video"));
-}
-
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    if (hasVideoPart(messages) && requestConfig.apiFormat !== "gemini") {
-        throw new Error("该渠道格式不支持视频输入");
-    }
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {
         try {

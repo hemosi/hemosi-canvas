@@ -53,7 +53,6 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { StoryboardConfirmModal, type StoryboardConfirmState } from "@/components/canvas/storyboard-confirm-modal";
 import { StoryboardGhostLayer } from "@/components/canvas/storyboard-ghost-layer";
-import { ViralCloneWorkbench } from "@/components/canvas/viral-clone-workbench";
 import { applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
 import { resolveStoryboardRunMeta, runWithConcurrency } from "@/lib/canvas/storyboard-queue";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
@@ -278,8 +277,6 @@ function InfiniteCanvasPage() {
     const [storyboardHoverIds, setStoryboardHoverIds] = useState<string[]>([]);
     const [storyboardGhostNodes, setStoryboardGhostNodes] = useState<GhostPreviewNode[]>([]);
     const [storyboardConfirm, setStoryboardConfirm] = useState<StoryboardConfirmState | null>(null);
-    const [viralWorkbenchOpen, setViralWorkbenchOpen] = useState(false);
-    const [viralWorkbenchNodeId, setViralWorkbenchNodeId] = useState<string | null>(null);
     const handleRetryNodeRef = useRef<((node: CanvasNodeData, imageId?: string, retryOptions?: { skipConfirm?: boolean }) => Promise<unknown>) | null>(null);
     const refCountersRef = useRef<Record<string, number>>({});
     const [connectingParams, setConnectingParams] = useState<ConnectionHandle | null>(null);
@@ -451,12 +448,6 @@ function InfiniteCanvasPage() {
                 updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
                 jumpToBookmark,
                 getCurrentZoom: () => viewportRef.current.k,
-                openViralCloneWorkbench: (nodeId) => {
-                    const target = nodesRef.current.find((n) => n.id === nodeId);
-                    const srcId = target?.type === HemosiNodeType.ViralClone ? target.metadata?.viralSourceNodeId || nodeId : nodeId;
-                    setViralWorkbenchNodeId(srcId || null);
-                    setViralWorkbenchOpen(true);
-                },
                 commitStoryboard: (storyboardNodeId, nextData, autoLayout = false) => {
                     const result = reconcileStoryboardGraph({
                         storyboardNodeId,
@@ -1983,24 +1974,41 @@ function InfiniteCanvasPage() {
         setIsNodeDragging(false);
         setDropTargetGroupId(null);
         if (dragRef.current.hasMoved && clientX != null && clientY != null) {
-            setNodes((prev) => {
-                const moved = prev.map((node) => {
-                    const initial = initialPositions.get(node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
-                const targetGroup = findGroupDropTarget(movedIds, moved);
-                if (targetGroup) return renumberShotRows(movedIds, snapNodesIntoGroup(movedIds, moved, targetGroup));
-                // Dragging a shot within its row renumbers the row left to right.
-                return renumberShotRows(
-                    movedIds,
-                    moved.map((node) => {
-                        if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
-                        const groupId = findContainingGroupId(node, moved);
-                        if (node.metadata?.groupId === groupId) return node;
-                        return { ...node, metadata: { ...node.metadata, groupId } };
+            const droppedOnAgent = Boolean(
+                document.elementFromPoint(clientX, clientY)?.closest("[data-director-agent-drop='active']"),
+            );
+            if (droppedOnAgent) {
+                setNodes((prev) =>
+                    prev.map((node) => {
+                        const initial = initialPositions.get(node.id);
+                        return initial ? { ...node, position: { x: initial.x, y: initial.y } } : node;
                     }),
                 );
-            });
+                window.dispatchEvent(
+                    new CustomEvent("director-agent-drop-nodes", {
+                        detail: { nodeIds: Array.from(movedIds) },
+                    }),
+                );
+            } else {
+                setNodes((prev) => {
+                    const moved = prev.map((node) => {
+                        const initial = initialPositions.get(node.id);
+                        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy }, metadata: { ...node.metadata, manualPos: true } } : node;
+                    });
+                    const targetGroup = findGroupDropTarget(movedIds, moved);
+                    if (targetGroup) return renumberShotRows(movedIds, snapNodesIntoGroup(movedIds, moved, targetGroup));
+                    // Dragging a shot within its row renumbers the row left to right.
+                    return renumberShotRows(
+                        movedIds,
+                        moved.map((node) => {
+                            if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
+                            const groupId = findContainingGroupId(node, moved);
+                            if (node.metadata?.groupId === groupId) return node;
+                            return { ...node, metadata: { ...node.metadata, groupId } };
+                        }),
+                    );
+                });
+            }
         }
 
         dragRef.current.isDraggingNode = false;
@@ -2008,6 +2016,13 @@ function InfiniteCanvasPage() {
         dragRef.current.initialSelectedNodes = new Map();
         dragRef.current.movedIds = new Set();
         if (wasClick && clickedNodeId) {
+            if (document.querySelector("[data-director-agent-drop='active']")) {
+                window.dispatchEvent(
+                    new CustomEvent("director-agent-drop-nodes", {
+                        detail: { nodeIds: [clickedNodeId] },
+                    }),
+                );
+            }
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             const clickedDefinition = clickedNode ? getNodeDefinition(clickedNode.type) : undefined;
             if (clickedDefinition?.hidePanel) {
@@ -4415,10 +4430,6 @@ function InfiniteCanvasPage() {
                     onHdRegenerate={(node) => void rerunIntoNewNode(node, "hd")}
                     onCaptureFrame={(node) => void captureVideoNodeFrame(node.id, "current")}
                     onSplitVideoShots={(node) => void splitVideoToShots(node.id)}
-                    onViralCloneVideo={(node) => {
-                        setViralWorkbenchNodeId(node.id);
-                        setViralWorkbenchOpen(true);
-                    }}
                     onContinueFromLastFrame={(node) => void continueVideoFromLastFrame(node)}
                     onReshoot={(node) => void rerunIntoNewNode(node, "reshoot")}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -4470,23 +4481,13 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     extraButtons={[
-                        { id: "tool-storyboard", label: "分镜表", icon: <Table2 className="size-4.5 text-sky-500" />, onClick: () => createNode(HemosiNodeType.Storyboard) },
-                        {
-                            id: "tool-viral-clone",
-                            label: "爆款复刻",
-                            icon: <Flame className="size-4.5 text-amber-500" />,
-                            onClick: () => {
-                                createNode(HemosiNodeType.ViralClone);
-                            },
-                        },
-                        { id: "tool-shot", label: "分镜", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Shot) },
+                        { id: "tool-storyboard", label: "分镜表", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Storyboard) },
                         { id: "tool-compare", label: "双图拉帘对比", icon: <Columns2 className="size-4.5" />, onClick: () => createNode(HemosiNodeType.ImageCompare) },
                         { id: "tool-bookmark", label: "书签快速导航 (按 1~9 闪现)", icon: <Bookmark className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Bookmark) },
                         { id: "tool-scene3d", label: "3D 导演工作台", icon: <Box className="size-4.5" />, onClick: () => createNode(DIRECTOR_NODE_TYPE) },
                         { id: "tool-search", label: "搜索节点 (Ctrl+F)", icon: <Search className="size-4.5" />, active: searchOpen, onClick: () => setSearchOpen((value) => !value) },
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },
                         { id: "tool-queue", label: queueCount ? `生成队列 · ${queueCount} 项` : "生成队列 / 记录", icon: <span className="relative"><ListChecks className="size-4.5" />{queueCount ? <span className="absolute -right-1.5 -top-1.5 grid min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-bold" style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}>{queueCount}</span> : null}</span>, active: queueOpen, onClick: () => setQueueOpen((value) => !value) },
-                        { id: "tool-shortcuts", label: "快捷键 (?)", icon: <Keyboard className="size-4.5" />, onClick: () => setShortcutsOpen(true) },
                     ]}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
@@ -4518,15 +4519,6 @@ function InfiniteCanvasPage() {
                             if (contextMenu.type !== "node") return;
                             void captureVideoNodeFrame(contextMenu.nodeId, position);
                         }}
-                        onViralClone={
-                            contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)
-                                ? () => {
-                                      setViralWorkbenchNodeId(contextMenuNode.id);
-                                      setViralWorkbenchOpen(true);
-                                      setContextMenu(null);
-                                  }
-                                : undefined
-                        }
                         onDuplicate={(withConnections) => {
                             if (contextMenu.type !== "node") return;
                             duplicateNode(contextMenu.nodeId, withConnections);
@@ -4577,16 +4569,6 @@ function InfiniteCanvasPage() {
 
                 <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
                 <StoryboardConfirmModal state={storyboardConfirm} />
-                <ViralCloneWorkbench
-                    open={viralWorkbenchOpen}
-                    sourceNode={viralWorkbenchNodeId ? nodeById.get(viralWorkbenchNodeId) || null : null}
-                    onClose={() => setViralWorkbenchOpen(false)}
-                    onSaveProject={(nodeId, cloneProject) => {
-                        setNodes((prev) =>
-                            prev.map((n) => (n.id === nodeId ? { ...n, metadata: { ...n.metadata, cloneProject } } : n)),
-                        );
-                    }}
-                />
                 <CanvasPluginManagerModal open={pluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}

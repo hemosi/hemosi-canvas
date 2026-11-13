@@ -391,6 +391,17 @@ function buildInsertPayload(asset: Asset): InsertAssetPayload {
     return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
 }
 
+const ASSET_FOLDER_FILTERS = [
+    { key: "all", label: "全部" },
+    { key: "favorite", label: "收藏" },
+    { key: "character", label: "角色" },
+    { key: "scene", label: "场景" },
+    { key: "prop", label: "道具" },
+    { key: "style", label: "风格" },
+    { key: "sound", label: "音效" },
+    { key: "other", label: "其他" },
+] as const;
+
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme, projectId }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme; projectId?: string }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
@@ -399,6 +410,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme, project
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
+    const [folderFilter, setFolderFilter] = useState<string>("all");
     const [tagFilter, setTagFilter] = useState<string>("all");
     const [scopeFilter, setScopeFilter] = useState<"current" | "all">("current");
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -414,11 +426,18 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme, project
                 const belongs = asset.canvasIds?.includes(projectId) || (asset.metadata?.canvasId === projectId);
                 if (!belongs) return false;
             }
+            if (folderFilter === "favorite") {
+                if (asset.category !== "favorite") return false;
+            } else if (folderFilter !== "all") {
+                const filterObj = ASSET_FOLDER_FILTERS.find((f) => f.key === folderFilter);
+                const matchesFolder = asset.folder === folderFilter || Boolean(filterObj && asset.folder === filterObj.label);
+                if (!matchesFolder) return false;
+            }
             if (tagFilter !== "all" && !(asset.tags || []).includes(tagFilter)) return false;
             if (!query) return true;
             return [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query);
         });
-    }, [assets, scopeFilter, projectId, tagFilter, keyword]);
+    }, [assets, scopeFilter, projectId, folderFilter, tagFilter, keyword]);
 
     const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
 
@@ -503,6 +522,27 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme, project
                     </button>
                 </div>
                 <span className="text-[11px] text-stone-400">{filtered.length} 项</span>
+            </div>
+            {/* 分类文件夹筛选栏（只有已在外部归好类的素材才会匹配对应分类） */}
+            <div className="flex flex-wrap gap-1 px-3 pb-2">
+                {ASSET_FOLDER_FILTERS.map((item) => {
+                    const active = folderFilter === item.key;
+                    return (
+                        <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => setFolderFilter(item.key)}
+                            className={cn(
+                                "rounded-md px-2 py-0.5 text-[11px] font-medium transition",
+                                active
+                                    ? "bg-amber-500/15 text-amber-500 font-semibold"
+                                    : "opacity-65 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10",
+                            )}
+                        >
+                            {item.label}
+                        </button>
+                    );
+                })}
             </div>
             {allTags.length ? (
                 <div className="flex flex-wrap gap-1.5 px-3 pb-2">
