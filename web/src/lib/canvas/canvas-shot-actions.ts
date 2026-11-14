@@ -25,7 +25,7 @@ export type ShotHost = {
         enabledIds: Set<string>,
         removeOrphanDownstream?: boolean,
         modelPresets?: StoryboardModelPresets,
-    ) => { warnings: string[]; createdTasks?: StoryboardQueueTask[] } | void;
+    ) => { warnings: string[]; createdTasks?: StoryboardQueueTask[]; /** How many changes actually landed. */ applied: number } | void;
     applyCanvasAgentPlan?: (
         plan: Plan,
         enabledIds: Set<string>,

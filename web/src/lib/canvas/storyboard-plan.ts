@@ -502,7 +502,19 @@ export function applyPlan(params: {
         modelPresets: params.modelPresets,
     });
 
+    const canvasCount = params.plan.changes.filter((c) => params.enabledIds.has(c.id) && c.kind.startsWith("canvas.")).length;
+    const movedCount = params.plan.changes.filter((c) => params.enabledIds.has(c.id) && c.kind === "row.move" && !warnings.includes(`目标行 ${c.rowId} 不存在`)).length;
+    const applied =
+        diff.addedRowIds.length +
+        diff.updatedRowIds.length +
+        diff.removedRowIds.length +
+        diff.addedSettingIds.length +
+        diff.updatedSettingIds.length +
+        movedCount +
+        canvasCount;
+
     return {
+        applied,
         data: reconciled.data,
         nodes: canvasAdded.nodes,
         connections: canvasAdded.connections,

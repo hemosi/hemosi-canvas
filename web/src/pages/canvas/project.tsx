@@ -55,6 +55,7 @@ import { StoryboardConfirmModal, type StoryboardConfirmState } from "@/component
 import { StoryboardGhostLayer } from "@/components/canvas/storyboard-ghost-layer";
 import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
 import { runWithConcurrency, summarizeStoryboardRun } from "@/lib/canvas/storyboard-queue";
+import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
 import { createEmptyStoryboardData, reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
@@ -483,7 +484,7 @@ function InfiniteCanvasPage() {
                     connectionsRef.current = result.connections;
                     setNodes(result.nodes);
                     setConnections(result.connections);
-                    return { warnings: result.warnings, createdTasks: result.createdTasks };
+                    return { warnings: result.warnings, createdTasks: result.createdTasks, applied: result.applied };
                 },
                 applyCanvasAgentPlan: (plan, enabledIds, modelPresets) => {
                     const vp = viewportRef.current;
@@ -929,6 +930,11 @@ function InfiniteCanvasPage() {
         connectionTargetNodeIdRef.current = connectionTargetNodeId;
         pendingConnectionCreateRef.current = pendingConnectionCreate;
     }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate]);
+
+    // Tell listeners outside the canvas tree (the agent panel) that nodes or the selection changed.
+    useEffect(() => {
+        emitCanvasEvent("canvas:changed");
+    }, [nodes, selectedNodeIds]);
 
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
