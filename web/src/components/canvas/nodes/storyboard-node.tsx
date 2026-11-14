@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { StoryboardPreviewModal, type PreviewClip } from "@/components/canvas/storyboard-preview-modal";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import { isBuiltinModelRule, modelRulePreset } from "@/lib/canvas/storyboard-model-rules";
-import { runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
+import { collectAutopilotTasks, runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
 import type { SettingItem, SettingKind, StoryboardAutopilotMode, StoryboardData, StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     createEmptyStoryboardData,
@@ -330,21 +330,25 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                             disabled={data.rows.length === 0}
                             onClick={() => {
                                 if (!host?.runStoryboardBatch) return;
-                                if (mode === "manual") {
-                                    const tasks = data.rows
-                                        .filter((r) => deriveNodeHealth(nodeMap.get(r.videoNodeId)) !== "ok")
-                                        .map((r) => ({ nodeId: r.videoNodeId, kind: "video" as const, label: `${r.code} · 视频`, prompt: r.vidPrompt }));
-                                    if (!tasks.length) {
-                                        message.info("所有分镜视频已就绪");
-                                        return;
-                                    }
-                                    void host.runStoryboardBatch(tasks, { title: "批量生成视频" });
+                                const pending = collectAutopilotTasks(data, host.getAllNodes?.() || []);
+                                const counts = [
+                                    pending.settingTasks.length ? `设定图 ${pending.settingTasks.length} 张` : "",
+                                    pending.firstFrameTasks.length ? `首帧图 ${pending.firstFrameTasks.length} 张` : "",
+                                    pending.videoTasks.length ? `视频 ${pending.videoTasks.length} 条` : "",
+                                ].filter(Boolean);
+                                if (!counts.length) {
+                                    message.info("设定图、首帧图和视频都已就绪");
                                     return;
                                 }
+                                const modeLabel = mode === "auto" ? "全自动" : mode === "semi" ? "半自动" : "手动";
                                 Modal.confirm({
                                     title: "一键出片确认",
                                     centered: true,
-                                    content: `将按「${mode === "auto" ? "全自动" : "半自动"}」模式依次补齐 ${data.rows.length} 镜的缺图首帧与视频，确定开始？`,
+                                    content: `「${modeLabel}」模式将按顺序生成：${counts.join(" → ")}，共 ${
+                                        pending.settingTasks.length + pending.firstFrameTasks.length + pending.videoTasks.length
+                                    } 项，每项按它的模型生成，会产生费用。每一步完成后才开始下一步，视频会用上新首帧图作参考。${
+                                        mode === "manual" ? "手动模式下每一步开始前还会弹出生成确认卡（含模型与渠道）。" : ""
+                                    }`,
                                     okText: "开始出片",
                                     cancelText: "取消",
                                     onOk: () => {
@@ -353,9 +357,11 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                         void runStoryboardAutopilot({
                                             data,
                                             getNode: (id) => (host.getAllNodes?.() || []).find((n) => n.id === id),
+                                            getNodes: () => host.getAllNodes?.() || [],
                                             runBatch: host.runStoryboardBatch!,
                                             onProgress: setAutopilot,
                                             signal: controller.signal,
+                                            confirmEachStage: mode === "manual",
                                         }).then((res) => {
                                             if (res.failedCodes.length) message.warning(res.stage);
                                             else if (res.status === "completed") message.success(res.stage);
