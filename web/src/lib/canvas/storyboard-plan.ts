@@ -607,14 +607,50 @@ async function resolveAttachedMedia(params: {
     return { labels, textBlocks, parts };
 }
 
+/** Fallback when the model-written compact fails: keep each turn's head, newest last. */
 export function compressHistoryTurns(existingSummary: string, turns: AgentHistoryTurn[]): string {
     const lines = turns.map((t) => {
         const roleLabel = t.role === "user" ? "用户" : "助手";
-        const snippet = t.text.replace(/\s+/g, " ").trim().slice(0, 140);
+        const snippet = t.text.replace(/\s+/g, " ").trim().slice(0, 600);
         return `- ${roleLabel}: ${snippet}`;
     });
     const combined = [existingSummary ? `【先前摘要】${existingSummary}` : "", ...lines].filter(Boolean).join("\n");
-    return combined.slice(-900);
+    return combined.slice(-20000);
+}
+
+/**
+ * Auto compact: the chat model rewrites the older turns (plus any earlier summary) into one detailed summary.
+ * Only what is sent to the model is compacted; the panel keeps every message.
+ */
+export async function compactHistoryWithModel(params: {
+    config: AiConfig;
+    existingSummary: string;
+    turns: AgentHistoryTurn[];
+    signal?: AbortSignal;
+}): Promise<string> {
+    const transcript = params.turns.map((t) => `${t.role === "user" ? "用户" : "助手"}：${t.text}`).join("\n\n");
+    const messages: AiTextMessage[] = [
+        {
+            role: "system",
+            content: [
+                "你负责压缩 HemosiTV 画布/分镜 Agent 的对话历史，压缩结果会替代原对话发给后续轮次的模型。",
+                "请输出一份详细摘要（纯文本，不要 JSON），必须保留：",
+                "1. 剧情、世界观、风格、时长与比例等已经确定的创作决定；",
+                "2. 角色、场景、道具设定及其 @R/@S/@P/@图n 引用编号与外观要点；",
+                "3. 已提出的分镜和节点改动，以及用户是否采用（已应用/未采用/待确认）；",
+                "4. 用户明确提出的要求、偏好、否决过的方案；",
+                "5. 尚未完成的事和下一步。",
+                "不要丢编号和名称，不要编造，不要写客套话。",
+            ].join("\n"),
+        },
+        {
+            role: "user",
+            content: `${params.existingSummary ? `【已有摘要】\n${params.existingSummary}\n\n` : ""}【需要压缩的新对话】\n${transcript}`,
+        },
+    ];
+    const summary = (await requestImageQuestion(params.config, messages, () => {}, { signal: params.signal })).trim();
+    if (!summary) throw new Error("压缩结果为空");
+    return summary;
 }
 
 export async function buildStoryboardAgentMessages(
@@ -675,7 +711,7 @@ export async function buildStoryboardAgentMessages(
         "3. 生成或修改分镜表时：staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与模板直接写出每镜的 imgPrompt 与 vidPrompt；引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
     ].join("\n");
 
-    const historyMessages: AiTextMessage[] = (options?.history || []).slice(-6).map((turn) => ({
+    const historyMessages: AiTextMessage[] = (options?.history || []).map((turn) => ({
         role: turn.role,
         content: turn.text,
     }));
@@ -719,7 +755,7 @@ export async function buildStoryboardAgentMessages(
             : `【画布已有素材引用编号】${mediaNodes.length ? mediaNodes.join("、") : "暂无"}\n\n`;
 
     const summaryBlock = options?.compressedSummary
-        ? `【当前画布/分镜早期对话自动压缩摘要】\n${options.compressedSummary}\n\n`
+        ? `【早期对话压缩摘要（auto compact）】\n${options.compressedSummary}\n\n`
         : "";
 
     const userText = `${summaryBlock}${snapshotBlock}${

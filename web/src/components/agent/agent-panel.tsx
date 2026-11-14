@@ -7,6 +7,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import {
+    compactHistoryWithModel,
     compressHistoryTurns,
     getNodeTextContent,
     previewPlan,
@@ -39,34 +40,43 @@ type DirectorMessage =
       };
 
 type ScopedMemory = {
+    /** Every message stays here for the panel; compaction never deletes them. */
     messages: DirectorMessage[];
     compressedSummary: string;
+    /** How many leading messages are folded into compressedSummary and no longer sent verbatim. */
+    compactedCount: number;
 };
+
+/** Auto compact once the context sent to the model passes ~100k characters. */
+const COMPACT_THRESHOLD_CHARS = 100_000;
+/** Recent messages always sent verbatim after a compact. */
+const COMPACT_KEEP_RECENT = 10;
+
+const emptyMemory = (): ScopedMemory => ({ messages: [], compressedSummary: "", compactedCount: 0 });
 
 const scopedMemoryStore = new Map<string, ScopedMemory>();
 
 function messageToTurn(m: DirectorMessage): AgentHistoryTurn | null {
-    if (m.role === "user") return { role: "user", text: m.text };
+    if (m.role === "user") {
+        const labels = m.mediaLabels?.length ? `【附带素材】${m.mediaLabels.join("、")}\n` : "";
+        return { role: "user", text: `${labels}${m.text}` };
+    }
     if (m.role === "assistant") return { role: "assistant", text: m.text };
-    if (m.role === "plan") return { role: "assistant", text: m.plan.summary };
+    if (m.role === "plan") {
+        const enabled = new Set(m.enabledIds);
+        const status = m.status === "applied" ? "用户已应用" : m.status === "rejected" ? "用户未采用" : "待用户确认";
+        const lines = m.plan.changes.map((ch) => {
+            const info = changeLabel(ch);
+            const picked = m.status === "applied" ? (enabled.has(ch.id) ? "（已应用）" : "（用户取消勾选）") : "";
+            return `- [${ch.id}] ${info.badge} ${info.title}${picked}：${info.detail}`;
+        });
+        return { role: "assistant", text: `${m.plan.summary}\n【改动计划 · ${status}】\n${lines.join("\n")}` };
+    }
     return null;
 }
 
-function autoCompressMemory(mem: ScopedMemory): ScopedMemory {
-    const turns = mem.messages.map(messageToTurn).filter((t): t is AgentHistoryTurn => Boolean(t));
-    const totalChars = turns.reduce((acc, t) => acc + t.text.length, 0);
-    if (mem.messages.length <= 6 && totalChars <= 1800) {
-        return mem;
-    }
-    const cutoff = Math.max(0, mem.messages.length - 4);
-    const olderMessages = mem.messages.slice(0, cutoff);
-    const recentMessages = mem.messages.slice(cutoff);
-    const olderTurns = olderMessages.map(messageToTurn).filter((t): t is AgentHistoryTurn => Boolean(t));
-    if (!olderTurns.length) return mem;
-    return {
-        messages: recentMessages,
-        compressedSummary: compressHistoryTurns(mem.compressedSummary, olderTurns),
-    };
+function turnsChars(summary: string, turns: AgentHistoryTurn[]) {
+    return summary.length + turns.reduce((acc, t) => acc + t.text.length, 0);
 }
 
 function changeLabel(ch: Change): { badge: string; title: string; detail: string } {
@@ -182,23 +192,24 @@ export function AgentPanel() {
 
     const currentMemory = useMemo<ScopedMemory>(() => {
         void memoryTick;
-        return scopedMemoryStore.get(scopeKey) || { messages: [], compressedSummary: "" };
+        return scopedMemoryStore.get(scopeKey) || emptyMemory();
     }, [memoryTick, scopeKey]);
 
     const messages = currentMemory.messages;
     const compressedSummary = currentMemory.compressedSummary;
+    const compactedCount = currentMemory.compactedCount || 0;
+    const [compacting, setCompacting] = useState(false);
 
     const updateScopedMessages = (updater: (prev: DirectorMessage[]) => DirectorMessage[]) => {
-        const cur = scopedMemoryStore.get(scopeKey) || { messages: [], compressedSummary: "" };
-        const nextMsgs = updater(cur.messages);
-        const nextMem = autoCompressMemory({ ...cur, messages: nextMsgs });
-        scopedMemoryStore.set(scopeKey, nextMem);
+        const cur = scopedMemoryStore.get(scopeKey) || emptyMemory();
+        scopedMemoryStore.set(scopeKey, { ...cur, messages: updater(cur.messages) });
         setMemoryTick((t) => t + 1);
     };
 
+
     const clearCurrentScope = () => {
         host?.setStoryboardGhostNodes?.([]);
-        scopedMemoryStore.set(scopeKey, { messages: [], compressedSummary: "" });
+        scopedMemoryStore.set(scopeKey, emptyMemory());
         setMemoryTick((t) => t + 1);
         message.success("已清空当前上下文");
     };
@@ -282,9 +293,7 @@ export function AgentPanel() {
 
         const currentAttachedIds = [...attachedNodeIds];
         const mediaLabels = attachedNodes.map((n) => `@${n.metadata?.refId || n.title || n.type}`);
-        const history: AgentHistoryTurn[] = messages
-            .map(messageToTurn)
-            .filter((t): t is AgentHistoryTurn => Boolean(t));
+        const sendScopeKey = scopeKey;
 
         setInput("");
         setAttachedNodeIds([]);
@@ -302,6 +311,36 @@ export function AgentPanel() {
         abortRef.current = controller;
 
         try {
+            // Auto compact: only when what we would send passes the threshold; the panel keeps every message.
+            let summaryForSend = compressedSummary;
+            let foldedCount = compactedCount;
+            const toTurns = (list: DirectorMessage[]) => list.map(messageToTurn).filter((t): t is AgentHistoryTurn => Boolean(t));
+            const pending = messages.slice(foldedCount);
+            if (turnsChars(summaryForSend, toTurns(pending)) + text.length > COMPACT_THRESHOLD_CHARS && pending.length > COMPACT_KEEP_RECENT) {
+                const foldUntil = messages.length - COMPACT_KEEP_RECENT;
+                const foldTurns = toTurns(messages.slice(foldedCount, foldUntil));
+                setCompacting(true);
+                try {
+                    summaryForSend = await compactHistoryWithModel({
+                        config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
+                        existingSummary: summaryForSend,
+                        turns: foldTurns,
+                        signal: controller.signal,
+                    });
+                } catch (err) {
+                    if ((err as Error)?.name === "AbortError") throw err;
+                    summaryForSend = compressHistoryTurns(summaryForSend, foldTurns);
+                    message.warning("模型压缩失败，已改用截取方式压缩早期对话");
+                } finally {
+                    setCompacting(false);
+                }
+                foldedCount = foldUntil;
+                const cur = scopedMemoryStore.get(sendScopeKey) || emptyMemory();
+                scopedMemoryStore.set(sendScopeKey, { ...cur, compressedSummary: summaryForSend, compactedCount: foldedCount });
+                setMemoryTick((t) => t + 1);
+            }
+            const history = toTurns(messages.slice(foldedCount));
+
             const res = await requestStoryboardPlan({
                 config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
                 storyboardNode: sbSnapshot,
@@ -311,7 +350,7 @@ export function AgentPanel() {
                 selectedRowId: matchedRow?.code || null,
                 attachedNodeIds: currentAttachedIds,
                 history,
-                compressedSummary,
+                compressedSummary: summaryForSend,
                 signal: controller.signal,
             });
             if (res.ok) {
@@ -506,7 +545,7 @@ export function AgentPanel() {
                             style={{ borderColor: border, background: theme.toolbar.activeBg }}
                             title={compressedSummary}
                         >
-                            已自动压缩早期上下文（悬停可查看摘要，点顶部 Clear 可清空）
+                            已自动压缩前 {compactedCount} 条对话（记录仍保留，只是不再逐字发给模型；悬停查看摘要）
                         </div>
                     ) : null}
 
@@ -763,7 +802,7 @@ export function AgentPanel() {
                     {running ? (
                         <div className="flex items-center gap-2 opacity-70">
                             <Loader2 className="size-3.5 animate-spin" />
-                            <span>正在思考…</span>
+                            <span>{compacting ? "正在压缩早期对话…" : "正在思考…"}</span>
                         </div>
                     ) : null}
                 </div>
