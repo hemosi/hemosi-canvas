@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
+import { syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
 import { SettingKindSchema, type SettingItem, type StoryboardData, type StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     extractAtTokens,
@@ -456,7 +457,9 @@ export function applyPlan(params: {
     removeOrphanDownstream?: boolean;
     modelPresets?: StoryboardModelPresets;
 }) {
-    const { next, diff, warnings } = previewPlan(params.data, params.plan, params.enabledIds, params.nodes);
+    const presetModels = { imageModel: params.modelPresets?.imageModel, videoModel: params.modelPresets?.videoModel };
+    const baseData = syncStoryboardModelRules(params.data, presetModels) || params.data;
+    const { next, diff, warnings } = previewPlan(baseData, params.plan, params.enabledIds, params.nodes);
 
     let nextNodes = [...params.nodes];
     let nextConnections = [...params.connections];

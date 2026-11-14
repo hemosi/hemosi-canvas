@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import { StoryboardPreviewModal, type PreviewClip } from "@/components/canvas/storyboard-preview-modal";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
+import { isBuiltinModelRule, modelRulePreset } from "@/lib/canvas/storyboard-model-rules";
 import { runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
 import type { SettingItem, SettingKind, StoryboardAutopilotMode, StoryboardData, StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
@@ -383,14 +384,16 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                 key: "image" as const,
                                 label: "图片提示词模板",
                                 value: data.imageModelRule ?? DEFAULT_IMAGE_MODEL_RULE,
-                                fallback: DEFAULT_IMAGE_MODEL_RULE,
+                                preset: modelRulePreset("image", data.imageModel || nodeMap.get(data.rows[0]?.imageNodeId || "")?.metadata?.model),
+                                edited: !isBuiltinModelRule("image", data.imageModelRule),
                                 onChange: (v: string) => commit({ ...data, imageModelRule: v }),
                             },
                             {
                                 key: "video" as const,
                                 label: "视频提示词模板",
                                 value: data.videoModelRule ?? DEFAULT_VIDEO_MODEL_RULE,
-                                fallback: DEFAULT_VIDEO_MODEL_RULE,
+                                preset: modelRulePreset("video", data.videoModel || nodeMap.get(data.rows[0]?.videoNodeId || "")?.metadata?.model),
+                                edited: !isBuiltinModelRule("video", data.videoModelRule),
                                 onChange: (v: string) => commit({ ...data, videoModelRule: v }),
                             },
                         ]
@@ -409,6 +412,12 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                     <div className="flex min-w-0 flex-1 items-center gap-1.5">
                                         {isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
                                         <span className="shrink-0 text-[11px] font-medium">{item.label}</span>
+                                        <span
+                                            className="shrink-0 text-[10px] opacity-60"
+                                            title="按分镜表使用的生成模型自动套用内置写法；手动改过后切换模型不再覆盖"
+                                        >
+                                            {item.edited ? "已自定义" : `${item.preset.label}预设`}
+                                        </span>
                                         {!isExpanded ? (
                                             <span className="truncate text-[11px] opacity-60">
                                                 {item.value || "点击展开输入提示词模板..."}
@@ -421,10 +430,10 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                             className="shrink-0 rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                item.onChange(item.fallback);
+                                                item.onChange(item.preset.rule);
                                             }}
                                         >
-                                            恢复默认
+                                            恢复模型预设
                                         </button>
                                     ) : null}
                                 </div>

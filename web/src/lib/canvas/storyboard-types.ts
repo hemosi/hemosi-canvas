@@ -35,6 +35,9 @@ export const StoryboardDataSchema = z.object({
     schemaVersion: z.literal(1),
     imageModelRule: z.string(),
     videoModelRule: z.string(),
+    /** Image/video model the storyboard generates with; picks the built-in prompt template preset. */
+    imageModel: z.string().optional(),
+    videoModel: z.string().optional(),
     settings: z.array(SettingItemSchema),
     rows: z.array(StoryboardRowSchema),
 });
