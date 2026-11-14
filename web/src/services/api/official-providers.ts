@@ -17,7 +17,7 @@ import { configSeed, withLocalProxy, type AiConfig } from "@/stores/use-config-s
 export type OfficialVideoProvider = "kling" | "runway" | "ark" | "omni";
 export type ProviderState = { status: "pending" } | { status: "completed"; url?: string; blob?: Blob } | { status: "failed"; error: string };
 type Options = { signal?: AbortSignal };
-type FramesInput = { images: string[]; mode: "frames" | "reference" };
+type FramesInput = { images: string[]; mode: "frames" | "reference"; /** In frames mode: the first N images are frames, the rest reference images. */ frameCount?: number };
 
 const RUNWAY_VERSION = "2024-11-06";
 const RUNWAY_PROMPT_LIMIT = 1000;
@@ -95,6 +95,7 @@ export async function requestBflImage(config: AiConfig, prompt: string, size: { 
 // ---------- Kling 4.0 (video) ----------
 
 export function buildKlingRequest(config: Pick<AiConfig, "baseUrl" | "model" | "size" | "videoSeconds" | "vquality" | "videoWatermark">, prompt: string, input: FramesInput) {
+    if (input.mode === "frames" && input.frameCount && input.images.length > input.frameCount) throw new Error("可灵 4.0 不能同时用首帧和参考图：请去掉多余的参考图，或把首帧改回参考图，或换支持混用的模型（如 Seedance、Gemini）");
     if (input.mode === "reference" && input.images.length) throw new Error("可灵 4.0 图生视频只接受首帧/中间帧/尾帧；多张参考图（非首尾帧）请换支持参考图的模型（如 Seedance 2.5、Gemini Omni），或把图片身份设为首帧/尾帧");
     const frames = input.images.slice(0, 10);
     const types = frames.length === 1 ? ["first_frame"] : frames.map((_, index) => (index === 0 ? "first_frame" : index === frames.length - 1 ? "last_frame" : "middle_frame"));
@@ -135,6 +136,7 @@ const RUNWAY_RATIOS: Record<string, string> = { "16:9": "1280:720", "9:16": "720
 
 export function buildRunwayRequest(config: Pick<AiConfig, "baseUrl" | "model" | "size" | "videoSeconds" | "seed">, prompt: string, input: FramesInput) {
     if (prompt.length > RUNWAY_PROMPT_LIMIT) throw new Error(`Runway 提示词上限 ${RUNWAY_PROMPT_LIMIT} 字符，当前 ${prompt.length}；请精简提示词/锚点设定，或换模型`);
+    if (input.mode === "frames" && input.frameCount && input.images.length > input.frameCount) throw new Error("Runway 不能同时用首帧和参考图：请去掉多余的参考图，或把首帧改回参考图，或换支持混用的模型（如 Seedance、Gemini）");
     if (input.mode === "reference" && input.images.length) throw new Error("Runway 图生视频只接受首帧/尾帧，多张参考图请换支持参考图的模型（如 Seedance 2.5、Gemini Omni）");
     const ratio = ratioOf(config.size);
     const runwayRatio = RUNWAY_RATIOS[ratio];
@@ -173,7 +175,7 @@ async function pollRunway(config: AiConfig, id: string, options?: Options): Prom
 export function buildArkRequest(config: Pick<AiConfig, "baseUrl" | "model" | "size" | "videoSeconds" | "vquality" | "videoGenerateAudio" | "videoWatermark" | "seed" | "camera">, prompt: string, input: FramesInput) {
     const frames = input.mode === "frames";
     const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
-    input.images.forEach((image, index) => content.push({ type: "image_url", image_url: { url: image }, role: frames ? (index === 0 ? "first_frame" : "last_frame") : "reference_image" }));
+    input.images.forEach((image, index) => content.push({ type: "image_url", image_url: { url: image }, role: frames && index < (input.frameCount ?? 2) ? (index === 0 ? "first_frame" : "last_frame") : "reference_image" }));
     const resolution = `${Math.min(1080, Number(String(config.vquality).replace(/p$/i, "")) || 720)}p`;
     const body: Record<string, unknown> = {
         model: config.model,

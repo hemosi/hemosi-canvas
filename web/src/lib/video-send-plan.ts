@@ -4,8 +4,8 @@
  *
  * - By default every image goes as a reference image.
  * - Only an image the user marked 首帧 / 尾帧 goes as first_frame / last_frame.
- * - When the model/channel cannot take first frame + references in one request, the extra references are
- *   left out and `warning` says so; nothing is changed silently.
+ * - A marked first/last frame and the other images are sent together: frames as first/last frame, the rest as
+ *   reference images (e.g. a specific prop). A vendor that rejects the mix reports its own error; nothing is dropped silently.
  */
 export type VideoSendPlan = {
     mode: "frames" | "reference";
@@ -20,11 +20,8 @@ export type VideoSendPlan = {
     warning?: string;
 };
 
-/**
- * No vendor this app talks to accepts first/last frame and reference images in the same request
- * (Veo, Kling, Seedance, Runway and the OpenAI-style gateways all take one or the other).
- */
-export const VIDEO_MIX_FRAMES_AND_REFERENCES = false;
+/** First/last frame and reference images are sent together; vendors that cannot take both say so in their own error. */
+export const VIDEO_MIX_FRAMES_AND_REFERENCES = true;
 
 export function planVideoImageSend(roles: Array<string | undefined>, mixSupported = VIDEO_MIX_FRAMES_AND_REFERENCES): VideoSendPlan {
     const all = roles.map((_, index) => index);

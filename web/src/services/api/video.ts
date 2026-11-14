@@ -76,7 +76,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         // Send exactly what the reference strip shows: references by default, first/last frame only when marked.
         const plan = planVideoImageSend(config.videoImageRoles);
         references = applyVideoSendPlan(references, plan);
-        config = { ...config, videoMode: plan.mode };
+        config = { ...config, videoMode: plan.mode, videoFrameCount: plan.mode === "frames" ? (plan.last !== undefined ? 2 : 1) : undefined };
     }
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
@@ -86,7 +86,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const official = officialVideoProviderOf(requestConfig);
     if (official) {
         const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
-        const id = await createOfficialVideoTask(official, requestConfig, prompt, { images, mode: resolveVideoMode(requestConfig.videoMode, images.length) }, options);
+        const id = await createOfficialVideoTask(official, requestConfig, prompt, { images, mode: resolveVideoMode(requestConfig.videoMode, images.length, requestConfig.videoFrameCount), frameCount: requestConfig.videoFrameCount }, options);
         return { id, provider: official, model: selectedModel };
     }
     if (requestConfig.apiFormat === "anthropic" || requestConfig.apiFormat === "bfl") throw new Error(`渠道协议「${requestConfig.apiFormat}」不能生成视频，请为本节点换一个视频模型`);
@@ -132,7 +132,8 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 ratio: videoAspectRatio(config.size),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
-                mode: resolveVideoMode(config.videoMode, refs.length),
+                mode: resolveVideoMode(config.videoMode, refs.length, config.videoFrameCount),
+                ...(config.videoFrameCount ? { frameCount: config.videoFrameCount } : {}),
                 ...(configSeed(config) !== undefined ? { seed: configSeed(config) } : {}),
                 ...(config.camera ? { camera: config.camera } : {}),
                 ...(config.lighting ? { lighting: config.lighting } : {}),
@@ -173,7 +174,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
-    const mode = resolveVideoMode(config.videoMode, images.length);
+    const mode = resolveVideoMode(config.videoMode, images.length, config.videoFrameCount);
     const ratio = inferVideoRatio(config.size || "16:9");
     const body = new FormData();
     body.append("model", modelOptionName(model));
@@ -193,10 +194,16 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
             body.append("first_frame", images[0], "first.png");
             body.append("images", images[0], "first.png");
         }
-        if (images[1]) {
+        const frameCount = config.videoFrameCount ?? 2;
+        if (images[1] && frameCount >= 2) {
             body.append("last_frame", images[1], "last.png");
             body.append("images", images[1], "last.png");
         }
+        // Images after the frames are reference images (e.g. a specific prop), sent alongside the first frame.
+        images.slice(config.videoFrameCount ?? images.length).forEach((file, idx) => {
+            body.append("image[]", file, `ref_${idx + 1}.png`);
+            body.append("images", file, `ref_${idx + 1}.png`);
+        });
     } else {
         images.forEach((file, idx) => {
             body.append("image[]", file, `ref_${idx + 1}.png`);
@@ -246,11 +253,14 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
-    const mode = resolveVideoMode(config.videoMode, images.length);
+    const mode = resolveVideoMode(config.videoMode, images.length, config.videoFrameCount);
     const instance: Record<string, unknown> = { prompt };
     if (mode === "frames") {
+        const frameCount = config.videoFrameCount ?? 2;
         if (images[0]) instance.image = parseDataUrlInline(images[0]);
-        if (images[1]) instance.lastFrame = parseDataUrlInline(images[1]);
+        if (images[1] && frameCount >= 2) instance.lastFrame = parseDataUrlInline(images[1]);
+        const refs = images.slice(config.videoFrameCount ?? images.length);
+        if (refs.length) instance.referenceImages = refs.map((dataUrl) => ({ image: parseDataUrlInline(dataUrl), referenceType: "asset" }));
     } else {
         instance.referenceImages = images.map((dataUrl) => ({ image: parseDataUrlInline(dataUrl), referenceType: "asset" }));
     }
@@ -347,7 +357,9 @@ function normalizeVideoSeconds(value: string) {
     return clampVideoSeconds(value);
 }
 
-function resolveVideoMode(mode: string | undefined, imageCount: number) {
+function resolveVideoMode(mode: string | undefined, imageCount: number, frameCount?: number) {
+    // An explicit first/last frame from the send plan stays frames mode whatever the image count.
+    if (mode === "frames" && frameCount) return "frames";
     if (mode === "reference" || imageCount > 2) return "reference";
     return "frames";
 }

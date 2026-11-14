@@ -102,6 +102,8 @@ export type AiConfig = {
      * every image is a reference unless marked 首帧/尾帧. Unset keeps the old videoMode behaviour for other callers.
      */
     videoImageRoles?: Array<string | undefined>;
+    /** Set by the send plan in frames mode: the first N images (1 = first frame, 2 = first+last) are frames, the rest are reference images. */
+    videoFrameCount?: number;
 };
 
 /** Integer seed from a config, or undefined when unset/invalid; requests only send it when set. */

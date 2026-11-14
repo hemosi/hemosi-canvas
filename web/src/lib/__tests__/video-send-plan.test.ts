@@ -13,11 +13,18 @@ describe("planVideoImageSend", () => {
         const plan = planVideoImageSend(["character", "firstFrame", "scene", "style"]);
         expect(plan.mode).toBe("frames");
         expect(plan.first).toBe(1);
-        expect(applyVideoSendPlan(["a", "b", "c", "d"], plan)).toEqual(["b"]);
+        expect(applyVideoSendPlan(["a", "b", "c", "d"], plan)).toEqual(["b", "a", "c", "d"]);
     });
 
-    test("first frame + references on a model that cannot mix: warns and lists what is left out", () => {
+    test("first frame + references are sent together by default", () => {
         const plan = planVideoImageSend(["firstFrame", "character", "scene"]);
+        expect(plan.mode).toBe("frames");
+        expect(plan.dropped).toEqual([]);
+        expect(applyVideoSendPlan(["a", "b", "c"], plan)).toEqual(["a", "b", "c"]);
+    });
+
+    test("a vendor that cannot mix can still opt out: warns and lists what is left out", () => {
+        const plan = planVideoImageSend(["firstFrame", "character", "scene"], false);
         expect(plan.dropped).toEqual([1, 2]);
         expect(plan.warning).toContain("不会发送");
     });
