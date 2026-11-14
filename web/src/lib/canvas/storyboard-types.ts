@@ -38,6 +38,8 @@ export const StoryboardDataSchema = z.object({
     /** Image/video model the storyboard generates with; picks the built-in prompt template preset. */
     imageModel: z.string().optional(),
     videoModel: z.string().optional(),
+    /** One aspect ratio for the whole table: first frames and videos share it. Only new nodes take it; a node's own size is kept. */
+    aspectRatio: z.string().optional(),
     settings: z.array(SettingItemSchema),
     rows: z.array(StoryboardRowSchema),
 });

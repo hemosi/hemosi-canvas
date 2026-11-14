@@ -237,7 +237,9 @@ export function reconcileStoryboardGraph(params: {
     let nextCounters = { ...(params.refCounters || {}) };
     let nextNodes = [...params.nodes];
     const nodeMap = () => new Map(nextNodes.map((n) => [n.id, n]));
-    const presets = params.modelPresets;
+    // The table's ratio is the default for new nodes; a size a node already has is never overwritten.
+    const ratio = params.modelPresets?.imageSize || params.modelPresets?.videoSize || params.data.aspectRatio;
+    const presets: StoryboardModelPresets | undefined = { ...params.modelPresets, imageSize: params.modelPresets?.imageSize || ratio, videoSize: params.modelPresets?.videoSize || ratio };
 
     const sbNode = nodeMap().get(params.storyboardNodeId);
     if (!sbNode) {
@@ -324,13 +326,13 @@ export function reconcileStoryboardGraph(params: {
 
         const imgNode = map.get(imageNodeId);
         const imgModel = presets?.imageModel || imgNode?.metadata?.model || "";
-        const imgSize = presets?.imageSize || imgNode?.metadata?.size || "";
+        const imgSize = imgNode?.metadata?.size || presets?.imageSize || "";
         const imgPromptToUse = imgNode?.metadata?.manualPrompt ? (imgNode.metadata.prompt || "") : row.imgPrompt;
         const expectedImgHash = computeInputsHash([imgPromptToUse, refImgKeys, imgModel, imgSize]);
 
         const vidNode = map.get(videoNodeId);
         const vidModel = presets?.videoModel || vidNode?.metadata?.model || "";
-        const vidSize = presets?.videoSize || vidNode?.metadata?.size || "";
+        const vidSize = vidNode?.metadata?.size || presets?.videoSize || "";
         const vidPromptToUse = vidNode?.metadata?.manualPrompt ? (vidNode.metadata.prompt || "") : row.vidPrompt;
         const firstFrameKey = imgNode?.metadata?.storageKey || imgNode?.metadata?.content || "";
         const expectedVidHash = computeInputsHash([vidPromptToUse, firstFrameKey, vidModel, String(row.duration || 5), vidSize]);
@@ -344,7 +346,7 @@ export function reconcileStoryboardGraph(params: {
                         ...n.metadata,
                         imageRole: "firstFrame",
                         ...(presets?.imageModel ? { model: presets.imageModel } : {}),
-                        ...(presets?.imageSize ? { size: presets.imageSize } : {}),
+                        ...(presets?.imageSize && !n.metadata?.size ? { size: presets.imageSize } : {}),
                         ...(n.metadata?.manualPrompt ? {} : { prompt: row.imgPrompt }),
                         inputsHash: expectedImgHash,
                     },
@@ -358,7 +360,7 @@ export function reconcileStoryboardGraph(params: {
                         ...n.metadata,
                         seconds: String(row.duration || 5),
                         ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
-                        ...(presets?.videoSize ? { size: presets.videoSize } : {}),
+                        ...(presets?.videoSize && !n.metadata?.size ? { size: presets.videoSize } : {}),
                         ...(n.metadata?.manualPrompt ? {} : { prompt: row.vidPrompt }),
                         inputsHash: expectedVidHash,
                     },

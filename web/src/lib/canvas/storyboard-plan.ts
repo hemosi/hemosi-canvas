@@ -382,7 +382,8 @@ export function applyCanvasPlan(params: {
                 refId: allocated.refId,
                 prompt: ch.prompt,
                 ...(presets?.imageModel ? { model: presets.imageModel } : {}),
-                size: ch.size || presets?.imageSize || "9:16",
+                // The ratio picked on the confirm card wins, so images and videos of one plan share it.
+                size: presets?.imageSize || ch.size || "9:16",
             });
             created.title = ch.title || "图片";
             nextNodes.push(created);
@@ -414,7 +415,7 @@ export function applyCanvasPlan(params: {
                 prompt: ch.prompt,
                 seconds: String(ch.duration || 5),
                 ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
-                size: ch.size || presets?.videoSize || "16:9",
+                size: presets?.videoSize || ch.size || "16:9",
             });
             created.title = ch.title || "视频";
             nextNodes.push(created);
@@ -458,7 +459,9 @@ export function applyPlan(params: {
     modelPresets?: StoryboardModelPresets;
 }) {
     const presetModels = { imageModel: params.modelPresets?.imageModel, videoModel: params.modelPresets?.videoModel };
-    const baseData = syncStoryboardModelRules(params.data, presetModels) || params.data;
+    const synced = syncStoryboardModelRules(params.data, presetModels) || params.data;
+    const ratio = params.modelPresets?.imageSize || params.modelPresets?.videoSize;
+    const baseData = ratio && ratio !== synced.aspectRatio ? { ...synced, aspectRatio: ratio } : synced;
     const { next, diff, warnings } = previewPlan(baseData, params.plan, params.enabledIds, params.nodes);
 
     let nextNodes = [...params.nodes];

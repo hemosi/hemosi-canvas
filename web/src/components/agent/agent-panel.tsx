@@ -29,6 +29,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, HemosiNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
+const AGENT_RATIO_KEY = "hemosi:agent-aspect-ratio";
+const RATIO_OPTIONS = ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"];
 
 type DirectorMessage =
     | { id: string; role: "user"; text: string; mediaLabels?: string[] }
@@ -205,9 +207,13 @@ export function AgentPanel() {
     const [mediaPickEnabled, setMediaPickEnabled] = useState(false);
     const [attachedNodeIds, setAttachedNodeIds] = useState<string[]>([]);
     const [presetImageModel, setPresetImageModel] = useState<string>(configImageModel || "");
-    const [presetImageSize, setPresetImageSize] = useState<string>("9:16");
     const [presetVideoModel, setPresetVideoModel] = useState<string>(configVideoModel || "");
-    const [presetVideoSize, setPresetVideoSize] = useState<string>("16:9");
+    /** One ratio for first frames and videos alike; defaults to the bound table's ratio, else the last one picked. */
+    const [presetRatio, setPresetRatioState] = useState<string>(() => localStorage.getItem(AGENT_RATIO_KEY) || "9:16");
+    const setPresetRatio = (value: string) => {
+        setPresetRatioState(value);
+        localStorage.setItem(AGENT_RATIO_KEY, value);
+    };
     const [memoryTick, setMemoryTick] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
 
@@ -289,6 +295,7 @@ export function AgentPanel() {
         if (agentMode !== "storyboard" || !data) return;
         if (data.imageModel) setPresetImageModel(data.imageModel);
         if (data.videoModel) setPresetVideoModel(data.videoModel);
+        if (data.aspectRatio) setPresetRatioState(data.aspectRatio);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [agentMode, targetSb?.id]);
 
@@ -490,10 +497,9 @@ export function AgentPanel() {
             }
             if (res.ok) {
                 const hasChanges = res.plan.changes.length > 0;
-                const firstImgChange = res.plan.changes.find((c) => c.kind === "canvas.image.add");
-                if (firstImgChange && firstImgChange.kind === "canvas.image.add" && firstImgChange.size) {
-                    setPresetImageSize(firstImgChange.size);
-                }
+                // A table keeps its own ratio; otherwise start from the ratio the Agent proposed.
+                const proposed = res.plan.changes.find((c) => (c.kind === "canvas.image.add" || c.kind === "canvas.video.add") && c.size);
+                if (!sbSnapshot?.metadata?.storyboard?.aspectRatio && proposed && "size" in proposed && proposed.size) setPresetRatio(proposed.size);
                 if (!hasChanges) {
                     writeBack((prev) => [
                         ...prev,
@@ -553,9 +559,9 @@ export function AgentPanel() {
         // Presets only go onto the nodes this plan creates; the global image/video model settings stay as they are.
         const modelPresets: StoryboardModelPresets = {
             imageModel: presetImageModel || configImageModel,
-            imageSize: presetImageSize,
+            imageSize: presetRatio,
             videoModel: presetVideoModel || configVideoModel,
-            videoSize: presetVideoSize,
+            videoSize: presetRatio,
         };
 
         const enabledSet = new Set(msg.enabledIds);
@@ -815,6 +821,23 @@ export function AgentPanel() {
                                         {(showImgPreset || showVidPreset) ? (
                                             <div className="space-y-1.5">
                                                 <div className="text-[11px] font-medium opacity-80">生成节点模型预设</div>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="w-12 shrink-0 text-[11px] opacity-70">画幅比例</span>
+                                                    <select
+                                                        className="rounded border px-1.5 py-1 text-[11px] outline-none"
+                                                        style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
+                                                        value={presetRatio}
+                                                        title="首帧图和视频共用这一个比例；只用于本次新建的节点，已有节点的尺寸不改"
+                                                        onChange={(e) => setPresetRatio(e.target.value)}
+                                                    >
+                                                        {[...new Set([presetRatio, ...RATIO_OPTIONS])].map((ratio) => (
+                                                            <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
+                                                                {ratio}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <span className="text-[10px] opacity-55">首帧和视频共用</span>
+                                                </div>
                                                 {showImgPreset ? (
                                                     <div className="flex items-center gap-1.5">
                                                         <span className="w-12 shrink-0 text-[11px] opacity-70">图片模型</span>
@@ -830,18 +853,6 @@ export function AgentPanel() {
                                                                 }}
                                                             />
                                                         </div>
-                                                        <select
-                                                            className="rounded border px-1.5 py-1 text-[11px] outline-none"
-                                                            style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
-                                                            value={presetImageSize}
-                                                            onChange={(e) => setPresetImageSize(e.target.value)}
-                                                        >
-                                                            {["9:16", "16:9", "1:1", "4:3", "3:4"].map((ratio) => (
-                                                                <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
-                                                                    {ratio}
-                                                                </option>
-                                                            ))}
-                                                        </select>
                                                     </div>
                                                 ) : null}
                                                 {showVidPreset ? (
@@ -859,18 +870,6 @@ export function AgentPanel() {
                                                                 }}
                                                             />
                                                         </div>
-                                                        <select
-                                                            className="rounded border px-1.5 py-1 text-[11px] outline-none"
-                                                            style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
-                                                            value={presetVideoSize}
-                                                            onChange={(e) => setPresetVideoSize(e.target.value)}
-                                                        >
-                                                            {["16:9", "9:16"].map((ratio) => (
-                                                                <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
-                                                                    {ratio}
-                                                                </option>
-                                                            ))}
-                                                        </select>
                                                     </div>
                                                 ) : null}
                                             </div>

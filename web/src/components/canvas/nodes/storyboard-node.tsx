@@ -302,6 +302,22 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                     <select
                         className="rounded border px-1.5 py-0.5 text-[11px] outline-none"
                         style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
+                        value={data.aspectRatio || ""}
+                        title="本表画幅：首帧图和视频共用；只用于新建的节点，已有节点的尺寸不改"
+                        onChange={(e) => commit({ ...data, aspectRatio: e.target.value || undefined })}
+                    >
+                        <option value="" style={{ background: theme.node.panel, color: theme.node.text }}>
+                            画幅未定
+                        </option>
+                        {["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"].map((ratio) => (
+                            <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
+                                {ratio}
+                            </option>
+                        ))}
+                    </select>
+                    <select
+                        className="rounded border px-1.5 py-0.5 text-[11px] outline-none"
+                        style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
                         value={mode}
                         onChange={(e) => setMode(e.target.value as StoryboardAutopilotMode)}
                     >
