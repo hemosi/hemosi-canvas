@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App } from "antd";
+import localforage from "localforage";
 import { Clapperboard, FileText, Hand, Loader2, RotateCcw, Send, Sparkles, Square, Video, X } from "lucide-react";
 import { motion } from "motion/react";
+import { Streamdown } from "streamdown";
 
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { onCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import {
     compactHistoryWithModel,
@@ -17,6 +20,7 @@ import {
     type Change,
     type Plan,
 } from "@/lib/canvas/storyboard-plan";
+import { syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
 import { createEmptyStoryboardData, type StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -29,7 +33,7 @@ const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 type DirectorMessage =
     | { id: string; role: "user"; text: string; mediaLabels?: string[] }
     | { id: string; role: "assistant"; text: string }
-    | { id: string; role: "error"; text: string; raw?: string }
+    | { id: string; role: "error"; text: string; raw?: string; title?: string }
     | {
           id: string;
           role: "plan";
@@ -54,7 +58,43 @@ const COMPACT_KEEP_RECENT = 10;
 
 const emptyMemory = (): ScopedMemory => ({ messages: [], compressedSummary: "", compactedCount: 0 });
 
+/** Conversation memory per canvas/storyboard scope, kept in IndexedDB so it survives a refresh. */
+const memoryStorage = localforage.createInstance({ name: "infinite-canvas", storeName: "agent_memory" });
 const scopedMemoryStore = new Map<string, ScopedMemory>();
+const loadedScopes = new Set<string>();
+/** Bumped by 清空; a reply that comes back after its scope was cleared is dropped. */
+const scopeEpochs = new Map<string, number>();
+
+function setScopedMemory(key: string, memory: ScopedMemory) {
+    scopedMemoryStore.set(key, memory);
+    void memoryStorage.setItem(key, memory).catch((err) => console.warn("[agent] 保存对话记录失败", err));
+}
+
+async function loadScopedMemory(key: string) {
+    if (loadedScopes.has(key)) return;
+    loadedScopes.add(key);
+    const saved = await memoryStorage.getItem<ScopedMemory>(key).catch(() => null);
+    if (!saved) return;
+    // Messages written before the load finished go after the saved ones.
+    const cur = scopedMemoryStore.get(key);
+    scopedMemoryStore.set(key, cur ? { ...saved, messages: [...saved.messages, ...cur.messages] } : { ...emptyMemory(), ...saved });
+}
+
+const isStoryboardChange = (c: Change) => !c.kind.startsWith("canvas.");
+
+/**
+ * The storyboard a plan applies to, looked up now rather than when the plan was made:
+ * its own table if it still exists; for a plan made with no table, the selected or first table on the canvas.
+ * `missing` means its table was deleted.
+ */
+function resolvePlanStoryboard(storyboardNodeId: string | undefined, nodes: CanvasNodeData[], selectedIds: string[]) {
+    const tables = nodes.filter((n) => n.type === HemosiNodeType.Storyboard);
+    if (storyboardNodeId) {
+        const own = tables.find((n) => n.id === storyboardNodeId);
+        return { node: own || null, missing: !own };
+    }
+    return { node: tables.find((n) => selectedIds.includes(n.id)) || tables[0] || null, missing: false };
+}
 
 function messageToTurn(m: DirectorMessage): AgentHistoryTurn | null {
     if (m.role === "user") {
@@ -135,6 +175,14 @@ function isCanvasOnlyPlan(changes: Change[]): boolean {
     );
 }
 
+function AgentMarkdown({ text }: { text: string }) {
+    return (
+        <Streamdown className="agent-streamdown" mode="static" lineNumbers={false} controls={{ code: { copy: true, download: false }, table: false }}>
+            {text}
+        </Streamdown>
+    );
+}
+
 export function AgentPanel() {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -148,6 +196,7 @@ export function AgentPanel() {
     const configImageModel = useConfigStore((s) => s.config.imageModel || s.config.model);
     const configVideoModel = useConfigStore((s) => s.config.videoModel || s.config.model);
     const updateConfig = useConfigStore((s) => s.updateConfig);
+    const [canvasTick, setCanvasTick] = useState(0);
 
     const [agentMode, setAgentMode] = useState<AgentMode>("canvas");
     const [input, setInput] = useState("");
@@ -162,6 +211,38 @@ export function AgentPanel() {
     const [memoryTick, setMemoryTick] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
 
+    // Re-render when the selection or the storyboard tables change on the canvas (not on every drag frame).
+    useEffect(() => {
+        let raf = 0;
+        let lastSelection = "";
+        let lastCount = -1;
+        let lastTables: unknown[] = [];
+        const check = () => {
+            const h = getShotHost();
+            const nodes = h?.getAllNodes?.() || [];
+            const selection = (h?.getSelectedNodeIds?.() || []).join(",");
+            const tables = nodes.filter((n) => n.type === HemosiNodeType.Storyboard).map((n) => n.metadata);
+            const changed =
+                selection !== lastSelection ||
+                nodes.length !== lastCount ||
+                tables.length !== lastTables.length ||
+                tables.some((t, i) => t !== lastTables[i]);
+            if (!changed) return;
+            lastSelection = selection;
+            lastCount = nodes.length;
+            lastTables = tables;
+            setCanvasTick((t) => t + 1);
+        };
+        const off = onCanvasEvent("canvas:changed", () => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(check);
+        });
+        return () => {
+            off();
+            cancelAnimationFrame(raf);
+        };
+    }, []);
+
     useEffect(() => {
         if (configImageModel && !presetImageModel) setPresetImageModel(configImageModel);
     }, [configImageModel, presetImageModel]);
@@ -172,8 +253,9 @@ export function AgentPanel() {
 
     const host = getShotHost();
     const projectId = host?.getProjectId?.() || "default";
-    const allNodes: CanvasNodeData[] = host?.getAllNodes?.() || [];
-    const selectedIds = host?.getSelectedNodeIds?.() || [];
+    // canvasTick forces a fresh read after a relevant canvas change.
+    const allNodes: CanvasNodeData[] = useMemo(() => (void canvasTick, host?.getAllNodes?.() || []), [canvasTick, host]);
+    const selectedIds = useMemo(() => (void canvasTick, host?.getSelectedNodeIds?.() || []), [canvasTick, host]);
     const storyboardNodes = useMemo(
         () => allNodes.filter((n) => n.type === HemosiNodeType.Storyboard),
         [allNodes],
@@ -190,6 +272,36 @@ export function AgentPanel() {
         return `${projectId}:canvas`;
     }, [agentMode, projectId, targetSb?.id]);
 
+    useEffect(() => {
+        if (loadedScopes.has(scopeKey)) return;
+        let alive = true;
+        void loadScopedMemory(scopeKey).then(() => {
+            if (alive) setMemoryTick((t) => t + 1);
+        });
+        return () => {
+            alive = false;
+        };
+    }, [scopeKey]);
+
+    // The panel's model presets follow the bound storyboard's own models.
+    useEffect(() => {
+        const data = targetSb?.metadata?.storyboard;
+        if (agentMode !== "storyboard" || !data) return;
+        if (data.imageModel) setPresetImageModel(data.imageModel);
+        if (data.videoModel) setPresetVideoModel(data.videoModel);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [agentMode, targetSb?.id]);
+
+    /** Record the storyboard's models and switch its unedited prompt templates to those models' presets. */
+    const syncStoryboardTemplates = (sb: CanvasNodeData | null, imageModel?: string, videoModel?: string) => {
+        const data = sb?.metadata?.storyboard;
+        if (!sb || !data) return sb;
+        const next = syncStoryboardModelRules(data, { imageModel, videoModel });
+        if (!next) return sb;
+        host?.updateMetadata(sb.id, { storyboard: next });
+        return { ...sb, metadata: { ...sb.metadata, storyboard: next } };
+    };
+
     const currentMemory = useMemo<ScopedMemory>(() => {
         void memoryTick;
         return scopedMemoryStore.get(scopeKey) || emptyMemory();
@@ -200,18 +312,23 @@ export function AgentPanel() {
     const compactedCount = currentMemory.compactedCount || 0;
     const [compacting, setCompacting] = useState(false);
 
-    const updateScopedMessages = (updater: (prev: DirectorMessage[]) => DirectorMessage[]) => {
-        const cur = scopedMemoryStore.get(scopeKey) || emptyMemory();
-        scopedMemoryStore.set(scopeKey, { ...cur, messages: updater(cur.messages) });
+    const updateScopedMessages = (updater: (prev: DirectorMessage[]) => DirectorMessage[], key = scopeKey) => {
+        const cur = scopedMemoryStore.get(key) || emptyMemory();
+        setScopedMemory(key, { ...cur, messages: updater(cur.messages) });
         setMemoryTick((t) => t + 1);
     };
 
-
     const clearCurrentScope = () => {
+        // Stop the reply in flight and make sure a late one is not written back.
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setRunning(false);
+        setCompacting(false);
+        scopeEpochs.set(scopeKey, (scopeEpochs.get(scopeKey) || 0) + 1);
         host?.setStoryboardGhostNodes?.([]);
-        scopedMemoryStore.set(scopeKey, emptyMemory());
+        setScopedMemory(scopeKey, emptyMemory());
         setMemoryTick((t) => t + 1);
-        message.success("已清空当前上下文");
+        message.success("已清空当前对话");
     };
 
     useEffect(() => {
@@ -266,12 +383,12 @@ export function AgentPanel() {
     );
 
     const pendingPreview = useMemo(() => {
-        if (!pendingPlanMsg || !pendingPlanMsg.storyboardNodeId) return null;
-        const planSb = allNodes.find((n) => n.id === pendingPlanMsg.storyboardNodeId);
+        if (!pendingPlanMsg || !pendingPlanMsg.plan.changes.some(isStoryboardChange)) return null;
+        const planSb = resolvePlanStoryboard(pendingPlanMsg.storyboardNodeId, allNodes, selectedIds).node;
         if (!planSb) return null;
         const data = planSb.metadata?.storyboard || createEmptyStoryboardData();
         return previewPlan(data, pendingPlanMsg.plan, new Set(pendingPlanMsg.enabledIds), allNodes, planSb);
-    }, [allNodes, pendingPlanMsg]);
+    }, [allNodes, pendingPlanMsg, selectedIds]);
 
     useEffect(() => {
         host?.setStoryboardGhostNodes?.(pendingPreview?.diff.ghostNodes || []);
@@ -286,7 +403,11 @@ export function AgentPanel() {
             return;
         }
 
-        const sbSnapshot = agentMode === "storyboard" ? targetSb : null;
+        // The agent reads the storyboard's prompt templates, so bring them in line with the chosen models first.
+        const sbSnapshot =
+            agentMode === "storyboard"
+                ? syncStoryboardTemplates(targetSb, presetImageModel || configImageModel, presetVideoModel || configVideoModel)
+                : null;
         const matchedRow = sbSnapshot?.metadata?.storyboard?.rows.find(
             (r) => selectedIds.includes(r.imageNodeId) || selectedIds.includes(r.videoNodeId),
         );
@@ -294,6 +415,7 @@ export function AgentPanel() {
         const currentAttachedIds = [...attachedNodeIds];
         const mediaLabels = attachedNodes.map((n) => `@${n.metadata?.refId || n.title || n.type}`);
         const sendScopeKey = scopeKey;
+        const sendEpoch = scopeEpochs.get(sendScopeKey) || 0;
 
         setInput("");
         setAttachedNodeIds([]);
@@ -309,6 +431,11 @@ export function AgentPanel() {
         setRunning(true);
         const controller = new AbortController();
         abortRef.current = controller;
+        /** False once the user stopped this reply or cleared its conversation; then nothing is written back. */
+        const stillWanted = () => !controller.signal.aborted && (scopeEpochs.get(sendScopeKey) || 0) === sendEpoch;
+        const writeBack = (updater: (prev: DirectorMessage[]) => DirectorMessage[]) => {
+            if (stillWanted()) updateScopedMessages(updater, sendScopeKey);
+        };
 
         try {
             // Auto compact: only when what we would send passes the threshold; the panel keeps every message.
@@ -335,8 +462,9 @@ export function AgentPanel() {
                     setCompacting(false);
                 }
                 foldedCount = foldUntil;
+                if (!stillWanted()) return;
                 const cur = scopedMemoryStore.get(sendScopeKey) || emptyMemory();
-                scopedMemoryStore.set(sendScopeKey, { ...cur, compressedSummary: summaryForSend, compactedCount: foldedCount });
+                setScopedMemory(sendScopeKey, { ...cur, compressedSummary: summaryForSend, compactedCount: foldedCount });
                 setMemoryTick((t) => t + 1);
             }
             const history = toTurns(messages.slice(foldedCount));
@@ -353,6 +481,13 @@ export function AgentPanel() {
                 compressedSummary: summaryForSend,
                 signal: controller.signal,
             });
+            if (!stillWanted()) return;
+            if (res.mediaFailures.length) {
+                writeBack((prev) => [
+                    ...prev,
+                    { id: `e-${Date.now()}-m`, role: "error", title: "有素材没能读取，未发给模型", text: res.mediaFailures.join("；") },
+                ]);
+            }
             if (res.ok) {
                 const hasChanges = res.plan.changes.length > 0;
                 const firstImgChange = res.plan.changes.find((c) => c.kind === "canvas.image.add");
@@ -360,12 +495,12 @@ export function AgentPanel() {
                     setPresetImageSize(firstImgChange.size);
                 }
                 if (!hasChanges) {
-                    updateScopedMessages((prev) => [
+                    writeBack((prev) => [
                         ...prev,
                         { id: `a-${Date.now()}`, role: "assistant", text: res.plan.summary },
                     ]);
                 } else {
-                    updateScopedMessages((prev) => [
+                    writeBack((prev) => [
                         ...prev,
                         {
                             id: `p-${Date.now()}`,
@@ -378,21 +513,24 @@ export function AgentPanel() {
                     ]);
                 }
             } else {
-                updateScopedMessages((prev) => [
+                writeBack((prev) => [
                     ...prev,
-                    { id: `e-${Date.now()}`, role: "error", text: res.error, raw: res.raw },
+                    { id: `e-${Date.now()}`, role: "error", title: "回复格式没能解析成改动计划", text: res.error, raw: res.raw },
                 ]);
             }
         } catch (err) {
             if ((err as Error)?.name !== "AbortError") {
-                updateScopedMessages((prev) => [
+                writeBack((prev) => [
                     ...prev,
-                    { id: `e-${Date.now()}`, role: "error", text: err instanceof Error ? err.message : String(err) },
+                    { id: `e-${Date.now()}`, role: "error", title: "请求出错", text: err instanceof Error ? err.message : String(err) },
                 ]);
             }
         } finally {
-            setRunning(false);
-            abortRef.current = null;
+            if (abortRef.current === controller) {
+                setRunning(false);
+                setCompacting(false);
+                abortRef.current = null;
+            }
         }
     };
 
@@ -410,51 +548,76 @@ export function AgentPanel() {
 
     const handleApplyPlan = (msgId: string, autoRun = false) => {
         const msg = messages.find((m) => m.id === msgId);
-        if (!msg || msg.role !== "plan") return;
+        if (!msg || msg.role !== "plan" || !host) return;
 
+        // Presets only go onto the nodes this plan creates; the global image/video model settings stay as they are.
         const modelPresets: StoryboardModelPresets = {
             imageModel: presetImageModel || configImageModel,
             imageSize: presetImageSize,
             videoModel: presetVideoModel || configVideoModel,
             videoSize: presetVideoSize,
         };
-        if (modelPresets.imageModel) updateConfig("imageModel", modelPresets.imageModel);
-        if (modelPresets.videoModel) updateConfig("videoModel", modelPresets.videoModel);
 
         const enabledSet = new Set(msg.enabledIds);
-        const canvasOnly = isCanvasOnlyPlan(msg.plan.changes) || !msg.storyboardNodeId;
+        const enabledChanges = msg.plan.changes.filter((c) => enabledSet.has(c.id));
+        if (!enabledChanges.length) {
+            message.info("没有勾选任何改动");
+            return;
+        }
 
-        if (canvasOnly) {
-            if (!host?.applyCanvasAgentPlan) return;
+        let createdTasks: StoryboardQueueTask[] = [];
+        let appliedStoryboardId = msg.storyboardNodeId;
+
+        if (!enabledChanges.some(isStoryboardChange)) {
+            if (!host.applyCanvasAgentPlan) return;
             const res = host.applyCanvasAgentPlan(msg.plan, enabledSet, modelPresets);
-            updateScopedMessages((prev) =>
-                prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)),
-            );
-            message.success("已在画布上生成节点");
-            if (autoRun && res?.createdTasks?.length) {
-                void host.runStoryboardBatch?.(res.createdTasks, { skipConfirm: true, title: "生成节点内容" });
+            if (!res) {
+                message.error("画布未就绪，改动没有应用");
+                return;
             }
-            return;
+            createdTasks = res.createdTasks;
+            message.success(`已在画布上生成 ${enabledChanges.length} 个节点`);
+        } else {
+            if (!host.applyStoryboardPlan) return;
+            // Resolve the table now, so a plan card made before the table existed still works.
+            let { node: sb } = resolvePlanStoryboard(msg.storyboardNodeId, host.getAllNodes?.() || [], host.getSelectedNodeIds?.() || []);
+            let createdTable = false;
+            if (!sb) {
+                const newId = host.createStoryboardNode?.();
+                sb = (host.getAllNodes?.() || []).find((n) => n.id === newId) || null;
+                createdTable = Boolean(sb);
+            }
+            if (!sb) {
+                message.error("没能创建分镜表，改动没有应用");
+                return;
+            }
+            const result = host.applyStoryboardPlan(sb.id, msg.plan, enabledSet, removeOrphan, modelPresets);
+            host.setStoryboardGhostNodes?.([]);
+            if (!result || result.applied === 0) {
+                message.warning(result?.warnings?.[0] || "这份计划里没有能应用到分镜表的改动");
+                return;
+            }
+            createdTasks = result.createdTasks || [];
+            appliedStoryboardId = sb.id;
+            const tableNote = createdTable ? `，已自动新建分镜表${sb.metadata?.refId ? ` @${sb.metadata.refId}` : ""}` : "";
+            if (result.warnings.length) message.warning(`已应用 ${result.applied} 项改动${tableNote}；${result.warnings[0]}`);
+            else message.success(`已应用 ${result.applied} 项改动${tableNote}`);
         }
 
-        if (!host?.applyStoryboardPlan) return;
-        const planSb = allNodes.find((n) => n.id === msg.storyboardNodeId);
-        if (!planSb) {
-            message.warning("原分镜表节点已不存在，请先在画布创建分镜表或切换到画布助手模式");
-            return;
-        }
-        const result = host.applyStoryboardPlan(planSb.id, msg.plan, enabledSet, removeOrphan, modelPresets);
-        host.setStoryboardGhostNodes?.([]);
         updateScopedMessages((prev) =>
-            prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)),
+            prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied", storyboardNodeId: appliedStoryboardId } : m)),
         );
-        if (result?.warnings?.length) {
-            message.warning(result.warnings[0]);
-        } else {
-            message.success("已应用改动并绑定模型预设");
+        // A conversation held before any table existed moves onto the table it just filled, so it stays in view.
+        const tableScopeKey = `${projectId}:sb:${appliedStoryboardId}`;
+        if (appliedStoryboardId && scopeKey === `${projectId}:sb:none` && !scopedMemoryStore.get(tableScopeKey)?.messages.length) {
+            setScopedMemory(tableScopeKey, scopedMemoryStore.get(scopeKey) || emptyMemory());
+            setScopedMemory(scopeKey, emptyMemory());
+            loadedScopes.add(tableScopeKey);
+            setMemoryTick((t) => t + 1);
         }
-        if (autoRun && result?.createdTasks?.length) {
-            void host.runStoryboardBatch?.(result.createdTasks, { skipConfirm: true, title: "生成节点内容" });
+        // Runs go through the normal confirm card; images finish before videos start.
+        if (autoRun && createdTasks.length) {
+            void host.runStoryboardBatch?.(createdTasks, { title: "生成节点内容" });
         }
     };
 
@@ -514,11 +677,11 @@ export function AgentPanel() {
                             type="button"
                             className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] opacity-75 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                             style={{ border: `1px solid ${border}` }}
-                            title="清空当前画布/分镜表的对话上下文（Clear）"
+                            title="清空当前画布/分镜表的对话记录（生成中会先停止）"
                             onClick={clearCurrentScope}
                         >
                             <RotateCcw className="size-3" />
-                            <span>Clear</span>
+                            <span>清空</span>
                         </button>
                     </div>
                 </div>
@@ -576,15 +739,16 @@ export function AgentPanel() {
                         }
                         if (m.role === "assistant") {
                             return (
-                                <div key={m.id} className="mr-4 whitespace-pre-wrap rounded-xl border p-2.5 leading-relaxed" style={{ borderColor: border }}>
-                                    {m.text}
+                                <div key={m.id} className="mr-4 rounded-xl border p-2.5 leading-relaxed" style={{ borderColor: border }}>
+                                    <AgentMarkdown text={m.text} />
                                 </div>
                             );
                         }
                         if (m.role === "error") {
                             return (
                                 <div key={m.id} className="space-y-1 rounded-xl border border-red-500/40 bg-red-500/10 p-2.5 text-red-400">
-                                    <div className="font-semibold">生成失败：{m.text}</div>
+                                    <div className="font-semibold">{m.title || "出错了"}</div>
+                                    <div className="whitespace-pre-wrap break-words">{m.text}</div>
                                     {m.raw ? (
                                         <pre className="max-h-28 overflow-auto whitespace-pre-wrap text-[10px] opacity-80">{m.raw}</pre>
                                     ) : null}
@@ -601,9 +765,11 @@ export function AgentPanel() {
                         return (
                             <div key={m.id} className="space-y-2 rounded-xl border p-2.5" style={{ borderColor: border }}>
                                 <div className="flex items-start justify-between gap-2">
-                                    <span className="whitespace-pre-wrap font-semibold leading-relaxed">{m.plan.summary}</span>
+                                    <div className="min-w-0 flex-1 leading-relaxed">
+                                        <AgentMarkdown text={m.plan.summary} />
+                                    </div>
                                     <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px]" style={{ background: theme.toolbar.activeBg }}>
-                                        {m.status === "pending" ? "待确认" : m.status === "applied" ? "已生成" : "未采用"}
+                                        {m.status === "pending" ? "待确认" : m.status === "applied" ? "已应用" : "未采用"}
                                     </span>
                                 </div>
 
@@ -658,7 +824,10 @@ export function AgentPanel() {
                                                                 capability="image"
                                                                 fullWidth
                                                                 value={presetImageModel}
-                                                                onChange={(val) => setPresetImageModel(val)}
+                                                                onChange={(val) => {
+                                                                    setPresetImageModel(val);
+                                                                    if (agentMode === "storyboard") syncStoryboardTemplates(targetSb, val, undefined);
+                                                                }}
                                                             />
                                                         </div>
                                                         <select
@@ -684,7 +853,10 @@ export function AgentPanel() {
                                                                 capability="video"
                                                                 fullWidth
                                                                 value={presetVideoModel}
-                                                                onChange={(val) => setPresetVideoModel(val)}
+                                                                onChange={(val) => {
+                                                                    setPresetVideoModel(val);
+                                                                    if (agentMode === "storyboard") syncStoryboardTemplates(targetSb, undefined, val);
+                                                                }}
                                                             />
                                                         </div>
                                                         <select
@@ -744,7 +916,7 @@ export function AgentPanel() {
                                     </div>
                                 ) : m.status === "applied" && m.plan.suggestRun && m.storyboardNodeId ? (
                                     (() => {
-                                        const planSb = allNodes.find((n) => n.id === m.storyboardNodeId);
+                                        const planSb = resolvePlanStoryboard(m.storyboardNodeId, allNodes, selectedIds).node;
                                         if (!planSb) return null;
                                         return (
                                             <div className="flex items-center gap-2 pt-1">
@@ -898,6 +1070,8 @@ export function AgentPanel() {
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
+                                // Enter while a Chinese IME is composing picks the candidate; it must not send.
+                                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                                 if (e.key === "Enter" && !e.shiftKey) {
                                     e.preventDefault();
                                     void handleSend();
