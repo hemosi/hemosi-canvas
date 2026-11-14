@@ -5,6 +5,7 @@ import { Clapperboard, FileText, Hand, Loader2, RotateCcw, Send, Sparkles, Squar
 import { motion } from "motion/react";
 import { Streamdown } from "streamdown";
 
+import { AgentSkillDialog } from "@/components/agent/agent-skill-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { onCanvasEvent } from "@/lib/canvas/canvas-event-bus";
@@ -24,6 +25,7 @@ import { syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
 import { createEmptyStoryboardData, settingImageNode, settingsGate, type StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, HemosiNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -34,7 +36,7 @@ const RATIO_OPTIONS = ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"];
 
 type DirectorMessage =
     | { id: string; role: "user"; text: string; mediaLabels?: string[] }
-    | { id: string; role: "assistant"; text: string }
+    | { id: string; role: "assistant"; text: string; autoSkills?: string[] }
     | { id: string; role: "error"; text: string; raw?: string; title?: string }
     | {
           id: string;
@@ -43,6 +45,7 @@ type DirectorMessage =
           plan: Plan;
           enabledIds: string[];
           status: "pending" | "applied" | "rejected";
+          autoSkills?: string[];
       };
 
 type ScopedMemory = {
@@ -226,6 +229,10 @@ export function AgentPanel() {
         localStorage.setItem(AGENT_RATIO_KEY, value);
     };
     const [memoryTick, setMemoryTick] = useState(0);
+    const [skillDialogOpen, setSkillDialogOpen] = useState(false);
+    const allSkills = useAgentSkillStore((s) => s.skills);
+    const activeByScope = useAgentSkillStore((s) => s.activeByScope);
+    const toggleSkill = useAgentSkillStore((s) => s.toggleActive);
     const abortRef = useRef<AbortController | null>(null);
 
     // Re-render when the selection or the storyboard tables change on the canvas (not on every drag frame).
@@ -319,6 +326,9 @@ export function AgentPanel() {
         host?.updateMetadata(sb.id, { storyboard: next });
         return { ...sb, metadata: { ...sb.metadata, storyboard: next } };
     };
+
+    const enabledSkills = useMemo(() => allSkills.filter((k) => k.enabled), [allSkills]);
+    const activeSkillIds = activeByScope[scopeKey] || [];
 
     const currentMemory = useMemo<ScopedMemory>(() => {
         void memoryTick;
@@ -498,8 +508,13 @@ export function AgentPanel() {
                 history,
                 compressedSummary: summaryForSend,
                 signal: controller.signal,
+                skills: {
+                    available: enabledSkills.map(({ name, description, body }) => ({ name, description, body })),
+                    activeNames: enabledSkills.filter((k) => activeSkillIds.includes(k.id)).map((k) => k.name),
+                },
             });
             if (!stillWanted()) return;
+            const autoSkills = res.autoLoadedSkills.length ? res.autoLoadedSkills : undefined;
             if (res.mediaFailures.length) {
                 writeBack((prev) => [
                     ...prev,
@@ -514,7 +529,7 @@ export function AgentPanel() {
                 if (!hasChanges) {
                     writeBack((prev) => [
                         ...prev,
-                        { id: `a-${Date.now()}`, role: "assistant", text: res.plan.summary },
+                        { id: `a-${Date.now()}`, role: "assistant", text: res.plan.summary, autoSkills },
                     ]);
                 } else {
                     writeBack((prev) => [
@@ -526,6 +541,7 @@ export function AgentPanel() {
                             plan: res.plan,
                             enabledIds: res.plan.changes.map((c) => c.id),
                             status: "pending",
+                            autoSkills,
                         },
                     ]);
                 }
@@ -727,6 +743,30 @@ export function AgentPanel() {
                     </div>
                 </div>
 
+                {/* Skill chips: click to load a skill for this chat by hand; the Agent can also load enabled ones by description. */}
+                <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b px-3 py-1 thin-scrollbar" style={{ borderColor: border }}>
+                    <span className="shrink-0 text-[11px] opacity-65">Skill</span>
+                    {enabledSkills.map((k) => {
+                        const on = activeSkillIds.includes(k.id);
+                        return (
+                            <button
+                                key={k.id}
+                                type="button"
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] transition ${on ? "bg-sky-500 text-white" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
+                                style={on ? undefined : { border: `1px solid ${border}` }}
+                                title={`${k.description || "没有描述"}\n${on ? "已手动加载（点击取消）" : "点击为本对话手动加载；不点也可能被 Agent 按描述自动加载"}`}
+                                onClick={() => toggleSkill(scopeKey, k.id)}
+                            >
+                                {k.name}
+                            </button>
+                        );
+                    })}
+                    {!enabledSkills.length ? <span className="shrink-0 text-[10px] opacity-50">未导入</span> : null}
+                    <button type="button" className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" onClick={() => setSkillDialogOpen(true)}>
+                        管理
+                    </button>
+                </div>
+
                 {/* Message List */}
                 <div className="thin-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
                     {compressedSummary ? (
@@ -767,6 +807,7 @@ export function AgentPanel() {
                         if (m.role === "assistant") {
                             return (
                                 <div key={m.id} className="mr-4 rounded-xl border p-2.5 leading-relaxed" style={{ borderColor: border }}>
+                                    {m.autoSkills?.length ? <div className="mb-1 text-[10px] opacity-60">已按描述自动加载 skill：{m.autoSkills.join("、")}</div> : null}
                                     <AgentMarkdown text={m.text} />
                                 </div>
                             );
@@ -793,6 +834,7 @@ export function AgentPanel() {
 
                         return (
                             <div key={m.id} className="space-y-2 rounded-xl border p-2.5" style={{ borderColor: border }}>
+                                {m.autoSkills?.length ? <div className="text-[10px] opacity-60">已按描述自动加载 skill：{m.autoSkills.join("、")}</div> : null}
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1 leading-relaxed">
                                         <AgentMarkdown text={m.plan.summary} />
@@ -1142,6 +1184,7 @@ export function AgentPanel() {
                     </div>
                 </div>
             </aside>
+            <AgentSkillDialog open={skillDialogOpen} onClose={() => setSkillDialogOpen(false)} />
         </motion.div>
     );
 }

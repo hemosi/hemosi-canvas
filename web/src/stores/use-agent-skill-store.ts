@@ -1,122 +1,62 @@
+import { nanoid } from "nanoid";
 import { create } from "zustand";
-import i18n from "@/i18n";
+import { createJSONStorage, persist } from "zustand/middleware";
 
-import { fetchCodexSkills, type AgentSkillDraft, type AgentSkillSummary } from "@/services/api/canvas-agent";
-import { useAgentStore } from "@/stores/use-agent-store";
+import type { ParsedSkill } from "@/lib/agent-skills";
+import { localForageStorage } from "@/lib/localforage-storage";
 
-let loadSequence = 0;
-
-type AgentSkillStore = {
-    skills: AgentSkillSummary[];
-    selectedSkill: AgentSkillSummary | null;
-    selectionRevision: number;
-    connectionRevision: number;
-    autoPrompt: string;
-    draft: AgentSkillDraft | null;
-    generatingSource: "conversation" | "canvas" | null;
-    loading: boolean;
-    loaded: boolean;
-    errors: string[];
-    loadSkills: (endpoint: string, token: string, forceReload?: boolean) => Promise<void>;
-    selectSkill: (skill: AgentSkillSummary | null, prompt?: string) => void;
-    clearSelection: (expectedRevision?: number) => void;
-    setDraft: (draft: AgentSkillDraft | null) => void;
-    setGeneratingSource: (source: "conversation" | "canvas" | null) => void;
-    reset: () => void;
+/** A SKILL.md the user imported; kept only in this app (IndexedDB). */
+export type LocalSkill = ParsedSkill & {
+    id: string;
+    /** Disabled skills are neither offered to the Agent nor shown in the chip bar. */
+    enabled: boolean;
+    updatedAt: number;
 };
 
-export const useAgentSkillStore = create<AgentSkillStore>((set, get) => ({
-    skills: [],
-    selectedSkill: null,
-    selectionRevision: 0,
-    connectionRevision: 0,
-    autoPrompt: "",
-    draft: null,
-    generatingSource: null,
-    loading: false,
-    loaded: false,
-    errors: [],
-    loadSkills: async (endpoint, token, forceReload = false) => {
-        const sequence = ++loadSequence;
-        set({ loading: true });
-        try {
-            const response = await fetchCodexSkills(endpoint, token, forceReload);
-            if (sequence !== loadSequence) return;
-            const skills = response.data || [];
-            const current = get();
-            const selected = current.selectedSkill;
-            const selectedSkill = selected ? skills.find((item) => item.name === selected.name && item.path === selected.path && item.enabled) || null : null;
-            const selectionChanged = Boolean(selected && !selectedSkill);
-            if (selectionChanged) clearSelectedSkillPrompt(current);
-            const autoPrompt = selectedSkill
-                ? replaceAutoPrompt(current.autoPrompt, selectedSkill.interface?.defaultPrompt?.trim() || `$${selectedSkill.name}`, false)
-                : "";
-            set({ skills, selectedSkill, autoPrompt, selectionRevision: current.selectionRevision + (selectionChanged ? 1 : 0), loading: false, loaded: true, errors: (response.errors || []).map(skillErrorText) });
-        } catch (error) {
-            if (sequence !== loadSequence) return;
-            set({ loading: false, loaded: true, errors: [error instanceof Error ? error.message : i18n.t("agent.state.skillReadFailed")] });
-        }
-    },
-    selectSkill: (selectedSkill, prompt) => {
-        const current = get();
-        const agent = useAgentStore.getState();
-        const marker = selectedSkill ? `$${selectedSkill.name}` : "";
-        const previousMarker = current.selectedSkill ? `$${current.selectedSkill.name}` : "";
-        let nextPrompt = prompt;
-        let autoPrompt = "";
-        if (nextPrompt === undefined && selectedSkill) {
-            const defaultPrompt = selectedSkill.interface?.defaultPrompt?.trim() || marker;
-            if (!agent.prompt.trim() || Boolean(current.autoPrompt && agent.prompt === current.autoPrompt)) {
-                nextPrompt = defaultPrompt;
-                autoPrompt = defaultPrompt;
-            } else if (previousMarker && agent.prompt.includes(previousMarker)) {
-                nextPrompt = agent.prompt.replace(previousMarker, marker);
-            } else {
-                nextPrompt = agent.prompt.includes(marker) ? agent.prompt : `${agent.prompt}${/\s$/.test(agent.prompt) ? "" : " "}${marker}`;
-            }
-        }
-        if (nextPrompt !== undefined && agent.prompt !== nextPrompt) agent.setAgentState({ prompt: nextPrompt });
-        set({ selectedSkill, autoPrompt, selectionRevision: current.selectionRevision + 1 });
-    },
-    clearSelection: (expectedRevision) => {
-        const current = get();
-        if (expectedRevision !== undefined && expectedRevision !== current.selectionRevision) return;
-        clearSelectedSkillPrompt(current);
-        set({ selectedSkill: null, autoPrompt: "", selectionRevision: current.selectionRevision + 1 });
-    },
-    setDraft: (draft) => set({ draft }),
-    setGeneratingSource: (generatingSource) => set({ generatingSource }),
-    reset: () => {
-        loadSequence += 1;
-        const current = get();
-        clearSelectedSkillPrompt(current);
-        set({ skills: [], selectedSkill: null, selectionRevision: current.selectionRevision + 1, connectionRevision: current.connectionRevision + 1, autoPrompt: "", draft: null, generatingSource: null, loading: false, loaded: false, errors: [] });
-    },
-}));
+type AgentSkillStore = {
+    skills: LocalSkill[];
+    /** Skills the user switched on by hand, per Agent chat scope (canvas / storyboard table). */
+    activeByScope: Record<string, string[]>;
+    addSkills: (items: ParsedSkill[]) => { added: number; replaced: number };
+    updateSkill: (id: string, patch: Partial<Omit<LocalSkill, "id">>) => void;
+    removeSkill: (id: string) => void;
+    toggleActive: (scope: string, skillId: string) => void;
+};
 
-function replaceAutoPrompt(previous: string, next: string, fillEmpty: boolean) {
-    const agent = useAgentStore.getState();
-    const ownsPrompt = Boolean(previous && agent.prompt === previous);
-    if (!ownsPrompt && !(fillEmpty && !agent.prompt.trim())) return "";
-    if (agent.prompt !== next) agent.setAgentState({ prompt: next });
-    return next;
-}
-
-function clearSelectedSkillPrompt(selection: Pick<AgentSkillStore, "selectedSkill" | "autoPrompt">) {
-    const agent = useAgentStore.getState();
-    if (selection.autoPrompt && agent.prompt === selection.autoPrompt) {
-        agent.setAgentState({ prompt: "" });
-        return;
-    }
-    if (!selection.selectedSkill) return;
-    const marker = `$${selection.selectedSkill.name}`;
-    if (agent.prompt.includes(marker)) agent.setAgentState({ prompt: agent.prompt.replace(marker, "") });
-}
-
-function skillErrorText(value: unknown) {
-    if (typeof value === "string") return value;
-    if (!value || typeof value !== "object") return i18n.t("agent.state.skillParseFailed");
-    const item = value as { path?: unknown; error?: unknown; message?: unknown };
-    const message = typeof item.error === "string" ? item.error : typeof item.message === "string" ? item.message : i18n.t("agent.state.skillParseFailed");
-    return typeof item.path === "string" ? `${item.path}：${message}` : message;
-}
+export const useAgentSkillStore = create<AgentSkillStore>()(
+    persist(
+        (set, get) => ({
+            skills: [],
+            activeByScope: {},
+            addSkills: (items) => {
+                let added = 0;
+                let replaced = 0;
+                const skills = [...get().skills];
+                for (const item of items) {
+                    // Same name = same skill: importing again replaces it.
+                    const index = skills.findIndex((s) => s.name === item.name);
+                    if (index >= 0) {
+                        skills[index] = { ...skills[index], ...item, updatedAt: Date.now() };
+                        replaced++;
+                    } else {
+                        skills.push({ ...item, id: nanoid(), enabled: true, updatedAt: Date.now() });
+                        added++;
+                    }
+                }
+                set({ skills });
+                return { added, replaced };
+            },
+            updateSkill: (id, patch) => set({ skills: get().skills.map((s) => (s.id === id ? { ...s, ...patch, updatedAt: Date.now() } : s)) }),
+            removeSkill: (id) =>
+                set({
+                    skills: get().skills.filter((s) => s.id !== id),
+                    activeByScope: Object.fromEntries(Object.entries(get().activeByScope).map(([k, v]) => [k, v.filter((x) => x !== id)])),
+                }),
+            toggleActive: (scope, skillId) => {
+                const cur = get().activeByScope[scope] || [];
+                set({ activeByScope: { ...get().activeByScope, [scope]: cur.includes(skillId) ? cur.filter((x) => x !== skillId) : [...cur, skillId] } });
+            },
+        }),
+        { name: "hemosi:agent-skills", storage: createJSONStorage(() => localForageStorage) },
+    ),
+);
