@@ -39,7 +39,7 @@ export const SUBJECT_FOLDERS: { key: SubjectFolder; label: string }[] = [
 ];
 
 export default function AssetsPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const { t } = useTranslation();
     const copyText = useCopyText();
     const [form] = Form.useForm<AssetFormValues>();
@@ -63,6 +63,9 @@ export default function AssetsPage() {
     const [formKind, setFormKind] = useState<AssetKind>("text");
     const [imageDraft, setImageDraft] = useState<ImageDraft>(null);
     const [isDraggingOverNav, setIsDraggingOverNav] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const lastSelectedRef = useRef<string | null>(null);
+    const [isDraggingOverMain, setIsDraggingOverMain] = useState(false);
 
     const coverUrl = Form.useWatch("coverUrl", form) || "";
     const title = Form.useWatch("title", form) || "";
@@ -232,6 +235,54 @@ export default function AssetsPage() {
         setDeletingAsset(null);
     };
 
+    /** Move assets to a nav target: favorite / subject / folder:xxx / all (未分类). */
+    const moveAssets = (ids: string[], targetNavKey: string) => {
+        for (const id of ids) {
+            if (targetNavKey === "favorite") updateAsset(id, { category: "favorite" });
+            else if (targetNavKey === "subject") updateAsset(id, { category: "subject" });
+            else if (targetNavKey.startsWith("folder:")) updateAsset(id, { category: "subject", folder: targetNavKey.replace("folder:", "") });
+            else updateAsset(id, { category: "other", folder: undefined });
+        }
+        message.success(`已移动 ${ids.length} 项`);
+    };
+
+    const toggleSelect = (asset: Asset, shift: boolean) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            const last = lastSelectedRef.current;
+            if (shift && last) {
+                const ids = visibleAssets.map((a) => a.id);
+                const [a, b] = [ids.indexOf(last), ids.indexOf(asset.id)].sort((x, y) => x - y);
+                if (a >= 0) ids.slice(a, b + 1).forEach((id) => next.add(id));
+            } else if (next.has(asset.id)) next.delete(asset.id);
+            else next.add(asset.id);
+            return next;
+        });
+        lastSelectedRef.current = asset.id;
+    };
+
+    const batchFavorite = (favorite: boolean) => {
+        selectedIds.forEach((id) => updateAsset(id, { category: favorite ? "favorite" : "other" }));
+        message.success(favorite ? `已收藏 ${selectedIds.size} 项` : `已取消收藏 ${selectedIds.size} 项`);
+    };
+
+    const batchDelete = () => {
+        const ids = [...selectedIds];
+        modal.confirm({
+            title: `删除选中的 ${ids.length} 项素材？`,
+            content: "删除后无法恢复。",
+            okText: "删除",
+            okButtonProps: { danger: true },
+            cancelText: "取消",
+            centered: true,
+            onOk: () => {
+                ids.forEach((id) => removeAsset(id));
+                setSelectedIds(new Set());
+                message.success(`已删除 ${ids.length} 项`);
+            },
+        });
+    };
+
     const toggleFavorite = (asset: Asset) => {
         const next = asset.category === "favorite" ? "other" : "favorite";
         updateAsset(asset.id, { category: next });
@@ -244,6 +295,10 @@ export default function AssetsPage() {
         setIsDraggingOverNav(null);
 
         const draggedAssetId = event.dataTransfer.getData("application/x-hemosi-asset-id");
+        if (draggedAssetId && selectedIds.has(draggedAssetId) && selectedIds.size > 1) {
+            moveAssets([...selectedIds], targetNavKey);
+            return;
+        }
         if (draggedAssetId) {
             if (targetNavKey === "favorite") {
                 updateAsset(draggedAssetId, { category: "favorite" });
@@ -391,7 +446,23 @@ export default function AssetsPage() {
                 </aside>
 
                 {/* 右栏内容区 */}
-                <section className="min-w-0 flex-1 overflow-y-auto px-6 py-6 flex flex-col">
+                <section
+                    className={cn("min-w-0 flex-1 overflow-y-auto px-6 py-6 flex flex-col", isDraggingOverMain && "outline-2 outline-dashed outline-teal-500 -outline-offset-4")}
+                    onDragOver={(e) => {
+                        if (!e.dataTransfer.types.includes("Files")) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "copy";
+                        setIsDraggingOverMain(true);
+                    }}
+                    onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIsDraggingOverMain(false);
+                    }}
+                    onDrop={(e) => {
+                        setIsDraggingOverMain(false);
+                        if (!e.dataTransfer.types.includes("Files")) return;
+                        void handleDropInFolder(e, activeNav);
+                    }}
+                >
                     <div className="pb-6">
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
@@ -438,7 +509,26 @@ export default function AssetsPage() {
                                     </Tag.CheckableTag>
                                 ))}
                             </div>
-                            <span className="text-xs text-stone-400">共 {filteredAssets.length} 项素材</span>
+                            {selectedIds.size > 0 ? (
+                                <div className="flex flex-wrap items-center gap-2 text-xs">
+                                    <span className="text-stone-500">已选 {selectedIds.size} 项</span>
+                                    <Button size="small" onClick={() => setSelectedIds(new Set(visibleAssets.map((a) => a.id)))}>全选本页</Button>
+                                    <Button size="small" onClick={() => batchFavorite(true)}>收藏</Button>
+                                    <Button size="small" onClick={() => batchFavorite(false)}>取消收藏</Button>
+                                    <Select
+                                        size="small"
+                                        className="w-32"
+                                        placeholder="移动到…"
+                                        value={null}
+                                        options={[{ label: "未分类", value: "all" }, { label: "主体库", value: "subject" }, ...SUBJECT_FOLDERS.map((f) => ({ label: f.label, value: `folder:${f.key}` }))]}
+                                        onChange={(key: string | null) => key && moveAssets([...selectedIds], key)}
+                                    />
+                                    <Button size="small" danger onClick={batchDelete}>删除</Button>
+                                    <Button size="small" type="text" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
+                                </div>
+                            ) : (
+                                <span className="text-xs text-stone-400">共 {filteredAssets.length} 项素材 · 可从电脑直接拖图片进来</span>
+                            )}
                         </div>
                     </div>
 
@@ -456,6 +546,8 @@ export default function AssetsPage() {
                                         onDownload={downloadImage}
                                         onDelete={() => setDeletingAsset(asset)}
                                         onToggleFavorite={() => toggleFavorite(asset)}
+                                        selected={selectedIds.has(asset.id)}
+                                        onToggleSelect={(shift) => toggleSelect(asset, shift)}
                                     />
                                 ))}
                             </div>
@@ -646,7 +738,11 @@ function WaterfallAssetCard({
     onDownload,
     onDelete,
     onToggleFavorite,
+    selected,
+    onToggleSelect,
 }: {
+    selected: boolean;
+    onToggleSelect: (shift: boolean) => void;
     asset: Asset;
     onOpen: () => void;
     onEdit: () => void;
@@ -667,7 +763,7 @@ function WaterfallAssetCard({
                 e.dataTransfer.setData("application/x-hemosi-asset-id", asset.id);
                 e.dataTransfer.effectAllowed = "move";
             }}
-            className="group break-inside-avoid rounded-xl border border-stone-200/90 bg-white shadow-sm transition hover:shadow-md dark:border-stone-800 dark:bg-stone-900/90 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
+            className={cn("group break-inside-avoid rounded-xl border bg-white shadow-sm transition hover:shadow-md dark:bg-stone-900/90 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing", selected ? "border-teal-500 ring-2 ring-teal-500/60" : "border-stone-200/90 dark:border-stone-800")}
         >
             <div className="relative cursor-pointer overflow-hidden bg-stone-100 dark:bg-stone-950" onClick={onOpen}>
                 {cover ? (
@@ -675,6 +771,17 @@ function WaterfallAssetCard({
                 ) : (
                     <div className="p-4 text-xs leading-5 text-stone-600 dark:text-stone-300 max-h-48 overflow-hidden">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>
                 )}
+                <button
+                    type="button"
+                    title="选择（按住 Shift 连选）"
+                    className={cn("absolute top-2 left-2 z-10 flex size-5 items-center justify-center rounded border text-[11px] transition", selected ? "border-teal-500 bg-teal-500 text-white opacity-100" : "border-white/80 bg-black/30 text-transparent opacity-0 group-hover:opacity-100")}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleSelect(e.shiftKey);
+                    }}
+                >
+                    ✓
+                </button>
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
                     <button
                         type="button"

@@ -494,7 +494,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                                 title="在设置里改这个模型的默认写法（所有分镜表共用）"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    openConfigDialog(false, "channels");
+                                                    openConfigDialog(false, "model-rules", effectiveStoryboardRule(item.key as "image" | "video", data, config).modelName);
                                                 }}
                                             >
                                                 去设置里改
@@ -573,6 +573,24 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                 >
                     ＋ 物品
                 </button>
+                {data.settings.some((x) => !settingImageNode(x, allNodes)?.metadata?.content) ? (
+                    <button
+                        type="button"
+                        className="rounded px-1.5 py-0.5 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
+                        style={{ color: muted }}
+                        title="一次生成所有还没有图的设定图（已有图的跳过）"
+                        onClick={() => {
+                            const tasks = collectAutopilotTasks({ ...data, rows: [] }, host?.getAllNodes?.() || []).settingTasks;
+                            if (!tasks.length || !host?.runStoryboardBatch) {
+                                message.info(tasks.length ? "当前画布不支持批量生成" : "设定图都已就绪或正在生成");
+                                return;
+                            }
+                            void host.runStoryboardBatch(tasks, { title: `生成设定图 ${tasks.length} 张` });
+                        }}
+                    >
+                        生成全部设定图
+                    </button>
+                ) : null}
                 {data.settings.some((x) => !x.locked) ? (
                     <button
                         type="button"

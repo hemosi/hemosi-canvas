@@ -1,3 +1,4 @@
+import { ModelRulesPanel } from "./model-rules-panel";
 import { App, Button, Dropdown, Form, Input, Modal, Progress, Radio, Select, Switch, Tabs } from "antd";
 import type { TFunction } from "i18next";
 import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "lucide-react";
@@ -383,6 +384,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: t("config.tabs.localStorage"),
                         children: <ConfigLocalStorage active={activeTab === "local-storage"} />,
                     },
+                    {
+                        key: "model-rules",
+                        label: "提示词写法",
+                        children: <ModelRulesPanel channels={config.channels} active={activeTab === "model-rules"} onChange={updateChannels} />,
+                    },
                 ]}
             />
             {showDoneButton ? (
@@ -414,7 +420,7 @@ export function AppConfigModal() {
             width={980}
             centered
             onCancel={() => setConfigDialogOpen(false)}
-            styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
+            styles={{ body: { height: "72vh", overflowY: "auto", paddingRight: 12 } }}
             footer={null}
         >
             <AppConfigPanel showDoneButton initialTab={configTab} />

@@ -56,7 +56,7 @@ import { StoryboardGhostLayer } from "@/components/canvas/storyboard-ghost-layer
 import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
 import { runWithConcurrency, summarizeStoryboardRun } from "@/lib/canvas/storyboard-queue";
 import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
-import { allocateRefId } from "@/lib/canvas/node-ref-id";
+import { allocateRefId, ensureNodeRefIds } from "@/lib/canvas/node-ref-id";
 import { createEmptyStoryboardData, reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -280,6 +280,14 @@ function InfiniteCanvasPage() {
     const [storyboardConfirm, setStoryboardConfirm] = useState<StoryboardConfirmState | null>(null);
     const handleRetryNodeRef = useRef<((node: CanvasNodeData, imageId?: string, retryOptions?: { skipConfirm?: boolean }) => Promise<unknown>) | null>(null);
     const refCountersRef = useRef<Record<string, number>>({});
+    // Every node gets a short @图n-style id, including pictures dragged, pasted or dropped in from the asset library, so the Agent can bind them.
+    useEffect(() => {
+        if (!nodes.some((node) => !node.metadata?.refId)) return;
+        const result = ensureNodeRefIds(nodes, refCountersRef.current);
+        if (!result.changed) return;
+        refCountersRef.current = result.counters;
+        setNodes(result.nodes);
+    }, [nodes]);
     const [connectingParams, setConnectingParams] = useState<ConnectionHandle | null>(null);
     const [connectionTargetNodeId, setConnectionTargetNodeId] = useState<string | null>(null);
     const [pendingConnectionCreate, setPendingConnectionCreate] = useState<PendingConnectionCreate | null>(null);
@@ -2718,7 +2726,7 @@ function InfiniteCanvasPage() {
             if (node.type === CanvasNodeType.Text) {
                 const content = node.metadata?.content?.trim();
                 if (!content) return message.error(t("canvas.projectPage.noTextToSave"));
-                addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasText"), coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
+                addAsset({ kind: "text", title: node.title?.trim() || node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasText"), coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
                 message.success(t("common.addedToAssets"));
                 return;
             }
@@ -2726,7 +2734,7 @@ function InfiniteCanvasPage() {
                 if (!node.metadata?.content) return message.error(t("canvas.projectPage.noVideoToSave"));
                 addAsset({
                     kind: "video",
-                    title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasVideo"),
+                    title: node.title?.trim() || node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasVideo"),
                     coverUrl: "",
                     tags: [],
                     source: "Canvas",
@@ -2740,7 +2748,7 @@ function InfiniteCanvasPage() {
             const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
             addAsset({
                 kind: "image",
-                title: node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasImage"),
+                title: node.title?.trim() || node.metadata?.prompt?.slice(0, 24) || t("canvas.projectPage.canvasImage"),
                 coverUrl: node.metadata.content,
                 tags: [],
                 source: "Canvas",

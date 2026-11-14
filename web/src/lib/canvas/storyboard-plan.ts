@@ -826,6 +826,7 @@ export async function buildStoryboardAgentMessages(
         "1. settingsGate.ready=false（表里没有设定，或有设定未锁定，或你判断关键的人物/场景/物品/载具还没有设定）时，本轮只能输出 setting.add / setting.update / setting.review，严禁 row.add / row.update。",
         "   - 还没有设定：summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写能直接生成设定图的完整提示词（角色：全身定妆/三视图，服装与梗概一致；场景：无人空镜，交代时间天气光线；物品：多角度、干净背景）。系统会为每个设定建好图片节点并绑定。",
         "   - 本轮附带了设定图（标注为「设定 @R1 …」）：逐张观察，为每张输出 setting.review：actual 写图里实际画了什么，conflicts 写和梗概/设定描述对不上的地方。有冲突时 ok=false，并在 summary 里问用户是改图（你给出新的 imgPrompt 用 setting.update）还是改剧本，不要自己往下写分镜。",
+        "   - 用户给的图数量和类型都不固定（可能 0 张，也可能多张角色/场景/物品/风格参考混在一起）：逐张看图判断它属于哪个设定。图本身就能当设定图（如角色三视图、定妆照、场景图）时，在该 setting.add 的 desc 里写上它的 @图n，系统会直接绑定这张图，不再新建空节点；只是参考（如风格图、局部参考）时不要绑定，把它的特征写进 imgPrompt。引用画布图片一律用 @图n，不要用节点 id。summary 里逐张说明每张图用在哪个设定、是直接用还是只作参考。",
         "   - 设定由用户点「锁定」确认（用户也可开启让你自动锁定：审核无冲突时 ok=true）。",
         "2. settingsGate.ready=true 后才能写分镜行，且只能引用已锁定的设定。",
         "【镜头连贯硬规则】",

@@ -147,11 +147,6 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                                 <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
                                     {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
                                 </Button>
-                                {model.capability === "image" || model.capability === "video" ? (
-                                    <Button size="small" title="分镜 Agent 给这个模型写提示词时遵循的写法" onClick={() => setRuleTarget({ name: model.name, kind: model.capability as "image" | "video", value: model.promptRule ?? seedModelRule(model.capability as "image" | "video", model.name) })}>
-                                        提示词写法
-                                    </Button>
-                                ) : null}
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
                             </div>
                         </div>

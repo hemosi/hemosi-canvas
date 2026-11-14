@@ -102,6 +102,11 @@ export function settingImageNode(setting: SettingItem, nodes: CanvasNodeData[]):
         const node = nodes.find((n) => n.type === CanvasNodeType.Image && n.metadata?.refId === tok);
         if (node) return node;
     }
+    // Fallback: the Agent sometimes cites a picture by its node id (@image-…) instead of @图n.
+    for (const match of (setting.desc || "").matchAll(/@([A-Za-z]+-[\w-]+)/g)) {
+        const node = nodes.find((n) => n.type === CanvasNodeType.Image && n.id === match[1]);
+        if (node) return node;
+    }
     return undefined;
 }
 
