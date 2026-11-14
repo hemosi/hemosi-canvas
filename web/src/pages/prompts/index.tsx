@@ -1,15 +1,17 @@
-import { FolderPlus, Search } from "lucide-react";
+import { FolderPlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { type ReactNode, type UIEvent, useEffect, useState } from "react";
-import { App, Button, Empty, Input, Spin, Tag } from "antd";
+import { App, Button, Empty, Input, Popconfirm, Spin, Tag } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
 import { PromptDetailDialog } from "./components/prompt-detail-dialog";
+import { CustomPromptDialog } from "./components/custom-prompt-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
+import { ALL_PROMPTS_OPTION, CUSTOM_PROMPT_SOURCE_ID, deleteCustomPrompt, type CustomPromptInput, type Prompt } from "@/services/api/prompts";
 
 export default function PromptsPage() {
     const { message } = App.useApp();
@@ -20,6 +22,9 @@ export default function PromptsPage() {
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const copyText = useCopyText();
+    const queryClient = useQueryClient();
+    const [editingPrompt, setEditingPrompt] = useState<CustomPromptInput | null>(null);
+    const refreshPrompts = () => void queryClient.invalidateQueries({ queryKey: ["prompts"] });
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
 
     useEffect(() => {
@@ -63,15 +68,32 @@ export default function PromptsPage() {
                             </div>
                         </aside>
                         <section className="min-w-0">
-                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder={t("prompts.search")} onChange={(event) => setTitleKeyword(event.target.value)} />
+                            <div className="flex gap-2">
+                                <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder={t("prompts.search")} onChange={(event) => setTitleKeyword(event.target.value)} />
+                                <Button size="large" type="primary" icon={<Plus className="size-4" />} onClick={() => setEditingPrompt({ title: "", prompt: "", tags: [] })}>
+                                    新建提示词
+                                </Button>
+                            </div>
                             {query.isLoading ? <div className="flex h-60 items-center justify-center"><Spin /></div> : null}
-                            {!query.isLoading ? <div className="mt-5"><PromptGrid items={promptItems} onOpen={setSelectedPrompt} renderActions={(item) => <Button type="text" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>{t("common.addToAssets")}</Button>} onCopy={(item) => copyText(item.prompt, t("common.promptCopied"))} emptyText={t("prompts.empty")} /></div> : null}
+                            {!query.isLoading ? <div className="mt-5"><PromptGrid items={promptItems} onOpen={setSelectedPrompt} renderActions={(item) =>
+                                item.sourceId === CUSTOM_PROMPT_SOURCE_ID ? (
+                                    <>
+                                        <Button type="text" size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingPrompt({ id: item.id, title: item.title, prompt: item.prompt, tags: item.tags, coverUrl: item.coverUrl })}>编辑</Button>
+                                        <Popconfirm title={`删除「${item.title}」？`} okText="删除" cancelText="取消" onConfirm={() => void deleteCustomPrompt(item.id).then(refreshPrompts)}>
+                                            <Button type="text" size="small" danger icon={<Trash2 className="size-3.5" />} />
+                                        </Popconfirm>
+                                    </>
+                                ) : (
+                                    <Button type="text" size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>{t("common.addToAssets")}</Button>
+                                )
+                            } onCopy={(item) => copyText(item.prompt, t("common.promptCopied"))} emptyText={t("prompts.empty")} /></div> : null}
                             <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? t("prompts.loading") : query.hasNextPage ? t("prompts.loadMore") : promptItems.length > 0 ? t("prompts.end") : null}</div>
                         </section>
                     </div>
                 </div>
             </main>
 
+            <CustomPromptDialog value={editingPrompt} tagOptions={promptTags.filter((tag) => tag !== ALL_PROMPTS_OPTION)} onClose={() => setEditingPrompt(null)} onSaved={refreshPrompts} />
             <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, t("common.promptCopied"))} onSaveAsset={savePromptAsset} />
         </div>
     );

@@ -136,14 +136,57 @@ async function getAllPrompts(): Promise<Prompt[]> {
     return settled.flat();
 }
 
+/** The user's own prompts: one localforage key, shown first as category 「我的提示词」. */
+export const CUSTOM_PROMPTS_KEY = "custom-user-prompts";
+export const CUSTOM_PROMPT_SOURCE_ID = "custom";
+export const CUSTOM_PROMPT_CATEGORY = "我的提示词";
+
+export type CustomPromptInput = { id?: string; title: string; prompt: string; tags: string[]; coverUrl?: string };
+
+/** Insert or update a custom prompt (newest first). Pure, so it can be tested without storage. */
+export function upsertCustomPrompt(list: Prompt[], input: CustomPromptInput, now = new Date().toISOString(), newId = () => `custom-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`): Prompt[] {
+    const tags = [...new Set(input.tags.map((t) => t.trim()).filter(Boolean))];
+    const existing = input.id ? list.find((p) => p.id === input.id) : undefined;
+    const item: Prompt = {
+        id: existing?.id || newId(),
+        title: input.title.trim() || "未命名提示词",
+        prompt: input.prompt,
+        description: "",
+        coverUrl: input.coverUrl || "",
+        referenceImageUrls: [],
+        tags,
+        preview: "",
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        sourceId: CUSTOM_PROMPT_SOURCE_ID,
+        category: CUSTOM_PROMPT_CATEGORY,
+        githubUrl: "",
+    };
+    return [item, ...list.filter((p) => p.id !== item.id)];
+}
+
+export async function listCustomPrompts(): Promise<Prompt[]> {
+    return (await promptCacheStore.getItem<Prompt[]>(CUSTOM_PROMPTS_KEY).catch(() => null)) || [];
+}
+
+export async function saveCustomPrompt(input: CustomPromptInput): Promise<void> {
+    await promptCacheStore.setItem(CUSTOM_PROMPTS_KEY, upsertCustomPrompt(await listCustomPrompts(), input));
+}
+
+export async function deleteCustomPrompt(id: string): Promise<void> {
+    await promptCacheStore.setItem(CUSTOM_PROMPTS_KEY, (await listCustomPrompts()).filter((p) => p.id !== id));
+}
+
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page = 1, pageSize = 20 }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
-    const items = await getAllPrompts();
+    const [custom, sourced] = await Promise.all([listCustomPrompts(), getAllPrompts()]);
+    const items = [...custom, ...sourced];
     const normalizedKeyword = keyword.trim().toLowerCase();
     const normalizedPage = Math.max(1, page);
     const normalizedPageSize = Math.max(1, Math.min(100, pageSize));
     const withoutTagFilter = filterPrompts(items, { keyword: normalizedKeyword, category, tags: [] });
     const filtered = filterPrompts(items, { keyword: normalizedKeyword, category, tags: tag });
-    const categories = enabledSources().map((source) => source.name);
+    // 我的提示词 always comes right after 全部.
+    const categories = [CUSTOM_PROMPT_CATEGORY, ...enabledSources().map((source) => source.name).filter((name) => name !== CUSTOM_PROMPT_CATEGORY)];
 
     return {
         items: filtered.slice((normalizedPage - 1) * normalizedPageSize, normalizedPage * normalizedPageSize),
