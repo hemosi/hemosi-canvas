@@ -35,6 +35,8 @@ export type ShotHost = {
         tasks: StoryboardQueueTask[],
         options?: { skipConfirm?: boolean; title?: string },
     ) => Promise<{ ok: number; failed: number; canceled: boolean }>;
+    /** Create a blank storyboard table at the viewport centre; returns its id (already in the node list). */
+    createStoryboardNode?: () => string;
     setStoryboardGhostNodes?: (ghosts: GhostPreviewNode[]) => void;
     getAllNodes?: () => CanvasNodeData[];
     getSelectedNodeIds?: () => string[];

@@ -48,6 +48,33 @@ export function resolveStoryboardRunMeta(config: AiConfig, kind: "image" | "vide
     };
 }
 
+export type StoryboardRunGroup = {
+    kind: "image" | "video";
+    count: number;
+    modelName: string;
+    channelName: string;
+    concurrency: number;
+    ready: boolean;
+    reason?: string | null;
+};
+
+/** One line per (kind, model) in a batch, so the confirm card shows every model it will spend on, not just the first task's. */
+export function summarizeStoryboardRun(
+    config: AiConfig,
+    tasks: StoryboardQueueTask[],
+    nodeModel: (nodeId: string) => string | undefined,
+): StoryboardRunGroup[] {
+    const groups = new Map<string, StoryboardRunGroup>();
+    for (const task of tasks) {
+        const meta = resolveStoryboardRunMeta(config, task.kind, nodeModel(task.nodeId));
+        const key = `${task.kind}:${meta.rawModel}`;
+        const cur = groups.get(key);
+        if (cur) cur.count++;
+        else groups.set(key, { kind: task.kind, count: 1, modelName: meta.modelName, channelName: meta.channelName, concurrency: meta.concurrency, ready: meta.ready, reason: meta.reason });
+    }
+    return [...groups.values()].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "image" ? -1 : 1));
+}
+
 export async function runWithConcurrency<T>(
     items: T[],
     concurrency: number,

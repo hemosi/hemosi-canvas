@@ -54,9 +54,9 @@ import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buil
 import { StoryboardConfirmModal, type StoryboardConfirmState } from "@/components/canvas/storyboard-confirm-modal";
 import { StoryboardGhostLayer } from "@/components/canvas/storyboard-ghost-layer";
 import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
-import { resolveStoryboardRunMeta, runWithConcurrency } from "@/lib/canvas/storyboard-queue";
+import { runWithConcurrency, summarizeStoryboardRun } from "@/lib/canvas/storyboard-queue";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
-import { reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
+import { createEmptyStoryboardData, reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
@@ -506,53 +506,76 @@ function InfiniteCanvasPage() {
                     setConnections(result.connections);
                     return { createdTasks: result.createdTasks };
                 },
+                createStoryboardNode: () => {
+                    const vp = viewportRef.current;
+                    const allocated = allocateRefId(HemosiNodeType.Storyboard, nodesRef.current, refCountersRef.current);
+                    refCountersRef.current = allocated.nextCounters;
+                    const created = createCanvasNode(
+                        HemosiNodeType.Storyboard,
+                        { x: Math.round((size.width / 2 - vp.x) / (vp.k || 1)), y: Math.round((size.height / 2 - vp.y) / (vp.k || 1)) },
+                        { status: "idle", storyboard: createEmptyStoryboardData(), refId: allocated.refId },
+                    );
+                    nodesRef.current = [...nodesRef.current, created];
+                    setNodes(nodesRef.current);
+                    return created.id;
+                },
                 setStoryboardGhostNodes: (ghosts) => setStoryboardGhostNodes(ghosts),
                 runStoryboardBatch: async (tasks, options) => {
                     if (!tasks.length) return { ok: 0, failed: 0, canceled: false };
-                    const firstKind = tasks[0].kind;
-                    const firstNode = nodesRef.current.find((n) => n.id === tasks[0].nodeId);
-                    const meta = resolveStoryboardRunMeta(effectiveConfig, firstKind, firstNode?.metadata?.model);
+                    const nodeModel = (id: string) => nodesRef.current.find((n) => n.id === id)?.metadata?.model;
+                    const groups = summarizeStoryboardRun(effectiveConfig, tasks, nodeModel);
+                    // Images run first and finish before any video starts, so videos pick up the new frames as references.
+                    const stages = (["image", "video"] as const)
+                        .map((kind) => ({ kind, tasks: tasks.filter((t) => t.kind === kind) }))
+                        .filter((stage) => stage.tasks.length > 0);
 
                     const execute = async () => {
                         let ok = 0;
                         let failed = 0;
-                        const { canceled } = await runWithConcurrency(tasks, meta.concurrency, async (task) => {
-                            const targetNode = nodesRef.current.find((n) => n.id === task.nodeId);
-                            if (!targetNode) {
-                                failed++;
-                                return;
-                            }
-                            const res = await handleRetryNodeRef.current?.(targetNode, undefined, { skipConfirm: true });
-                            if (res === false) {
-                                failed++;
-                            } else {
-                                ok++;
-                                const latest = nodesRef.current.find((n) => n.id === task.nodeId);
-                                if (latest?.metadata?.inputsHash) {
-                                    setNodes((prev) =>
-                                        prev.map((n) =>
-                                            n.id === task.nodeId
-                                                ? { ...n, metadata: { ...n.metadata, generatedInputsHash: latest.metadata?.inputsHash } }
-                                                : n,
-                                        ),
-                                    );
+                        let canceled = false;
+                        for (const stage of stages) {
+                            const concurrency = Math.min(...groups.filter((g) => g.kind === stage.kind).map((g) => g.concurrency));
+                            const stageRes = await runWithConcurrency(stage.tasks, concurrency, async (task) => {
+                                const targetNode = nodesRef.current.find((n) => n.id === task.nodeId);
+                                if (!targetNode) {
+                                    failed++;
+                                    return;
                                 }
+                                const res = await handleRetryNodeRef.current?.(targetNode, undefined, { skipConfirm: true });
+                                if (res === false) {
+                                    failed++;
+                                } else {
+                                    ok++;
+                                    const latest = nodesRef.current.find((n) => n.id === task.nodeId);
+                                    if (latest?.metadata?.inputsHash) {
+                                        setNodes((prev) =>
+                                            prev.map((n) =>
+                                                n.id === task.nodeId
+                                                    ? { ...n, metadata: { ...n.metadata, generatedInputsHash: latest.metadata?.inputsHash } }
+                                                    : n,
+                                            ),
+                                        );
+                                    }
+                                }
+                            });
+                            if (stageRes.canceled) {
+                                canceled = true;
+                                break;
                             }
-                        });
+                        }
                         return { ok, failed, canceled };
                     };
 
                     if (options?.skipConfirm) return execute();
 
+                    const notReady = groups.find((g) => !g.ready);
                     return new Promise((resolve) => {
                         setStoryboardConfirm({
                             title: options?.title || "分镜生成确认",
                             tasks,
-                            modelName: meta.modelName,
-                            channelName: meta.channelName,
-                            concurrency: meta.concurrency,
-                            ready: meta.ready,
-                            reason: meta.reason,
+                            groups,
+                            ready: !notReady,
+                            reason: notReady?.reason,
                             onCancel: () => {
                                 setStoryboardConfirm(null);
                                 resolve({ ok: 0, failed: 0, canceled: true });
