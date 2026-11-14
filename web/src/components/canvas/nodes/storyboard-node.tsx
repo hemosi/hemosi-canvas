@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Film, GripVertical, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { App, Modal } from "antd";
 import { nanoid } from "nanoid";
@@ -6,16 +6,17 @@ import { nanoid } from "nanoid";
 import { StoryboardPreviewModal, type PreviewClip } from "@/components/canvas/storyboard-preview-modal";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
 import { isBuiltinModelRule, modelRulePreset } from "@/lib/canvas/storyboard-model-rules";
-import { collectAutopilotTasks, runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
-import type { SettingItem, SettingKind, StoryboardAutopilotMode, StoryboardData, StoryboardRow } from "@/lib/canvas/storyboard-types";
+import { canLoadImageNode, collectAutopilotTasks, runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
+import { autopilotModeOf, type SettingItem, type SettingKind, type StoryboardAutopilotMode, type StoryboardData, type StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     createEmptyStoryboardData,
     DEFAULT_IMAGE_MODEL_RULE,
     DEFAULT_VIDEO_MODEL_RULE,
-    deriveNodeHealth,
     nextSettingId,
     nextShotCode,
     resolveRowReferenceImageNodeIds,
+    rowHealth,
+    settingImagesSignature,
     type NodeHealth,
 } from "@/lib/canvas/storyboard-utils";
 import { CanvasNodeType } from "@/types/canvas";
@@ -49,7 +50,6 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
     const [activeTplTab, setActiveTplTab] = useState<"image" | "video" | null>("image");
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
-    const [mode, setMode] = useState<StoryboardAutopilotMode>("manual");
     const [autopilot, setAutopilot] = useState<AutopilotState | null>(null);
     const autopilotAbortRef = useRef<AbortController | null>(null);
     const [editingSetting, setEditingSetting] = useState<SettingItem | null>(null);
@@ -76,13 +76,78 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
         }
     };
 
+    const mode = autopilotModeOf(data);
+    const setMode = (next: StoryboardAutopilotMode) => commit({ ...data, autopilotMode: next });
     const totalSec = data.rows.reduce((sum, r) => sum + (Number(r.duration) || 0), 0);
-    const readyVideos = data.rows.filter((r) => deriveNodeHealth(nodeMap.get(r.videoNodeId)) === "ok").length;
+    const readyVideos = data.rows.filter((r) => rowHealth(r, nodeMap).video === "ok").length;
     const staleCount = data.rows.filter((r) => {
-        const imgHealth = deriveNodeHealth(nodeMap.get(r.imageNodeId));
-        const vidHealth = deriveNodeHealth(nodeMap.get(r.videoNodeId));
-        return imgHealth === "stale" || vidHealth === "stale";
+        const health = rowHealth(r, nodeMap);
+        return health.image === "stale" || health.video === "stale";
     }).length;
+    const failedRows = data.rows.filter((r) => r.runError);
+
+    // A setting image changed (regenerated, replaced): re-hash the rows so first frames/videos using it show 过期.
+    const settingSig = settingImagesSignature(data.settings, allNodes);
+    const settingSigRef = useRef(settingSig);
+    useEffect(() => {
+        if (settingSigRef.current === settingSig) return;
+        settingSigRef.current = settingSig;
+        commit(data, false);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [settingSig]);
+
+    /** 一键出片 for the whole table, or only `rowIds` (只重跑失败的). Order is always 设定图 → 首帧 → 视频. */
+    const startAutopilot = (rowIds?: string[]) => {
+        if (!host?.runStoryboardBatch) return;
+        const pending = collectAutopilotTasks(data, host.getAllNodes?.() || [], rowIds);
+        const counts = [
+            pending.settingTasks.length ? `设定图 ${pending.settingTasks.length} 张` : "",
+            pending.firstFrameTasks.length ? `首帧图 ${pending.firstFrameTasks.length} 张` : "",
+            pending.videoTasks.length ? `视频 ${pending.videoTasks.length} 条` : "",
+        ].filter(Boolean);
+        if (!counts.length) {
+            if (rowIds) commit({ ...data, rows: data.rows.map((r) => (rowIds.includes(r.id) ? { ...r, runError: undefined } : r)) });
+            message.info("设定图、首帧图和视频都已就绪");
+            return;
+        }
+        const modeLabel = mode === "auto" ? "全自动" : "手动";
+        Modal.confirm({
+            title: rowIds ? `只重跑失败的 ${rowIds.length} 镜` : "一键出片确认",
+            centered: true,
+            content: `「${modeLabel}」模式将按顺序生成：${counts.join(" → ")}，共 ${
+                pending.settingTasks.length + pending.firstFrameTasks.length + pending.videoTasks.length
+            } 项，画幅 ${data.aspectRatio || "按各节点自己的尺寸"}，每项按它的模型生成，会产生费用。每一步完成后才开始下一步；生成视频前会检查首帧图和设定图能否正常加载，不能就重生（最多 ${3} 次），仍失败的镜头跳过视频并标红。${
+                mode === "manual" ? "手动模式下每一步开始前还会弹出生成确认卡（含模型与渠道）。" : ""
+            }`,
+            okText: "开始出片",
+            cancelText: "取消",
+            onOk: () => {
+                const controller = new AbortController();
+                autopilotAbortRef.current = controller;
+                void runStoryboardAutopilot({
+                    data,
+                    rowIds,
+                    getNode: (id) => (host.getAllNodes?.() || []).find((n) => n.id === id),
+                    getNodes: () => host.getAllNodes?.() || [],
+                    runBatch: host.runStoryboardBatch!,
+                    onProgress: setAutopilot,
+                    signal: controller.signal,
+                    confirmEachStage: mode === "manual",
+                    canLoadImage: canLoadImageNode,
+                }).then((res) => {
+                    // Mark failed shots red; shots that ran without failing are cleared.
+                    if (res.status === "completed") {
+                        const latest: StoryboardData = (host.getAllNodes?.() || []).find((n) => n.id === ctx.node.id)?.metadata?.storyboard || data;
+                        const ran = new Set(rowIds || latest.rows.map((r) => r.id));
+                        const errors = res.rowErrors || {};
+                        commit({ ...latest, rows: latest.rows.map((r) => (ran.has(r.id) ? { ...r, runError: errors[r.id] } : r)) });
+                    }
+                    if (res.failedCodes.length) message.warning(res.stage);
+                    else if (res.status === "completed") message.success(res.stage);
+                });
+            },
+        });
+    };
 
     const addRow = () => {
         const code = nextShotCode(data.rows);
@@ -253,10 +318,11 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                             onClick={() => {
                                 const tasks = data.rows.flatMap((r) => {
                                     const list: Array<{ nodeId: string; kind: "image" | "video"; label: string; prompt: string }> = [];
-                                    if (deriveNodeHealth(nodeMap.get(r.imageNodeId)) === "stale") {
+                                    const health = rowHealth(r, nodeMap);
+                                    if (health.image === "stale") {
                                         list.push({ nodeId: r.imageNodeId, kind: "image", label: `${r.code} · 首帧图`, prompt: r.imgPrompt });
                                     }
-                                    if (deriveNodeHealth(nodeMap.get(r.videoNodeId)) === "stale") {
+                                    if (health.video === "stale") {
                                         list.push({ nodeId: r.videoNodeId, kind: "video", label: `${r.code} · 视频`, prompt: r.vidPrompt });
                                     }
                                     return list;
@@ -265,6 +331,17 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                             }}
                         >
                             重生过期 {staleCount}
+                        </button>
+                    ) : null}
+                    {failedRows.length > 0 && autopilot?.status !== "running" ? (
+                        <button
+                            type="button"
+                            className="rounded px-2 py-0.5 text-[11px] font-medium text-red-500 transition hover:bg-red-500/10"
+                            style={{ border: `1px solid ${border}` }}
+                            title={failedRows.map((r) => `${r.code}：${r.runError}`).join("\n")}
+                            onClick={() => startAutopilot(failedRows.map((r) => r.id))}
+                        >
+                            只重跑失败的 {failedRows.length}
                         </button>
                     ) : null}
                 </div>
@@ -319,13 +396,11 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                         className="rounded border px-1.5 py-0.5 text-[11px] outline-none"
                         style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
                         value={mode}
+                        title="手动：设定图/首帧/视频每一步开跑前各确认一次；全自动：开始时确认一次，之后连跑"
                         onChange={(e) => setMode(e.target.value as StoryboardAutopilotMode)}
                     >
                         <option value="manual" style={{ background: theme.node.panel, color: theme.node.text }}>
                             手动
-                        </option>
-                        <option value="semi" style={{ background: theme.node.panel, color: theme.node.text }}>
-                            半自动
                         </option>
                         <option value="auto" style={{ background: theme.node.panel, color: theme.node.text }}>
                             全自动
@@ -344,47 +419,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                             type="button"
                             className="rounded bg-sky-500 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-sky-600 disabled:opacity-40"
                             disabled={data.rows.length === 0}
-                            onClick={() => {
-                                if (!host?.runStoryboardBatch) return;
-                                const pending = collectAutopilotTasks(data, host.getAllNodes?.() || []);
-                                const counts = [
-                                    pending.settingTasks.length ? `设定图 ${pending.settingTasks.length} 张` : "",
-                                    pending.firstFrameTasks.length ? `首帧图 ${pending.firstFrameTasks.length} 张` : "",
-                                    pending.videoTasks.length ? `视频 ${pending.videoTasks.length} 条` : "",
-                                ].filter(Boolean);
-                                if (!counts.length) {
-                                    message.info("设定图、首帧图和视频都已就绪");
-                                    return;
-                                }
-                                const modeLabel = mode === "auto" ? "全自动" : mode === "semi" ? "半自动" : "手动";
-                                Modal.confirm({
-                                    title: "一键出片确认",
-                                    centered: true,
-                                    content: `「${modeLabel}」模式将按顺序生成：${counts.join(" → ")}，共 ${
-                                        pending.settingTasks.length + pending.firstFrameTasks.length + pending.videoTasks.length
-                                    } 项，每项按它的模型生成，会产生费用。每一步完成后才开始下一步，视频会用上新首帧图作参考。${
-                                        mode === "manual" ? "手动模式下每一步开始前还会弹出生成确认卡（含模型与渠道）。" : ""
-                                    }`,
-                                    okText: "开始出片",
-                                    cancelText: "取消",
-                                    onOk: () => {
-                                        const controller = new AbortController();
-                                        autopilotAbortRef.current = controller;
-                                        void runStoryboardAutopilot({
-                                            data,
-                                            getNode: (id) => (host.getAllNodes?.() || []).find((n) => n.id === id),
-                                            getNodes: () => host.getAllNodes?.() || [],
-                                            runBatch: host.runStoryboardBatch!,
-                                            onProgress: setAutopilot,
-                                            signal: controller.signal,
-                                            confirmEachStage: mode === "manual",
-                                        }).then((res) => {
-                                            if (res.failedCodes.length) message.warning(res.stage);
-                                            else if (res.status === "completed") message.success(res.stage);
-                                        });
-                                    },
-                                });
-                            }}
+                            onClick={() => startAutopilot()}
                         >
                             一键出片
                         </button>
@@ -544,8 +579,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                         <tbody>
                             {data.rows.map((row, idx) => {
                                 const isOpen = expandedRowId === row.id;
-                                const imgHealth = deriveNodeHealth(nodeMap.get(row.imageNodeId));
-                                const vidHealth = deriveNodeHealth(nodeMap.get(row.videoNodeId));
+                                const { image: imgHealth, video: vidHealth } = rowHealth(row, nodeMap);
                                 return (
                                     <>
                                         <tr
@@ -574,20 +608,22 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                                         onClick={() => setExpandedRowId(isOpen ? null : row.id)}
                                                     >
                                                         {isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                                                        <span>{row.code}</span>
+                                                        <span className={row.runError ? "text-red-500" : undefined} title={row.runError ? `上次出片失败：${row.runError}` : undefined}>
+                                                            {row.code}
+                                                        </span>
                                                     </button>
                                                 </div>
                                                 <div className="mt-1 flex items-center gap-1 pl-4">
                                                     <span
                                                         className="inline-block size-2 rounded-full"
                                                         style={{ background: HEALTH_COLOR[imgHealth] }}
-                                                        title="首帧图状态"
+                                                        title={imgHealth === "stale" ? "首帧图已过期（引用的设定图或提示词变了）" : "首帧图状态"}
                                                     />
                                                     <span className="h-[1px] w-2 opacity-40" style={{ background: muted }} />
                                                     <span
                                                         className="inline-block size-2 rounded-full"
                                                         style={{ background: HEALTH_COLOR[vidHealth] }}
-                                                        title="视频状态"
+                                                        title={vidHealth === "stale" ? "视频已过期（首帧或其设定图变了）" : "视频状态"}
                                                     />
                                                 </div>
                                                 <div className="mt-1 flex items-center gap-0.5 pl-3 opacity-60">
@@ -794,7 +830,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
             {data.rows.length > 0 ? (
                 <div className="flex shrink-0 items-center gap-1 border-t px-3 py-1.5" style={{ borderColor: border }} {...stop}>
                     {data.rows.map((row) => {
-                        const vidHealth = deriveNodeHealth(nodeMap.get(row.videoNodeId));
+                        const vidHealth = rowHealth(row, nodeMap).video;
                         return (
                             <button
                                 key={row.id}

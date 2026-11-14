@@ -28,6 +28,8 @@ export const StoryboardRowSchema = z.object({
     imageNodeId: z.string(),
     videoNodeId: z.string(),
     manualPrompt: z.boolean().optional(),
+    /** Why the last 一键出片 run failed this shot; the row shows red until a run succeeds. */
+    runError: z.string().optional(),
 });
 export type StoryboardRow = z.infer<typeof StoryboardRowSchema>;
 
@@ -40,9 +42,16 @@ export const StoryboardDataSchema = z.object({
     videoModel: z.string().optional(),
     /** One aspect ratio for the whole table: first frames and videos share it. Only new nodes take it; a node's own size is kept. */
     aspectRatio: z.string().optional(),
+    /** 一键出片 mode of this table. Anything but "auto" (including the removed 半自动) reads as manual. */
+    autopilotMode: z.string().optional(),
     settings: z.array(SettingItemSchema),
     rows: z.array(StoryboardRowSchema),
 });
 export type StoryboardData = z.infer<typeof StoryboardDataSchema>;
 
-export type StoryboardAutopilotMode = "manual" | "semi" | "auto";
+export type StoryboardAutopilotMode = "manual" | "auto";
+
+/** 半自动 was removed; old tables that stored it (or nothing) read as 手动. */
+export function autopilotModeOf(data: Pick<StoryboardData, "autopilotMode">): StoryboardAutopilotMode {
+    return data.autopilotMode === "auto" ? "auto" : "manual";
+}

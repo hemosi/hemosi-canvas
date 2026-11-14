@@ -93,6 +93,19 @@ export function deriveNodeHealth(node: CanvasNodeData | undefined): NodeHealth {
     return "ok";
 }
 
+/** A row's first-frame and video health; a video made from a stale first frame is stale too. */
+export function rowHealth(row: StoryboardRow, nodeMap: Map<string, CanvasNodeData>): { image: NodeHealth; video: NodeHealth } {
+    const image = deriveNodeHealth(nodeMap.get(row.imageNodeId));
+    const video = deriveNodeHealth(nodeMap.get(row.videoNodeId));
+    return { image, video: video === "ok" && image === "stale" ? "stale" : video };
+}
+
+/** Signature of every setting image's current picture; when it changes, the rows using them must be re-hashed (过期). */
+export function settingImagesSignature(settings: SettingItem[], nodes: CanvasNodeData[]): string {
+    const map = new Map(nodes.map((n) => [n.id, n]));
+    return computeInputsHash(collectStoryboardSettingImageIds(settings, nodes).map((id) => `${id}:${map.get(id)?.metadata?.storageKey || map.get(id)?.metadata?.content || ""}`));
+}
+
 export function resolveRowReferenceImageNodeIds(
     row: StoryboardRow,
     settings: SettingItem[],
