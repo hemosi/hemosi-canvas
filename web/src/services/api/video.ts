@@ -8,6 +8,7 @@ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } fro
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, configSeed, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { applyVideoSendPlan, planVideoImageSend } from "@/lib/video-send-plan";
 import { createOfficialVideoTask, officialVideoProviderOf, pollOfficialVideoTask, type OfficialVideoProvider } from "./official-providers";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -71,6 +72,12 @@ function videoTaskFailed(message: string) {
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    if (config.videoImageRoles && config.videoImageRoles.length === references.length) {
+        // Send exactly what the reference strip shows: references by default, first/last frame only when marked.
+        const plan = planVideoImageSend(config.videoImageRoles);
+        references = applyVideoSendPlan(references, plan);
+        config = { ...config, videoMode: plan.mode };
+    }
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);

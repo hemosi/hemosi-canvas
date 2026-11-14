@@ -35,14 +35,15 @@ export function CanvasNodeReferenceBar({ nodeId, nodes, connectedNodes, onDiscon
     const toggle = (id: string) => onUpdateNode?.(nodeId, { refDisabled: disabled.has(id) ? [...disabled].filter((item) => item !== id) : [...disabled, id] });
     const slots: ReferenceSlot[] = references.map(({ node }) => ({ id: node.id, title: node.title, kind: node.type === CanvasNodeType.Image ? "image" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "text", role: node.metadata?.imageRole, enabled: !disabled.has(node.id) }));
     const frames = video ? videoFrameSlots(slots) : null;
-    const slotLabel = (id: string) => (frames?.first?.id === id ? "首帧" : frames?.last?.id === id ? "尾帧" : undefined);
+    const slotLabel = (id: string) => (frames?.first?.id === id ? "首帧" : frames?.last?.id === id ? "尾帧" : frames?.dropped.some((slot) => slot.id === id) ? "不发送" : undefined);
     let imageIndex = 0;
     return (
         <div className="mb-2">
             <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium" style={{ color: theme.node.muted }}>
                 <span>{t("canvas.references.title")}</span>
-                {video && frames ? <span>首帧：{frames.first?.title || "—"}　尾帧：{frames.last?.title || "—"}{frames.references.length ? `　参考图 ${frames.references.length} 张` : ""}</span> : null}
+                {video && frames ? <span title="这就是实际发给视频模型的方式：默认全部按参考图；只有标了「首帧/尾帧」的图才按首尾帧发送">实际发送：{frames.label}</span> : null}
             </div>
+            {video && frames?.plan.warning ? <div className="mb-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-600 dark:text-amber-400">{frames.plan.warning}</div> : null}
             <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1">
                 {references.map(({ node, sourceNodeId }, index) => {
                     const enabled = !disabled.has(node.id);

@@ -1,4 +1,5 @@
 import type { NodeGenerationResourceInput } from "@/components/canvas/canvas-node-generation";
+import { planVideoImageSend, videoSendPlanLabel } from "@/lib/video-send-plan";
 import { CanvasNodeType, HemosiNodeType, type CanvasAudioRole, type CanvasConnection, type CanvasImageRole, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export const IMAGE_ROLES: CanvasImageRole[] = ["reference", "firstFrame", "lastFrame", "character", "scene", "style"];
@@ -57,13 +58,16 @@ export function moveReferenceSlot(slots: ReferenceSlot[], id: string, delta: -1 
     return ids;
 }
 
-/** Which slot of a video generation each image lands in: 首帧 / 尾帧 / 参考. Mirrors orderReferenceInputs + video API frame mode. */
+/** Which slot of a video generation each image lands in: 首帧 / 尾帧 / 参考 / 不发送. Same rule the request uses (planVideoImageSend). */
 export function videoFrameSlots(slots: ReferenceSlot[]) {
     const images = slots.filter((slot) => slot.enabled && slot.kind === "image");
-    const sorted = [...images].sort((a, b) => (a.role === "firstFrame" ? 0 : a.role === "lastFrame" ? 1 : 2) - (b.role === "firstFrame" ? 0 : b.role === "lastFrame" ? 1 : 2));
-    const framed = sorted.some((slot) => slot.role === "firstFrame" || slot.role === "lastFrame") || sorted.length <= 2;
-    if (!framed) return { first: undefined, last: undefined, references: sorted };
-    const first = sorted.find((slot) => slot.role === "firstFrame") || sorted.find((slot) => slot.role !== "lastFrame");
-    const last = sorted.find((slot) => slot.role === "lastFrame") || (sorted.length === 2 ? sorted.find((slot) => slot !== first) : undefined);
-    return { first, last, references: [] as ReferenceSlot[] };
+    const plan = planVideoImageSend(images.map((slot) => slot.role));
+    return {
+        plan,
+        label: videoSendPlanLabel(plan, images.length),
+        first: plan.first !== undefined ? images[plan.first] : undefined,
+        last: plan.last !== undefined ? images[plan.last] : undefined,
+        references: plan.references.map((i) => images[i]),
+        dropped: plan.dropped.map((i) => images[i]),
+    };
 }

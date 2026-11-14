@@ -3498,7 +3498,7 @@ function InfiniteCanvasPage() {
                     if (!reuseVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        await completeVideoNodeTask(videoId, generationContext.forceFrames ? { ...requestConfig, videoMode: "frames" } : requestConfig, effectivePrompt, generationContext.referenceImages, controller.signal, {
+                        await completeVideoNodeTask(videoId, { ...requestConfig, videoImageRoles: generationContext.imageRoles || generationContext.referenceImages.map(() => undefined) }, effectivePrompt, generationContext.referenceImages, controller.signal, {
                             size: generationConfig.size,
                             seconds: generationConfig.videoSeconds,
                             vquality: generationConfig.vquality,
@@ -3778,7 +3778,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    await completeVideoNodeTask(node.id, context?.forceFrames ? { ...requestConfig, videoMode: "frames" } : requestConfig, prompt, retryImages, controller.signal, {
+                    await completeVideoNodeTask(node.id, context ? { ...requestConfig, videoImageRoles: context.imageRoles || context.referenceImages.map(() => undefined) } : requestConfig, prompt, retryImages, controller.signal, {
                         rawPrompt,
                         generationSourceId: sourceNode.id,
                         references: context ? generationReferenceUrls(context) : node.metadata?.references,

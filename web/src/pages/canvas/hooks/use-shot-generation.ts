@@ -47,7 +47,7 @@ function prepareShotRun(node: CanvasNodeData, kind: ShotKind, nodes: CanvasNodeD
     const context = buildNodeGenerationContext(node.id, nodes, connections, prompt, { mode: kind, extraInputs });
     const base = shotGenerationConfig(config, node, kind);
     const draft = Boolean(meta.draft);
-    const requestConfig = withCinematography({ ...(draft ? applyDraftConfig(base, kind) : base), count: "1", ...(kind === "video" && context.forceFrames ? { videoMode: "frames" } : {}) }, context);
+    const requestConfig = withCinematography({ ...(draft ? applyDraftConfig(base, kind) : base), count: "1" }, context);
     return { prompt, context, base, requestConfig, draft };
 }
 
@@ -103,7 +103,7 @@ export function useShotGeneration({ projectId, nodesRef, connectionsRef, setNode
                         ),
                     );
                 } else {
-                    const task = await createVideoGenerationTask(requestConfig, hydrated.prompt, hydrated.referenceImages, { signal: controller.signal, videos: hydrated.referenceVideos, audios: hydrated.referenceAudios });
+                    const task = await createVideoGenerationTask({ ...requestConfig, videoImageRoles: hydrated.imageRoles || hydrated.referenceImages.map(() => undefined) }, hydrated.prompt, hydrated.referenceImages, { signal: controller.signal, videos: hydrated.referenceVideos, audios: hydrated.referenceAudios });
                     const video = await storeGeneratedVideo(await waitForVideoGenerationTask(requestConfig, task, { signal: controller.signal }));
                     setNodes((prev) =>
                         prev.map((item) =>

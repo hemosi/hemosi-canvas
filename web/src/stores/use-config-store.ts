@@ -90,6 +90,11 @@ export type AiConfig = {
     /** Per-node camera / resolved lighting for this request (prompt block is already in the prompt; vendors with native params also get them). */
     camera?: CameraSettings;
     lighting?: LightingSettings;
+    /**
+     * Per-request roles of the reference images (same order). When set, video requests follow planVideoImageSend:
+     * every image is a reference unless marked 首帧/尾帧. Unset keeps the old videoMode behaviour for other callers.
+     */
+    videoImageRoles?: Array<string | undefined>;
 };
 
 /** Integer seed from a config, or undefined when unset/invalid; requests only send it when set. */
