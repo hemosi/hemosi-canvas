@@ -486,6 +486,7 @@ function InfiniteCanvasPage() {
                     return { warnings: result.warnings, createdTasks: result.createdTasks };
                 },
                 applyCanvasAgentPlan: (plan, enabledIds, modelPresets) => {
+                    const vp = viewportRef.current;
                     const result = applyCanvasPlan({
                         plan,
                         enabledIds,
@@ -493,7 +494,10 @@ function InfiniteCanvasPage() {
                         connections: connectionsRef.current,
                         refCounters: refCountersRef.current,
                         modelPresets,
-                        anchorPosition: getCanvasCenter(),
+                        anchorPosition: {
+                            x: Math.round((size.width / 2 - vp.x) / (vp.k || 1)),
+                            y: Math.round((size.height / 2 - vp.y) / (vp.k || 1)),
+                        },
                     });
                     refCountersRef.current = result.refCounters;
                     nodesRef.current = result.nodes;
@@ -561,11 +565,11 @@ function InfiniteCanvasPage() {
                     });
                 },
                 getAllNodes: () => nodesRef.current,
-                getSelectedNodeIds: () => Array.from(selectedNodeIds),
+                getSelectedNodeIds: () => Array.from(selectedNodeIdsRef.current),
                 getProjectId: () => projectId || "default",
                 setStoryboardHover: (nodeIds) => setStoryboardHoverIds(nodeIds),
             }),
-        [effectiveConfig, getCanvasCenter, jumpToBookmark, message, projectId, runShot, selectedNodeIds],
+        [effectiveConfig, jumpToBookmark, message, projectId, runShot, size.height, size.width],
     );
 
     useEffect(() => {
