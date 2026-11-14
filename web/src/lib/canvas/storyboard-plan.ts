@@ -544,6 +544,7 @@ async function resolveAttachedMedia(params: {
     labels: string[];
     textBlocks: string[];
     parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }>;
+    failures: string[];
 }> {
     const mentionedRefs = new Set(extractAtTokens(params.instruction));
     const targetNodes = params.nodes.filter((n) => {
@@ -560,6 +561,7 @@ async function resolveAttachedMedia(params: {
     });
     const labels: string[] = [];
     const textBlocks: string[] = [];
+    const failures: string[] = [];
     const parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }> = [];
     const reqCfg = resolveModelRequestConfig(params.config, params.config.model || params.config.textModel);
 
@@ -585,6 +587,8 @@ async function resolveAttachedMedia(params: {
                 if (dataUrl) {
                     labels.push(`@${n.metadata?.refId || n.id} (图片: ${n.title || "未命名"})`);
                     parts.push({ type: "image_url", image_url: { url: dataUrl } });
+                } else {
+                    failures.push(`@${n.metadata?.refId || n.id}：读取结果为空`);
                 }
             } else if (n.type === CanvasNodeType.Video) {
                 const storedBlob = n.metadata?.storageKey ? await getMediaBlob(n.metadata.storageKey) : null;
@@ -599,11 +603,16 @@ async function resolveAttachedMedia(params: {
                 if (videoUrl) {
                     labels.push(`@${n.metadata?.refId || n.id} (视频: ${n.title || "未命名"})`);
                     parts.push({ type: "video", video: { url: videoUrl, mimeType } });
+                } else {
+                    failures.push(`@${n.metadata?.refId || n.id}：读取结果为空`);
                 }
             }
-        } catch {}
+        } catch (err) {
+            if ((err as Error)?.name === "AbortError") throw err;
+            failures.push(`@${n.metadata?.refId || n.id}：${err instanceof Error ? err.message : String(err)}`);
+        }
     }
-    return { labels, textBlocks, parts };
+    return { labels, textBlocks, parts, failures };
 }
 
 /** Fallback when the model-written compact fails: keep each turn's head, newest last. */
@@ -664,6 +673,8 @@ export async function buildStoryboardAgentMessages(
         history?: AgentHistoryTurn[];
         compressedSummary?: string;
         signal?: AbortSignal;
+        /** Attached media that could not be read and was left out of the request. */
+        onMediaFailures?: (failures: string[]) => void;
     },
 ): Promise<AiTextMessage[]> {
     const mode: AgentMode = options?.agentMode || "canvas";
@@ -722,6 +733,7 @@ export async function buildStoryboardAgentMessages(
         instruction,
         signal: options?.signal,
     });
+    if (media.failures.length) options?.onMediaFailures?.(media.failures);
 
     const snapshotBlock =
         mode === "storyboard"
@@ -760,6 +772,8 @@ export async function buildStoryboardAgentMessages(
     const userText = `${summaryBlock}${snapshotBlock}${
         media.labels.length ? `【本轮拾取/附带的画布素材】${media.labels.join("、")}\n\n` : ""
     }${
+        media.failures.length ? `【以下素材读取失败、未发送给你，不要假装看到了】${media.failures.join("；")}\n\n` : ""
+    }${
         media.textBlocks.length ? `【拾取的画布文本节点内容】\n${media.textBlocks.join("\n\n")}\n\n` : ""
     }【用户消息】\n${instruction}`;
 
@@ -783,6 +797,18 @@ function extractJsonObject(raw: string): string {
     return trimmed;
 }
 
+/** A reply without "changes" is plain chat; when it is a JSON object like {"summary": "..."}, show only the summary text. */
+function summaryOnlyText(trimmed: string): string {
+    if (!trimmed.includes('"summary"')) return trimmed;
+    try {
+        const parsed = JSON.parse(extractJsonObject(trimmed)) as { summary?: unknown };
+        if (typeof parsed?.summary === "string" && parsed.summary.trim()) return parsed.summary.trim();
+    } catch {
+        // Not valid JSON: fall through and show the reply as written.
+    }
+    return trimmed;
+}
+
 export async function requestStoryboardPlan(params: {
     config: AiConfig;
     storyboardNode: CanvasNodeData | null;
@@ -794,7 +820,11 @@ export async function requestStoryboardPlan(params: {
     history?: AgentHistoryTurn[];
     compressedSummary?: string;
     signal?: AbortSignal;
-}): Promise<{ ok: true; plan: Plan; raw: string } | { ok: false; raw: string; error: string }> {
+}): Promise<
+    | { ok: true; plan: Plan; raw: string; mediaFailures: string[] }
+    | { ok: false; raw: string; error: string; mediaFailures: string[] }
+> {
+    let mediaFailures: string[] = [];
     const messages = await buildStoryboardAgentMessages(
         params.config,
         params.storyboardNode,
@@ -807,6 +837,9 @@ export async function requestStoryboardPlan(params: {
             history: params.history,
             compressedSummary: params.compressedSummary,
             signal: params.signal,
+            onMediaFailures: (failures) => {
+                mediaFailures = failures;
+            },
         },
     );
 
@@ -837,16 +870,12 @@ export async function requestStoryboardPlan(params: {
         try {
             const trimmed = raw.trim();
             if (!trimmed.includes('"changes"')) {
-                return {
-                    ok: true,
-                    plan: { summary: trimmed, changes: [] },
-                    raw,
-                };
+                return { ok: true, plan: { summary: summaryOnlyText(trimmed), changes: [] }, raw, mediaFailures };
             }
             const parsed = JSON.parse(extractJsonObject(raw));
             const validated = PlanSchema.safeParse(parsed);
             if (validated.success) {
-                return { ok: true, plan: validated.data, raw };
+                return { ok: true, plan: validated.data, raw, mediaFailures };
             }
             lastError = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
         } catch (err) {
@@ -854,5 +883,5 @@ export async function requestStoryboardPlan(params: {
         }
     }
 
-    return { ok: false, raw: lastRaw, error: lastError || "Plan 校验失败" };
+    return { ok: false, raw: lastRaw, error: lastError || "Plan 校验失败", mediaFailures };
 }
