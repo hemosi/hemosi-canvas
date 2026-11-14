@@ -96,7 +96,10 @@ function buildBaseGenerationContext(nodeId: string, nodes: CanvasNodeData[], con
     const audioInputs = resourceInputs.filter((input) => input.audio);
     const referenceAudios = audioInputs.map((input) => input.audio!);
     const roleNotes = [
-        ...imageInputs.flatMap((input, index) => (input.role && input.role !== "reference" ? [`${imageReferenceLabel(index + continueVideos.length)}：${IMAGE_ROLE_LABEL[input.role]}${input.title ? `（${input.title}）` : ""}`] : [])),
+        // With more than one image (or any labeled one), list every image so the model can match each by its order, plain reference images included.
+        ...(imageInputs.length > 1 || imageInputs.some((input) => input.role && input.role !== "reference")
+            ? imageInputs.map((input, index) => `${imageReferenceLabel(index + continueVideos.length)}：${IMAGE_ROLE_LABEL[input.role || "reference"]}${input.title ? `（${input.title}）` : ""}`)
+            : []),
         ...audioInputs.flatMap((input, index) => (input.audioRole ? [`${generationLabel("audio", index)}：${AUDIO_ROLE_LABEL[input.audioRole]}`] : [])),
     ];
     const blocks = [upstreamText, roleNotes.length ? textBlock("参考素材说明", roleNotes.join("\n")) : ""].filter(Boolean).join("\n\n");
