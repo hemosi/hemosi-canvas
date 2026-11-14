@@ -1,12 +1,15 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
+import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
+import { allocateRefId } from "@/lib/canvas/node-ref-id";
 import { SettingKindSchema, type SettingItem, type StoryboardData, type StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     extractAtTokens,
     nextSettingId,
     nextShotCode,
     reconcileStoryboardGraph,
+    type StoryboardModelPresets,
 } from "@/lib/canvas/storyboard-utils";
 import { requestImageQuestion, uploadGeminiFile, type AiTextMessage } from "@/services/api/image";
 import { getMediaBlob } from "@/services/file-storage";
@@ -72,8 +75,32 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
             desc: z.string().optional(),
         }),
     }),
+    z.object({
+        id: z.string().min(1),
+        kind: z.literal("canvas.text.add"),
+        title: z.string().default("文本"),
+        content: z.string().min(1),
+    }),
+    z.object({
+        id: z.string().min(1),
+        kind: z.literal("canvas.image.add"),
+        title: z.string().default("图片"),
+        prompt: z.string().min(1),
+        size: z.string().optional(),
+        refs: z.string().default(""),
+    }),
+    z.object({
+        id: z.string().min(1),
+        kind: z.literal("canvas.video.add"),
+        title: z.string().default("视频"),
+        prompt: z.string().min(1),
+        duration: z.number().positive().default(5),
+        size: z.string().optional(),
+        refs: z.string().default(""),
+    }),
 ]);
 export type Change = z.infer<typeof ChangeSchema>;
+export type AgentMode = "canvas" | "storyboard";
 
 export const PlanSchema = z.object({
     summary: z.string(),
@@ -290,6 +317,134 @@ export function previewPlan(
     };
 }
 
+export function applyCanvasPlan(params: {
+    plan: Plan;
+    enabledIds: Set<string>;
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
+    refCounters?: Record<string, number>;
+    modelPresets?: StoryboardModelPresets;
+    anchorPosition?: { x: number; y: number };
+}) {
+    let nextNodes = [...params.nodes];
+    let nextConnections = [...params.connections];
+    let nextCounters = { ...(params.refCounters || {}) };
+    const createdTasks: Array<{ nodeId: string; kind: "image" | "video"; label: string; prompt: string }> = [];
+    const presets = params.modelPresets;
+
+    const refToNode = new Map<string, CanvasNodeData>();
+    for (const n of nextNodes) {
+        if (n.metadata?.refId) refToNode.set(n.metadata.refId, n);
+    }
+
+    let offsetIdx = 0;
+    for (const ch of params.plan.changes) {
+        if (!params.enabledIds.has(ch.id)) continue;
+        if (ch.kind !== "canvas.text.add" && ch.kind !== "canvas.image.add" && ch.kind !== "canvas.video.add") {
+            continue;
+        }
+
+        const refTokens =
+            ch.kind === "canvas.text.add"
+                ? []
+                : extractAtTokens(`${ch.refs || ""} ${ch.prompt || ""}`);
+        const refNodes = refTokens
+            .map((t) => refToNode.get(t))
+            .filter((n): n is CanvasNodeData => Boolean(n));
+
+        const baseAnchor = refNodes[0]
+            ? { x: refNodes[0].position.x + refNodes[0].width + 120, y: refNodes[0].position.y }
+            : params.anchorPosition || { x: 240, y: 180 };
+        const pos = { x: baseAnchor.x, y: baseAnchor.y + offsetIdx * 260 };
+        offsetIdx++;
+
+        if (ch.kind === "canvas.text.add") {
+            const allocated = allocateRefId(CanvasNodeType.Text, nextNodes, nextCounters);
+            nextCounters = allocated.nextCounters;
+            const textId = nanoid();
+            const created = createCanvasNode(CanvasNodeType.Text, pos, {
+                refId: allocated.refId,
+                content: ch.content,
+                texts: [{ id: textId, content: ch.content, status: "success", createdAt: Date.now() }],
+                primaryTextId: textId,
+            });
+            created.title = ch.title || "文本";
+            nextNodes.push(created);
+            refToNode.set(allocated.refId, created);
+            continue;
+        }
+
+        if (ch.kind === "canvas.image.add") {
+            const allocated = allocateRefId(CanvasNodeType.Image, nextNodes, nextCounters);
+            nextCounters = allocated.nextCounters;
+            const created = createCanvasNode(CanvasNodeType.Image, pos, {
+                refId: allocated.refId,
+                prompt: ch.prompt,
+                ...(presets?.imageModel ? { model: presets.imageModel } : {}),
+                size: presets?.imageSize || ch.size || "9:16",
+            });
+            created.title = ch.title || "图片";
+            nextNodes.push(created);
+            refToNode.set(allocated.refId, created);
+            for (const rn of refNodes) {
+                if (rn.type === CanvasNodeType.Image) {
+                    nextConnections.push({
+                        id: nanoid(),
+                        fromNodeId: rn.id,
+                        toNodeId: created.id,
+                        kind: "reference",
+                    });
+                }
+            }
+            createdTasks.push({
+                nodeId: created.id,
+                kind: "image",
+                label: `@${allocated.refId} ${created.title}`,
+                prompt: ch.prompt,
+            });
+            continue;
+        }
+
+        if (ch.kind === "canvas.video.add") {
+            const allocated = allocateRefId(CanvasNodeType.Video, nextNodes, nextCounters);
+            nextCounters = allocated.nextCounters;
+            const created = createCanvasNode(CanvasNodeType.Video, pos, {
+                refId: allocated.refId,
+                prompt: ch.prompt,
+                seconds: String(ch.duration || 5),
+                ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
+                size: presets?.videoSize || ch.size || "16:9",
+            });
+            created.title = ch.title || "视频";
+            nextNodes.push(created);
+            refToNode.set(allocated.refId, created);
+            for (const rn of refNodes) {
+                if (rn.type === CanvasNodeType.Image) {
+                    nextConnections.push({
+                        id: nanoid(),
+                        fromNodeId: rn.id,
+                        toNodeId: created.id,
+                        kind: "reference",
+                    });
+                }
+            }
+            createdTasks.push({
+                nodeId: created.id,
+                kind: "video",
+                label: `@${allocated.refId} ${created.title}`,
+                prompt: ch.prompt,
+            });
+        }
+    }
+
+    return {
+        nodes: nextNodes,
+        connections: nextConnections,
+        refCounters: nextCounters,
+        createdTasks,
+    };
+}
+
 export function applyPlan(params: {
     storyboardNodeId: string;
     data: StoryboardData;
@@ -299,6 +454,7 @@ export function applyPlan(params: {
     connections: CanvasConnection[];
     refCounters?: Record<string, number>;
     removeOrphanDownstream?: boolean;
+    modelPresets?: StoryboardModelPresets;
 }) {
     const { next, diff, warnings } = previewPlan(params.data, params.plan, params.enabledIds, params.nodes);
 
@@ -332,10 +488,24 @@ export function applyPlan(params: {
         connections: nextConnections,
         refCounters: params.refCounters,
         autoLayout: true,
+        modelPresets: params.modelPresets,
+    });
+
+    const canvasAdded = applyCanvasPlan({
+        plan: params.plan,
+        enabledIds: params.enabledIds,
+        nodes: reconciled.nodes,
+        connections: reconciled.connections,
+        refCounters: reconciled.refCounters,
+        modelPresets: params.modelPresets,
     });
 
     return {
-        ...reconciled,
+        data: reconciled.data,
+        nodes: canvasAdded.nodes,
+        connections: canvasAdded.connections,
+        refCounters: canvasAdded.refCounters,
+        createdTasks: canvasAdded.createdTasks,
         warnings,
         diff,
     };
@@ -437,67 +607,75 @@ async function resolveAttachedMedia(params: {
     return { labels, textBlocks, parts };
 }
 
+export function compressHistoryTurns(existingSummary: string, turns: AgentHistoryTurn[]): string {
+    const lines = turns.map((t) => {
+        const roleLabel = t.role === "user" ? "用户" : "助手";
+        const snippet = t.text.replace(/\s+/g, " ").trim().slice(0, 140);
+        return `- ${roleLabel}: ${snippet}`;
+    });
+    const combined = [existingSummary ? `【先前摘要】${existingSummary}` : "", ...lines].filter(Boolean).join("\n");
+    return combined.slice(-900);
+}
+
 export async function buildStoryboardAgentMessages(
     config: AiConfig,
     storyboardNode: CanvasNodeData | null,
     nodes: CanvasNodeData[],
     instruction: string,
     options?: {
+        agentMode?: AgentMode;
         selectedRowId?: string | null;
         attachedNodeIds?: string[];
         history?: AgentHistoryTurn[];
+        compressedSummary?: string;
         signal?: AbortSignal;
     },
 ): Promise<AiTextMessage[]> {
+    const mode: AgentMode = options?.agentMode || "canvas";
     const sb = storyboardNode?.metadata?.storyboard;
     const mediaNodes = nodes
         .filter((n) => (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video || n.type === CanvasNodeType.Text) && n.metadata?.refId)
         .map((n) => `@${n.metadata!.refId} (${n.title || n.type})`);
 
-    const snapshot = {
-        imageModelRule: sb?.imageModelRule || "",
-        videoModelRule: sb?.videoModelRule || "",
-        settings: sb?.settings || [],
-        rows: (sb?.rows || []).map((r) => ({
-            id: r.id,
-            code: r.code,
-            duration: r.duration,
-            shotSize: r.shotSize,
-            move: r.move,
-            staticScreen: r.staticScreen,
-            action: r.action,
-            line: r.line,
-            sfx: r.sfx,
-            refs: r.refs,
-            note: r.note,
-            imgPrompt: r.imgPrompt,
-            vidPrompt: r.vidPrompt,
-        })),
-        selectedRowId: options?.selectedRowId || null,
-        availableCanvasMedia: mediaNodes,
-    };
+    const canvasSystemPrompt = [
+        "你是 HemosiTV 画布助手，既可以和用户自然对话（看图、看视频、改写剧本、讨论创意），也可以根据用户要求直接在画布上生成「文本节点」、「图片节点（含角色卡/场景图）」或「视频节点」。",
+        "请输出合法 JSON 对象（不要加多余包裹），结构如下：",
+        `{
+  "summary": "你对用户的自然回复（纯聊天/分析时写完整回答；生成画布节点时写简明说明）",
+  "changes": [
+    { "id": "c1", "kind": "canvas.text.add", "title": "文本标题", "content": "文本节点的完整内容" },
+    { "id": "c2", "kind": "canvas.image.add", "title": "图片标题（如：林佳佳·废土角色卡）", "prompt": "完整详细的生图提示词", "size": "9:16|16:9|1:1", "refs": "@图20（如需垫图/参考画布已有图片，填对应 @图n，会自动连线；无则填 空字符串）" },
+    { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "完整详细的生视频提示词", "duration": 5, "size": "16:9|9:16", "refs": "@图20（如需以画布图片作为首帧/参考图，填对应 @图n）" }
+  ]
+}`,
+        "铁律：",
+        "1. 当用户只是聊天、提问、讨论剧情时，把回答写在 summary 中，changes 设为空数组 []。",
+        "2. 当用户明确让你生成角色卡、图片节点、文本节点或视频节点（例如说“生成一张角色卡”、“出图”、“写个剧本放画布上”）时，必须输出对应的 canvas.image.add / canvas.text.add / canvas.video.add 到 changes 数组中，绝不能只在文字里嘴炮说“已建好”而不输出 changes！",
+        "3. 如果用户提供了参考图（如 @图20）让你基于它生成新角色卡或新图片，必须在 canvas.image.add 的 refs 字段里写上 \"@图20\"，系统会自动把 @图20 连线给新生成的图片节点。",
+    ].join("\n");
 
-    const systemPrompt = [
-        "你是 HemosiTV 导演 Agent，既是和用户自然交流的创作搭档，也能帮用户把角色/场景设定与分镜写进画布分镜表。",
+    const storyboardSystemPrompt = [
+        "你是 HemosiTV 分镜导演 Agent，专注于协助用户规划和修改当前选中的 10 列标准 AI 短剧分镜表（同时也支持生成独立画布节点）。",
         "请输出 JSON 对象（不要加多余包裹），结构如下：",
         `{
-  "summary": "你对用户的自然回复（当用户在聊天、询问图片/视频内容、讨论剧情或角色设定时，在这里详细、自然地回答用户；当生成了分镜表改动时，在这里写改动说明）",
+  "summary": "你对用户的自然回复或分镜修改说明",
   "changes": [
     { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称", "desc": "外观描述（可带 @图1）" } },
     { "id": "c2", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 / @S1", "note": "备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
     { "id": "c3", "kind": "row.update", "rowId": "S01或rowId", "patch": { ... } },
     { "id": "c4", "kind": "row.remove", "rowId": "S01或rowId" },
-    { "id": "c5", "kind": "row.move", "rowId": "S01或rowId", "to": 0 }
+    { "id": "c5", "kind": "row.move", "rowId": "S01或rowId", "to": 0 },
+    { "id": "c6", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "9:16|16:9", "refs": "@图1" }
   ],
   "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" }
 }`,
         "铁律：",
-        "1. 如果用户本轮只是在和你讨论、让你看图分析角色卡、看视频拆解或闲聊，直接把回答写在 summary 中，且必须将 changes 设为空数组 []！",
-        "2. 当用户附带了图片或视频（如 @图1、@视1）时，你已收到真实的图像/视频数据，请直接观察画面细节回答或提取特征。",
-        "3. 当用户明确要求生成或修改分镜表时：staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与模板直接写出每镜的 imgPrompt 与 vidPrompt；引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
+        "1. 如果用户只是在讨论或闲聊，直接把回答写在 summary 中，且必须将 changes 设为空数组 []！",
+        "2. 当用户附带了图片或视频（如 @图1、@视1）时，你已收到真实的图像/视频数据，请直接观察画面细节。",
+        "3. 生成或修改分镜表时：staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与模板直接写出每镜的 imgPrompt 与 vidPrompt；引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
     ].join("\n");
 
-    const historyMessages: AiTextMessage[] = (options?.history || []).slice(-8).map((turn) => ({
+    const historyMessages: AiTextMessage[] = (options?.history || []).slice(-6).map((turn) => ({
         role: turn.role,
         content: turn.text,
     }));
@@ -510,7 +688,41 @@ export async function buildStoryboardAgentMessages(
         signal: options?.signal,
     });
 
-    const userText = `【当前分镜表快照】\n${JSON.stringify(snapshot, null, 2)}\n\n${
+    const snapshotBlock =
+        mode === "storyboard"
+            ? `【当前绑定分镜表（${storyboardNode?.metadata?.refId || storyboardNode?.title || "未创建"}）快照】\n${JSON.stringify(
+                  {
+                      imageModelRule: sb?.imageModelRule || "",
+                      videoModelRule: sb?.videoModelRule || "",
+                      settings: sb?.settings || [],
+                      rows: (sb?.rows || []).map((r) => ({
+                          id: r.id,
+                          code: r.code,
+                          duration: r.duration,
+                          shotSize: r.shotSize,
+                          move: r.move,
+                          staticScreen: r.staticScreen,
+                          action: r.action,
+                          line: r.line,
+                          sfx: r.sfx,
+                          refs: r.refs,
+                          note: r.note,
+                          imgPrompt: r.imgPrompt,
+                          vidPrompt: r.vidPrompt,
+                      })),
+                      selectedRowId: options?.selectedRowId || null,
+                      availableCanvasMedia: mediaNodes,
+                  },
+                  null,
+                  2,
+              )}\n\n`
+            : `【画布已有素材引用编号】${mediaNodes.length ? mediaNodes.join("、") : "暂无"}\n\n`;
+
+    const summaryBlock = options?.compressedSummary
+        ? `【当前画布/分镜早期对话自动压缩摘要】\n${options.compressedSummary}\n\n`
+        : "";
+
+    const userText = `${summaryBlock}${snapshotBlock}${
         media.labels.length ? `【本轮拾取/附带的画布素材】${media.labels.join("、")}\n\n` : ""
     }${
         media.textBlocks.length ? `【拾取的画布文本节点内容】\n${media.textBlocks.join("\n\n")}\n\n` : ""
@@ -519,7 +731,11 @@ export async function buildStoryboardAgentMessages(
     const userContent: AiTextMessage["content"] =
         media.parts.length > 0 ? [...media.parts, { type: "text" as const, text: userText }] : userText;
 
-    return [{ role: "system", content: systemPrompt }, ...historyMessages, { role: "user", content: userContent }];
+    return [
+        { role: "system", content: mode === "storyboard" ? storyboardSystemPrompt : canvasSystemPrompt },
+        ...historyMessages,
+        { role: "user", content: userContent },
+    ];
 }
 
 function extractJsonObject(raw: string): string {
@@ -537,9 +753,11 @@ export async function requestStoryboardPlan(params: {
     storyboardNode: CanvasNodeData | null;
     nodes: CanvasNodeData[];
     instruction: string;
+    agentMode?: AgentMode;
     selectedRowId?: string | null;
     attachedNodeIds?: string[];
     history?: AgentHistoryTurn[];
+    compressedSummary?: string;
     signal?: AbortSignal;
 }): Promise<{ ok: true; plan: Plan; raw: string } | { ok: false; raw: string; error: string }> {
     const messages = await buildStoryboardAgentMessages(
@@ -548,9 +766,11 @@ export async function requestStoryboardPlan(params: {
         params.nodes,
         params.instruction,
         {
+            agentMode: params.agentMode,
             selectedRowId: params.selectedRowId,
             attachedNodeIds: params.attachedNodeIds,
             history: params.history,
+            compressedSummary: params.compressedSummary,
             signal: params.signal,
         },
     );

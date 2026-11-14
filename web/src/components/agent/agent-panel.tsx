@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App } from "antd";
-import { FileText, Hand, Loader2, Send, Sparkles, Square, Video, X } from "lucide-react";
+import { Clapperboard, FileText, Hand, Loader2, RotateCcw, Send, Sparkles, Square, Video, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
-import { getNodeTextContent, previewPlan, requestStoryboardPlan, type AgentHistoryTurn, type Change, type Plan } from "@/lib/canvas/storyboard-plan";
+import {
+    compressHistoryTurns,
+    getNodeTextContent,
+    previewPlan,
+    requestStoryboardPlan,
+    type AgentHistoryTurn,
+    type AgentMode,
+    type Change,
+    type Plan,
+} from "@/lib/canvas/storyboard-plan";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
-import { createEmptyStoryboardData } from "@/lib/canvas/storyboard-utils";
+import { createEmptyStoryboardData, type StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -23,11 +32,42 @@ type DirectorMessage =
     | {
           id: string;
           role: "plan";
-          storyboardNodeId: string;
+          storyboardNodeId?: string;
           plan: Plan;
           enabledIds: string[];
           status: "pending" | "applied" | "rejected";
       };
+
+type ScopedMemory = {
+    messages: DirectorMessage[];
+    compressedSummary: string;
+};
+
+const scopedMemoryStore = new Map<string, ScopedMemory>();
+
+function messageToTurn(m: DirectorMessage): AgentHistoryTurn | null {
+    if (m.role === "user") return { role: "user", text: m.text };
+    if (m.role === "assistant") return { role: "assistant", text: m.text };
+    if (m.role === "plan") return { role: "assistant", text: m.plan.summary };
+    return null;
+}
+
+function autoCompressMemory(mem: ScopedMemory): ScopedMemory {
+    const turns = mem.messages.map(messageToTurn).filter((t): t is AgentHistoryTurn => Boolean(t));
+    const totalChars = turns.reduce((acc, t) => acc + t.text.length, 0);
+    if (mem.messages.length <= 6 && totalChars <= 1800) {
+        return mem;
+    }
+    const cutoff = Math.max(0, mem.messages.length - 4);
+    const olderMessages = mem.messages.slice(0, cutoff);
+    const recentMessages = mem.messages.slice(cutoff);
+    const olderTurns = olderMessages.map(messageToTurn).filter((t): t is AgentHistoryTurn => Boolean(t));
+    if (!olderTurns.length) return mem;
+    return {
+        messages: recentMessages,
+        compressedSummary: compressHistoryTurns(mem.compressedSummary, olderTurns),
+    };
+}
 
 function changeLabel(ch: Change): { badge: string; title: string; detail: string } {
     switch (ch.kind) {
@@ -51,7 +91,38 @@ function changeLabel(ch: Change): { badge: string; title: string; detail: string
             return { badge: "删分镜", title: ch.rowId, detail: "删除该分镜行" };
         case "row.move":
             return { badge: "移分镜", title: ch.rowId, detail: `移动到第 ${ch.to + 1} 位` };
+        case "canvas.text.add":
+            return { badge: "建文本", title: ch.title || "文本节点", detail: ch.content };
+        case "canvas.image.add":
+            return {
+                badge: "建图片",
+                title: `${ch.title || "图片节点"}${ch.size ? ` (${ch.size})` : ""}${ch.refs ? ` · 参考 ${ch.refs}` : ""}`,
+                detail: ch.prompt,
+            };
+        case "canvas.video.add":
+            return {
+                badge: "建视频",
+                title: `${ch.title || "视频节点"} (${ch.duration}s · ${ch.size || "16:9"})${ch.refs ? ` · 参考 ${ch.refs}` : ""}`,
+                detail: ch.prompt,
+            };
     }
+}
+
+function planNeedsImagePreset(changes: Change[]): boolean {
+    return changes.some(
+        (c) => c.kind === "canvas.image.add" || c.kind === "setting.add" || c.kind === "row.add" || c.kind === "row.update",
+    );
+}
+
+function planNeedsVideoPreset(changes: Change[]): boolean {
+    return changes.some((c) => c.kind === "canvas.video.add" || c.kind === "row.add" || c.kind === "row.update");
+}
+
+function isCanvasOnlyPlan(changes: Change[]): boolean {
+    return (
+        changes.length > 0 &&
+        changes.every((c) => c.kind === "canvas.text.add" || c.kind === "canvas.image.add" || c.kind === "canvas.video.add")
+    );
 }
 
 export function AgentPanel() {
@@ -64,17 +135,33 @@ export function AgentPanel() {
 
     const effectiveConfig = useEffectiveConfig();
     const textModel = useConfigStore((s) => s.config.textModel || s.config.model);
+    const configImageModel = useConfigStore((s) => s.config.imageModel || s.config.model);
+    const configVideoModel = useConfigStore((s) => s.config.videoModel || s.config.model);
     const updateConfig = useConfigStore((s) => s.updateConfig);
 
+    const [agentMode, setAgentMode] = useState<AgentMode>("canvas");
     const [input, setInput] = useState("");
     const [running, setRunning] = useState(false);
-    const [messages, setMessages] = useState<DirectorMessage[]>([]);
     const [removeOrphan, setRemoveOrphan] = useState(true);
     const [mediaPickEnabled, setMediaPickEnabled] = useState(false);
     const [attachedNodeIds, setAttachedNodeIds] = useState<string[]>([]);
+    const [presetImageModel, setPresetImageModel] = useState<string>(configImageModel || "");
+    const [presetImageSize, setPresetImageSize] = useState<string>("9:16");
+    const [presetVideoModel, setPresetVideoModel] = useState<string>(configVideoModel || "");
+    const [presetVideoSize, setPresetVideoSize] = useState<string>("16:9");
+    const [memoryTick, setMemoryTick] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
 
+    useEffect(() => {
+        if (configImageModel && !presetImageModel) setPresetImageModel(configImageModel);
+    }, [configImageModel, presetImageModel]);
+
+    useEffect(() => {
+        if (configVideoModel && !presetVideoModel) setPresetVideoModel(configVideoModel);
+    }, [configVideoModel, presetVideoModel]);
+
     const host = getShotHost();
+    const projectId = host?.getProjectId?.() || "default";
     const allNodes: CanvasNodeData[] = host?.getAllNodes?.() || [];
     const selectedIds = host?.getSelectedNodeIds?.() || [];
     const storyboardNodes = useMemo(
@@ -85,6 +172,36 @@ export function AgentPanel() {
         const selected = storyboardNodes.find((n) => selectedIds.includes(n.id));
         return selected || storyboardNodes[0] || null;
     }, [selectedIds, storyboardNodes]);
+
+    const scopeKey = useMemo(() => {
+        if (agentMode === "storyboard") {
+            return `${projectId}:sb:${targetSb?.id || "none"}`;
+        }
+        return `${projectId}:canvas`;
+    }, [agentMode, projectId, targetSb?.id]);
+
+    const currentMemory = useMemo<ScopedMemory>(() => {
+        void memoryTick;
+        return scopedMemoryStore.get(scopeKey) || { messages: [], compressedSummary: "" };
+    }, [memoryTick, scopeKey]);
+
+    const messages = currentMemory.messages;
+    const compressedSummary = currentMemory.compressedSummary;
+
+    const updateScopedMessages = (updater: (prev: DirectorMessage[]) => DirectorMessage[]) => {
+        const cur = scopedMemoryStore.get(scopeKey) || { messages: [], compressedSummary: "" };
+        const nextMsgs = updater(cur.messages);
+        const nextMem = autoCompressMemory({ ...cur, messages: nextMsgs });
+        scopedMemoryStore.set(scopeKey, nextMem);
+        setMemoryTick((t) => t + 1);
+    };
+
+    const clearCurrentScope = () => {
+        host?.setStoryboardGhostNodes?.([]);
+        scopedMemoryStore.set(scopeKey, { messages: [], compressedSummary: "" });
+        setMemoryTick((t) => t + 1);
+        message.success("已清空当前上下文");
+    };
 
     useEffect(() => {
         const onDropNodes = (event: Event) => {
@@ -138,7 +255,7 @@ export function AgentPanel() {
     );
 
     const pendingPreview = useMemo(() => {
-        if (!pendingPlanMsg) return null;
+        if (!pendingPlanMsg || !pendingPlanMsg.storyboardNodeId) return null;
         const planSb = allNodes.find((n) => n.id === pendingPlanMsg.storyboardNodeId);
         if (!planSb) return null;
         const data = planSb.metadata?.storyboard || createEmptyStoryboardData();
@@ -158,23 +275,20 @@ export function AgentPanel() {
             return;
         }
 
-        const sbSnapshot = targetSb;
+        const sbSnapshot = agentMode === "storyboard" ? targetSb : null;
         const matchedRow = sbSnapshot?.metadata?.storyboard?.rows.find(
             (r) => selectedIds.includes(r.imageNodeId) || selectedIds.includes(r.videoNodeId),
         );
 
         const currentAttachedIds = [...attachedNodeIds];
         const mediaLabels = attachedNodes.map((n) => `@${n.metadata?.refId || n.title || n.type}`);
-        const history: AgentHistoryTurn[] = messages.flatMap((m): AgentHistoryTurn[] => {
-            if (m.role === "user") return [{ role: "user", text: m.text }];
-            if (m.role === "assistant") return [{ role: "assistant", text: m.text }];
-            if (m.role === "plan") return [{ role: "assistant", text: m.plan.summary }];
-            return [];
-        });
+        const history: AgentHistoryTurn[] = messages
+            .map(messageToTurn)
+            .filter((t): t is AgentHistoryTurn => Boolean(t));
 
         setInput("");
         setAttachedNodeIds([]);
-        setMessages((prev) => [
+        updateScopedMessages((prev) => [
             ...prev,
             {
                 id: `u-${Date.now()}`,
@@ -192,25 +306,32 @@ export function AgentPanel() {
                 config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
                 storyboardNode: sbSnapshot,
                 nodes: allNodes,
-                instruction: text || "请分析我拖入的素材",
+                instruction: text || "请分析我附上的画布素材",
+                agentMode,
                 selectedRowId: matchedRow?.code || null,
                 attachedNodeIds: currentAttachedIds,
                 history,
+                compressedSummary,
                 signal: controller.signal,
             });
             if (res.ok) {
-                if (res.plan.changes.length === 0 || !sbSnapshot) {
-                    setMessages((prev) => [
+                const hasChanges = res.plan.changes.length > 0;
+                const firstImgChange = res.plan.changes.find((c) => c.kind === "canvas.image.add");
+                if (firstImgChange && firstImgChange.kind === "canvas.image.add" && firstImgChange.size) {
+                    setPresetImageSize(firstImgChange.size);
+                }
+                if (!hasChanges) {
+                    updateScopedMessages((prev) => [
                         ...prev,
                         { id: `a-${Date.now()}`, role: "assistant", text: res.plan.summary },
                     ]);
                 } else {
-                    setMessages((prev) => [
+                    updateScopedMessages((prev) => [
                         ...prev,
                         {
                             id: `p-${Date.now()}`,
                             role: "plan",
-                            storyboardNodeId: sbSnapshot.id,
+                            storyboardNodeId: sbSnapshot?.id,
                             plan: res.plan,
                             enabledIds: res.plan.changes.map((c) => c.id),
                             status: "pending",
@@ -218,14 +339,14 @@ export function AgentPanel() {
                     ]);
                 }
             } else {
-                setMessages((prev) => [
+                updateScopedMessages((prev) => [
                     ...prev,
                     { id: `e-${Date.now()}`, role: "error", text: res.error, raw: res.raw },
                 ]);
             }
         } catch (err) {
             if ((err as Error)?.name !== "AbortError") {
-                setMessages((prev) => [
+                updateScopedMessages((prev) => [
                     ...prev,
                     { id: `e-${Date.now()}`, role: "error", text: err instanceof Error ? err.message : String(err) },
                 ]);
@@ -237,7 +358,7 @@ export function AgentPanel() {
     };
 
     const toggleChange = (msgId: string, changeId: string) => {
-        setMessages((prev) =>
+        updateScopedMessages((prev) =>
             prev.map((m) => {
                 if (m.id !== msgId || m.role !== "plan" || m.status !== "pending") return m;
                 const set = new Set(m.enabledIds);
@@ -248,27 +369,61 @@ export function AgentPanel() {
         );
     };
 
-    const handleApplyPlan = (msgId: string) => {
+    const handleApplyPlan = (msgId: string, autoRun = false) => {
         const msg = messages.find((m) => m.id === msgId);
-        if (!msg || msg.role !== "plan" || !host?.applyStoryboardPlan) return;
-        const planSb = allNodes.find((n) => n.id === msg.storyboardNodeId);
-        if (!planSb) {
-            message.warning("原分镜表节点已不存在");
+        if (!msg || msg.role !== "plan") return;
+
+        const modelPresets: StoryboardModelPresets = {
+            imageModel: presetImageModel || configImageModel,
+            imageSize: presetImageSize,
+            videoModel: presetVideoModel || configVideoModel,
+            videoSize: presetVideoSize,
+        };
+        if (modelPresets.imageModel) updateConfig("imageModel", modelPresets.imageModel);
+        if (modelPresets.videoModel) updateConfig("videoModel", modelPresets.videoModel);
+
+        const enabledSet = new Set(msg.enabledIds);
+        const canvasOnly = isCanvasOnlyPlan(msg.plan.changes) || !msg.storyboardNodeId;
+
+        if (canvasOnly) {
+            if (!host?.applyCanvasAgentPlan) return;
+            const res = host.applyCanvasAgentPlan(msg.plan, enabledSet, modelPresets);
+            updateScopedMessages((prev) =>
+                prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)),
+            );
+            message.success("已在画布上生成节点");
+            if (autoRun && res?.createdTasks?.length) {
+                void host.runStoryboardBatch?.(res.createdTasks, { skipConfirm: true, title: "生成节点内容" });
+            }
             return;
         }
-        const result = host.applyStoryboardPlan(planSb.id, msg.plan, new Set(msg.enabledIds), removeOrphan);
+
+        if (!host?.applyStoryboardPlan) return;
+        const planSb = allNodes.find((n) => n.id === msg.storyboardNodeId);
+        if (!planSb) {
+            message.warning("原分镜表节点已不存在，请先在画布创建分镜表或切换到画布助手模式");
+            return;
+        }
+        const result = host.applyStoryboardPlan(planSb.id, msg.plan, enabledSet, removeOrphan, modelPresets);
         host.setStoryboardGhostNodes?.([]);
-        setMessages((prev) => prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)));
+        updateScopedMessages((prev) =>
+            prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied" } : m)),
+        );
         if (result?.warnings?.length) {
             message.warning(result.warnings[0]);
         } else {
-            message.success("已应用改动并同步画布节点");
+            message.success("已应用改动并绑定模型预设");
+        }
+        if (autoRun && result?.createdTasks?.length) {
+            void host.runStoryboardBatch?.(result.createdTasks, { skipConfirm: true, title: "生成节点内容" });
         }
     };
 
     const handleRejectPlan = (msgId: string) => {
         host?.setStoryboardGhostNodes?.([]);
-        setMessages((prev) => prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "rejected" } : m)));
+        updateScopedMessages((prev) =>
+            prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "rejected" } : m)),
+        );
     };
 
     if (!panelMounted) return null;
@@ -289,22 +444,49 @@ export function AgentPanel() {
                 data-director-agent-drop={mediaPickEnabled ? "active" : "off"}
                 style={{ width, background: theme.node.panel, borderColor: border, color: theme.node.text }}
             >
-                {/* Top Header */}
+                {/* Top Header: Mode Switch + Clear */}
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2" style={{ borderColor: border }}>
-                    <div className="flex items-center gap-1.5 font-semibold">
-                        <Sparkles className="size-4 text-sky-500" />
-                        <span>导演 Agent</span>
-                        {targetSb?.metadata?.refId ? (
-                            <span className="rounded px-1.5 py-0.5 text-[10px]" style={{ background: theme.toolbar.activeBg }}>
+                    <div className="flex min-w-0 items-center gap-1.5 font-semibold">
+                        <Sparkles className="size-4 shrink-0 text-sky-500" />
+                        <span className="truncate">{agentMode === "storyboard" ? "分镜 Agent" : "画布助手"}</span>
+                        {agentMode === "storyboard" && targetSb?.metadata?.refId ? (
+                            <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px]" style={{ background: theme.toolbar.activeBg }}>
                                 @{targetSb.metadata.refId}
                             </span>
                         ) : null}
                     </div>
+
+                    <div className="flex shrink-0 items-center gap-1">
+                        <button
+                            type="button"
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                                agentMode === "storyboard"
+                                    ? "bg-sky-500 text-white"
+                                    : "hover:bg-black/5 dark:hover:bg-white/10"
+                            }`}
+                            style={agentMode === "storyboard" ? undefined : { border: `1px solid ${border}` }}
+                            title="开启后专注绑定当前分镜表；关闭时为通用画布助手（可自由生成文本/图片/视频节点）"
+                            onClick={() => setAgentMode((m) => (m === "storyboard" ? "canvas" : "storyboard"))}
+                        >
+                            <Clapperboard className="size-3" />
+                            <span>分镜模式</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] opacity-75 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                            style={{ border: `1px solid ${border}` }}
+                            title="清空当前画布/分镜表的对话上下文（Clear）"
+                            onClick={clearCurrentScope}
+                        >
+                            <RotateCcw className="size-3" />
+                            <span>Clear</span>
+                        </button>
+                    </div>
                 </div>
 
-                {/* Model Selector */}
+                {/* Chat Model Selector */}
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5" style={{ borderColor: border }}>
-                    <span className="shrink-0 opacity-65">模型</span>
+                    <span className="shrink-0 opacity-65">对话模型</span>
                     <div className="min-w-0 flex-1">
                         <ModelPicker
                             config={effectiveConfig}
@@ -318,9 +500,21 @@ export function AgentPanel() {
 
                 {/* Message List */}
                 <div className="thin-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
+                    {compressedSummary ? (
+                        <div
+                            className="rounded-lg border px-2.5 py-1.5 text-[11px] opacity-75"
+                            style={{ borderColor: border, background: theme.toolbar.activeBg }}
+                            title={compressedSummary}
+                        >
+                            已自动压缩早期上下文（悬停可查看摘要，点顶部 Clear 可清空）
+                        </div>
+                    ) : null}
+
                     {messages.length === 0 ? (
                         <div className="rounded-xl border border-dashed p-4 text-center opacity-60" style={{ borderColor: border }}>
-                            开启下方「拾取画布素材」开关后，直接单击画布上的图片、视频或文本节点，即可边看素材边讨论剧情、生成分镜表。
+                            {agentMode === "storyboard"
+                                ? `当前为「分镜模式」（已隔离绑定 ${targetSb?.metadata?.refId ? `@${targetSb.metadata.refId}` : "分镜表"} 记忆）。可拾取素材讨论并生成 10 列分镜表。`
+                                : "当前为「画布助手」模式（已按当前画布隔离记忆）。可自由聊天分析素材，或直接让助手在画布上生成文本、图片（含角色卡）、视频节点。"}
                         </div>
                     ) : null}
 
@@ -358,12 +552,19 @@ export function AgentPanel() {
                                 </div>
                             );
                         }
+
+                        const showImgPreset = planNeedsImagePreset(m.plan.changes);
+                        const showVidPreset = planNeedsVideoPreset(m.plan.changes);
+                        const hasDirectMediaAdd = m.plan.changes.some(
+                            (c) => c.kind === "canvas.image.add" || c.kind === "canvas.video.add",
+                        );
+
                         return (
                             <div key={m.id} className="space-y-2 rounded-xl border p-2.5" style={{ borderColor: border }}>
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="font-semibold">{m.plan.summary}</span>
+                                <div className="flex items-start justify-between gap-2">
+                                    <span className="whitespace-pre-wrap font-semibold leading-relaxed">{m.plan.summary}</span>
                                     <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px]" style={{ background: theme.toolbar.activeBg }}>
-                                        {m.status === "pending" ? "待确认" : m.status === "applied" ? "已应用" : "未采用"}
+                                        {m.status === "pending" ? "待确认" : m.status === "applied" ? "已生成" : "未采用"}
                                     </span>
                                 </div>
 
@@ -405,7 +606,65 @@ export function AgentPanel() {
                                 </div>
 
                                 {m.status === "pending" ? (
-                                    <div className="space-y-2 pt-1">
+                                    <div className="space-y-2 rounded-lg border p-2" style={{ borderColor: border, background: theme.toolbar.activeBg }}>
+                                        {(showImgPreset || showVidPreset) ? (
+                                            <div className="space-y-1.5">
+                                                <div className="text-[11px] font-medium opacity-80">生成节点模型预设</div>
+                                                {showImgPreset ? (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="w-12 shrink-0 text-[11px] opacity-70">图片模型</span>
+                                                        <div className="min-w-0 flex-1">
+                                                            <ModelPicker
+                                                                config={effectiveConfig}
+                                                                capability="image"
+                                                                fullWidth
+                                                                value={presetImageModel}
+                                                                onChange={(val) => setPresetImageModel(val)}
+                                                            />
+                                                        </div>
+                                                        <select
+                                                            className="rounded border px-1.5 py-1 text-[11px] outline-none"
+                                                            style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
+                                                            value={presetImageSize}
+                                                            onChange={(e) => setPresetImageSize(e.target.value)}
+                                                        >
+                                                            {["9:16", "16:9", "1:1", "4:3", "3:4"].map((ratio) => (
+                                                                <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
+                                                                    {ratio}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                ) : null}
+                                                {showVidPreset ? (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="w-12 shrink-0 text-[11px] opacity-70">视频模型</span>
+                                                        <div className="min-w-0 flex-1">
+                                                            <ModelPicker
+                                                                config={effectiveConfig}
+                                                                capability="video"
+                                                                fullWidth
+                                                                value={presetVideoModel}
+                                                                onChange={(val) => setPresetVideoModel(val)}
+                                                            />
+                                                        </div>
+                                                        <select
+                                                            className="rounded border px-1.5 py-1 text-[11px] outline-none"
+                                                            style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
+                                                            value={presetVideoSize}
+                                                            onChange={(e) => setPresetVideoSize(e.target.value)}
+                                                        >
+                                                            {["16:9", "9:16"].map((ratio) => (
+                                                                <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
+                                                                    {ratio}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        ) : null}
+
                                         {m.plan.changes.some((c) => c.kind === "row.remove") ? (
                                             <label className="flex items-center gap-1.5 text-[11px] opacity-75">
                                                 <input
@@ -416,25 +675,35 @@ export function AgentPanel() {
                                                 <span>同步删除对应下游节点</span>
                                             </label>
                                         ) : null}
-                                        <div className="flex items-center gap-2">
+
+                                        <div className="flex items-center gap-1.5 pt-0.5">
                                             <button
                                                 type="button"
                                                 className="flex-1 rounded-lg bg-sky-500 py-1.5 font-medium text-white transition hover:bg-sky-600"
-                                                onClick={() => handleApplyPlan(m.id)}
+                                                onClick={() => handleApplyPlan(m.id, false)}
                                             >
-                                                应用所选
+                                                确认生成节点
                                             </button>
+                                            {hasDirectMediaAdd ? (
+                                                <button
+                                                    type="button"
+                                                    className="flex-1 rounded-lg bg-emerald-500 py-1.5 font-medium text-white transition hover:bg-emerald-600"
+                                                    onClick={() => handleApplyPlan(m.id, true)}
+                                                >
+                                                    生成节点并立即运行
+                                                </button>
+                                            ) : null}
                                             <button
                                                 type="button"
-                                                className="rounded-lg border px-3 py-1.5 transition hover:bg-black/5 dark:hover:bg-white/10"
+                                                className="rounded-lg border px-2.5 py-1.5 transition hover:bg-black/5 dark:hover:bg-white/10"
                                                 style={{ borderColor: border }}
                                                 onClick={() => handleRejectPlan(m.id)}
                                             >
-                                                不用
+                                                取消
                                             </button>
                                         </div>
                                     </div>
-                                ) : m.status === "applied" && m.plan.suggestRun ? (
+                                ) : m.status === "applied" && m.plan.suggestRun && m.storyboardNodeId ? (
                                     (() => {
                                         const planSb = allNodes.find((n) => n.id === m.storyboardNodeId);
                                         if (!planSb) return null;
@@ -525,7 +794,7 @@ export function AgentPanel() {
                                 className="text-[11px] opacity-60 hover:opacity-100"
                                 onClick={() => setAttachedNodeIds([])}
                             >
-                                清空
+                                清空素材
                             </button>
                         ) : null}
                     </div>
@@ -582,7 +851,11 @@ export function AgentPanel() {
                             rows={2}
                             className="min-w-0 flex-1 resize-none rounded-lg border bg-transparent px-2.5 py-1.5 text-xs outline-none"
                             style={{ borderColor: border }}
-                            placeholder="直接聊天讨论素材，或输入指令生成/修改分镜表…"
+                            placeholder={
+                                agentMode === "storyboard"
+                                    ? "讨论剧情或输入指令生成/修改当前分镜表…"
+                                    : "自由聊天，或让助手直接在画布生成文本/图片/视频节点…"
+                            }
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {

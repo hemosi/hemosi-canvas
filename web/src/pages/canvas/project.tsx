@@ -53,7 +53,7 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { StoryboardConfirmModal, type StoryboardConfirmState } from "@/components/canvas/storyboard-confirm-modal";
 import { StoryboardGhostLayer } from "@/components/canvas/storyboard-ghost-layer";
-import { applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
+import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/storyboard-plan";
 import { resolveStoryboardRunMeta, runWithConcurrency } from "@/lib/canvas/storyboard-queue";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
 import { reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
@@ -463,7 +463,7 @@ function InfiniteCanvasPage() {
                     setNodes(result.nodes);
                     setConnections(result.connections);
                 },
-                applyStoryboardPlan: (storyboardNodeId, plan, enabledIds, removeOrphanDownstream = true) => {
+                applyStoryboardPlan: (storyboardNodeId, plan, enabledIds, removeOrphanDownstream = true, modelPresets) => {
                     const sbNode = nodesRef.current.find((n) => n.id === storyboardNodeId);
                     const data = sbNode?.metadata?.storyboard;
                     if (!sbNode || !data) return;
@@ -476,13 +476,31 @@ function InfiniteCanvasPage() {
                         connections: connectionsRef.current,
                         refCounters: refCountersRef.current,
                         removeOrphanDownstream,
+                        modelPresets,
                     });
                     refCountersRef.current = result.refCounters;
                     nodesRef.current = result.nodes;
                     connectionsRef.current = result.connections;
                     setNodes(result.nodes);
                     setConnections(result.connections);
-                    return { warnings: result.warnings };
+                    return { warnings: result.warnings, createdTasks: result.createdTasks };
+                },
+                applyCanvasAgentPlan: (plan, enabledIds, modelPresets) => {
+                    const result = applyCanvasPlan({
+                        plan,
+                        enabledIds,
+                        nodes: nodesRef.current,
+                        connections: connectionsRef.current,
+                        refCounters: refCountersRef.current,
+                        modelPresets,
+                        anchorPosition: getCanvasCenter(),
+                    });
+                    refCountersRef.current = result.refCounters;
+                    nodesRef.current = result.nodes;
+                    connectionsRef.current = result.connections;
+                    setNodes(result.nodes);
+                    setConnections(result.connections);
+                    return { createdTasks: result.createdTasks };
                 },
                 setStoryboardGhostNodes: (ghosts) => setStoryboardGhostNodes(ghosts),
                 runStoryboardBatch: async (tasks, options) => {
@@ -544,9 +562,10 @@ function InfiniteCanvasPage() {
                 },
                 getAllNodes: () => nodesRef.current,
                 getSelectedNodeIds: () => Array.from(selectedNodeIds),
+                getProjectId: () => projectId || "default",
                 setStoryboardHover: (nodeIds) => setStoryboardHoverIds(nodeIds),
             }),
-        [effectiveConfig, jumpToBookmark, message, runShot],
+        [effectiveConfig, getCanvasCenter, jumpToBookmark, message, projectId, runShot, selectedNodeIds],
     );
 
     useEffect(() => {

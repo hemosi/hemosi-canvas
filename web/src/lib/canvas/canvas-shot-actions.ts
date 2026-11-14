@@ -4,6 +4,7 @@ import { getGroupWrapRect } from "@/lib/canvas/canvas-node-geometry";
 import type { GhostPreviewNode, Plan } from "@/lib/canvas/storyboard-plan";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
 import type { StoryboardData } from "@/lib/canvas/storyboard-types";
+import type { StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
 import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 
 /** Canvas-page actions that shot/storyboard node content calls; registered by the canvas page while it is mounted. */
@@ -23,7 +24,13 @@ export type ShotHost = {
         plan: Plan,
         enabledIds: Set<string>,
         removeOrphanDownstream?: boolean,
-    ) => { warnings: string[] } | void;
+        modelPresets?: StoryboardModelPresets,
+    ) => { warnings: string[]; createdTasks?: StoryboardQueueTask[] } | void;
+    applyCanvasAgentPlan?: (
+        plan: Plan,
+        enabledIds: Set<string>,
+        modelPresets?: StoryboardModelPresets,
+    ) => { createdTasks: StoryboardQueueTask[] } | void;
     runStoryboardBatch?: (
         tasks: StoryboardQueueTask[],
         options?: { skipConfirm?: boolean; title?: string },
@@ -31,6 +38,7 @@ export type ShotHost = {
     setStoryboardGhostNodes?: (ghosts: GhostPreviewNode[]) => void;
     getAllNodes?: () => CanvasNodeData[];
     getSelectedNodeIds?: () => string[];
+    getProjectId?: () => string;
     setStoryboardHover?: (nodeIds: string[]) => void;
 };
 

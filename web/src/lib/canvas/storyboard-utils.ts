@@ -9,11 +9,24 @@ export type NodeHealth = "error" | "running" | "idle" | "stale" | "ok";
 
 export const AT_TOKEN_RE = /@(R\d+|S\d+|P\d+|图\d+|视\d+|文\d+|音\d+|S\d{2,})/g;
 
+export const DEFAULT_IMAGE_MODEL_RULE =
+    "【图片提示词规范】按「景别+机位角度 + 主体外观细节（与参考图保持一致）+ 环境道具与空间层次 + 光影氛围与色调 + 摄影质感」顺序描写纯静态首帧画面，严禁出现镜头运动词汇。";
+
+export const DEFAULT_VIDEO_MODEL_RULE =
+    "【视频提示词规范】基于首帧图，按「运镜方式（缓推/横摇/跟随等）+ 主体单一连贯动作 + 环境物理动态（风沙/烟雾/光影变化）+ 情绪节奏」顺序描写，每个镜头只聚焦一个核心动作，避免多动作堆砌导致画面崩坏。";
+
+export type StoryboardModelPresets = {
+    imageModel?: string;
+    imageSize?: string;
+    videoModel?: string;
+    videoSize?: string;
+};
+
 export function createEmptyStoryboardData(): StoryboardData {
     return {
         schemaVersion: 1,
-        imageModelRule: "",
-        videoModelRule: "",
+        imageModelRule: DEFAULT_IMAGE_MODEL_RULE,
+        videoModelRule: DEFAULT_VIDEO_MODEL_RULE,
         settings: [],
         rows: [],
     };
@@ -214,6 +227,7 @@ export function reconcileStoryboardGraph(params: {
     connections: CanvasConnection[];
     refCounters?: Record<string, number>;
     autoLayout?: boolean;
+    modelPresets?: StoryboardModelPresets;
 }): {
     data: StoryboardData;
     nodes: CanvasNodeData[];
@@ -223,6 +237,7 @@ export function reconcileStoryboardGraph(params: {
     let nextCounters = { ...(params.refCounters || {}) };
     let nextNodes = [...params.nodes];
     const nodeMap = () => new Map(nextNodes.map((n) => [n.id, n]));
+    const presets = params.modelPresets;
 
     const sbNode = nodeMap().get(params.storyboardNodeId);
     if (!sbNode) {
@@ -245,6 +260,8 @@ export function reconcileStoryboardGraph(params: {
                 refId: allocated.refId,
                 prompt: setting.desc || setting.name,
                 imageRole: setting.kind === "person" ? "character" : setting.kind === "scene" ? "scene" : "reference",
+                ...(presets?.imageModel ? { model: presets.imageModel } : {}),
+                ...(presets?.imageSize ? { size: presets.imageSize } : {}),
             },
         );
         created.title = setting.name || setting.id;
@@ -269,6 +286,8 @@ export function reconcileStoryboardGraph(params: {
                     refId: allocated.refId,
                     prompt: row.imgPrompt,
                     imageRole: "firstFrame",
+                    ...(presets?.imageModel ? { model: presets.imageModel } : {}),
+                    ...(presets?.imageSize ? { size: presets.imageSize } : {}),
                 },
             );
             created.title = `${row.code} · 首帧图`;
@@ -286,6 +305,8 @@ export function reconcileStoryboardGraph(params: {
                     refId: allocated.refId,
                     prompt: row.vidPrompt,
                     seconds: String(row.duration || 5),
+                    ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
+                    ...(presets?.videoSize ? { size: presets.videoSize } : {}),
                 },
             );
             created.title = `${row.code} · 视频`;
@@ -302,13 +323,17 @@ export function reconcileStoryboardGraph(params: {
         });
 
         const imgNode = map.get(imageNodeId);
+        const imgModel = presets?.imageModel || imgNode?.metadata?.model || "";
+        const imgSize = presets?.imageSize || imgNode?.metadata?.size || "";
         const imgPromptToUse = imgNode?.metadata?.manualPrompt ? (imgNode.metadata.prompt || "") : row.imgPrompt;
-        const expectedImgHash = computeInputsHash([imgPromptToUse, refImgKeys, imgNode?.metadata?.model || "", imgNode?.metadata?.size || ""]);
+        const expectedImgHash = computeInputsHash([imgPromptToUse, refImgKeys, imgModel, imgSize]);
 
         const vidNode = map.get(videoNodeId);
+        const vidModel = presets?.videoModel || vidNode?.metadata?.model || "";
+        const vidSize = presets?.videoSize || vidNode?.metadata?.size || "";
         const vidPromptToUse = vidNode?.metadata?.manualPrompt ? (vidNode.metadata.prompt || "") : row.vidPrompt;
         const firstFrameKey = imgNode?.metadata?.storageKey || imgNode?.metadata?.content || "";
-        const expectedVidHash = computeInputsHash([vidPromptToUse, firstFrameKey, vidNode?.metadata?.model || "", String(row.duration || 5), vidNode?.metadata?.size || ""]);
+        const expectedVidHash = computeInputsHash([vidPromptToUse, firstFrameKey, vidModel, String(row.duration || 5), vidSize]);
 
         nextNodes = nextNodes.map((n) => {
             if (n.id === imageNodeId) {
@@ -318,6 +343,8 @@ export function reconcileStoryboardGraph(params: {
                     metadata: {
                         ...n.metadata,
                         imageRole: "firstFrame",
+                        ...(presets?.imageModel ? { model: presets.imageModel } : {}),
+                        ...(presets?.imageSize ? { size: presets.imageSize } : {}),
                         ...(n.metadata?.manualPrompt ? {} : { prompt: row.imgPrompt }),
                         inputsHash: expectedImgHash,
                     },
@@ -330,6 +357,8 @@ export function reconcileStoryboardGraph(params: {
                     metadata: {
                         ...n.metadata,
                         seconds: String(row.duration || 5),
+                        ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
+                        ...(presets?.videoSize ? { size: presets.videoSize } : {}),
                         ...(n.metadata?.manualPrompt ? {} : { prompt: row.vidPrompt }),
                         inputsHash: expectedVidHash,
                     },

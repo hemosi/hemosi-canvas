@@ -9,6 +9,8 @@ import { runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyb
 import type { SettingItem, SettingKind, StoryboardAutopilotMode, StoryboardData, StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     createEmptyStoryboardData,
+    DEFAULT_IMAGE_MODEL_RULE,
+    DEFAULT_VIDEO_MODEL_RULE,
     deriveNodeHealth,
     nextSettingId,
     nextShotCode,
@@ -21,6 +23,8 @@ import type { CanvasNodeContext } from "@/types/canvas-plugin";
 const stop = {
     onMouseDown: (e: { stopPropagation: () => void }) => e.stopPropagation(),
     onPointerDown: (e: { stopPropagation: () => void }) => e.stopPropagation(),
+    onWheel: (e: { stopPropagation: () => void }) => e.stopPropagation(),
+    onKeyDown: (e: { stopPropagation: () => void }) => e.stopPropagation(),
 };
 
 const HEALTH_COLOR: Record<NodeHealth, string> = {
@@ -41,6 +45,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
     const { message } = App.useApp();
     const data: StoryboardData = ctx.node.metadata?.storyboard || createEmptyStoryboardData();
     const [tplOpen, setTplOpen] = useState(false);
+    const [activeTplTab, setActiveTplTab] = useState<"image" | "video" | null>("image");
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [mode, setMode] = useState<StoryboardAutopilotMode>("manual");
@@ -364,35 +369,81 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                 </div>
             </div>
 
-            {/* Collapsible Model Prompt Template Drawer */}
+            {/* Collapsible Model Prompt Template Accordion */}
             {tplOpen ? (
-                <div className="grid shrink-0 grid-cols-2 gap-2 border-b px-3 py-2" style={{ borderColor: border }} {...stop}>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-[11px]" style={{ color: muted }}>
-                            图片模板
-                        </span>
-                        <textarea
-                            rows={2}
-                            className="w-full resize-y rounded border bg-transparent px-2 py-1 text-[11px] outline-none"
-                            style={{ borderColor: border }}
-                            placeholder="填写当前图片模型的通用提示词书写规范..."
-                            value={data.imageModelRule}
-                            onChange={(e) => commit({ ...data, imageModelRule: e.target.value })}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-[11px]" style={{ color: muted }}>
-                            视频模板
-                        </span>
-                        <textarea
-                            rows={2}
-                            className="w-full resize-y rounded border bg-transparent px-2 py-1 text-[11px] outline-none"
-                            style={{ borderColor: border }}
-                            placeholder="填写当前视频模型的通用提示词书写规范..."
-                            value={data.videoModelRule}
-                            onChange={(e) => commit({ ...data, videoModelRule: e.target.value })}
-                        />
-                    </div>
+                <div
+                    data-canvas-no-zoom
+                    className="flex shrink-0 flex-col gap-1.5 border-b px-3 py-2"
+                    style={{ borderColor: border, background: theme.node.panel }}
+                    {...stop}
+                >
+                    {(
+                        [
+                            {
+                                key: "image" as const,
+                                label: "图片提示词模板",
+                                value: data.imageModelRule ?? DEFAULT_IMAGE_MODEL_RULE,
+                                fallback: DEFAULT_IMAGE_MODEL_RULE,
+                                onChange: (v: string) => commit({ ...data, imageModelRule: v }),
+                            },
+                            {
+                                key: "video" as const,
+                                label: "视频提示词模板",
+                                value: data.videoModelRule ?? DEFAULT_VIDEO_MODEL_RULE,
+                                fallback: DEFAULT_VIDEO_MODEL_RULE,
+                                onChange: (v: string) => commit({ ...data, videoModelRule: v }),
+                            },
+                        ]
+                    ).map((item) => {
+                        const isExpanded = activeTplTab === item.key;
+                        return (
+                            <div
+                                key={item.key}
+                                className="rounded-lg border"
+                                style={{ borderColor: border }}
+                            >
+                                <div
+                                    className="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1.5"
+                                    onClick={() => setActiveTplTab(isExpanded ? null : item.key)}
+                                >
+                                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                                        {isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+                                        <span className="shrink-0 text-[11px] font-medium">{item.label}</span>
+                                        {!isExpanded ? (
+                                            <span className="truncate text-[11px] opacity-60">
+                                                {item.value || "点击展开输入提示词模板..."}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                    {isExpanded ? (
+                                        <button
+                                            type="button"
+                                            className="shrink-0 rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                item.onChange(item.fallback);
+                                            }}
+                                        >
+                                            恢复默认
+                                        </button>
+                                    ) : null}
+                                </div>
+                                {isExpanded ? (
+                                    <div className="border-t px-2.5 py-2" style={{ borderColor: border }}>
+                                        <textarea
+                                            data-canvas-no-zoom
+                                            rows={6}
+                                            className="thin-scrollbar w-full resize-y rounded border bg-transparent px-2.5 py-1.5 text-xs leading-5 outline-none"
+                                            style={{ borderColor: border, color: theme.node.text }}
+                                            placeholder={`填写${item.label}...`}
+                                            value={item.value}
+                                            onChange={(e) => item.onChange(e.target.value)}
+                                        />
+                                    </div>
+                                ) : null}
+                            </div>
+                        );
+                    })}
                 </div>
             ) : null}
 
@@ -438,7 +489,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
             </div>
 
             {/* 10-Column Storyboard Table */}
-            <div className="thin-scrollbar min-h-0 flex-1 overflow-auto" {...stop}>
+            <div data-canvas-no-zoom className="thin-scrollbar min-h-0 flex-1 overflow-auto" {...stop}>
                 {data.rows.length === 0 ? (
                     <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 opacity-60">
                         <span>暂无分镜，点击右上角「＋ 分镜」或通过右侧导演 Agent 生成</span>
