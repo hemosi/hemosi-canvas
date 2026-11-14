@@ -1974,41 +1974,24 @@ function InfiniteCanvasPage() {
         setIsNodeDragging(false);
         setDropTargetGroupId(null);
         if (dragRef.current.hasMoved && clientX != null && clientY != null) {
-            const droppedOnAgent = Boolean(
-                document.elementFromPoint(clientX, clientY)?.closest("[data-director-agent-drop='active']"),
-            );
-            if (droppedOnAgent) {
-                setNodes((prev) =>
-                    prev.map((node) => {
-                        const initial = initialPositions.get(node.id);
-                        return initial ? { ...node, position: { x: initial.x, y: initial.y } } : node;
-                    }),
-                );
-                window.dispatchEvent(
-                    new CustomEvent("director-agent-drop-nodes", {
-                        detail: { nodeIds: Array.from(movedIds) },
-                    }),
-                );
-            } else {
-                setNodes((prev) => {
-                    const moved = prev.map((node) => {
-                        const initial = initialPositions.get(node.id);
-                        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy }, metadata: { ...node.metadata, manualPos: true } } : node;
-                    });
-                    const targetGroup = findGroupDropTarget(movedIds, moved);
-                    if (targetGroup) return renumberShotRows(movedIds, snapNodesIntoGroup(movedIds, moved, targetGroup));
-                    // Dragging a shot within its row renumbers the row left to right.
-                    return renumberShotRows(
-                        movedIds,
-                        moved.map((node) => {
-                            if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
-                            const groupId = findContainingGroupId(node, moved);
-                            if (node.metadata?.groupId === groupId) return node;
-                            return { ...node, metadata: { ...node.metadata, groupId } };
-                        }),
-                    );
+            setNodes((prev) => {
+                const moved = prev.map((node) => {
+                    const initial = initialPositions.get(node.id);
+                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy }, metadata: { ...node.metadata, manualPos: true } } : node;
                 });
-            }
+                const targetGroup = findGroupDropTarget(movedIds, moved);
+                if (targetGroup) return renumberShotRows(movedIds, snapNodesIntoGroup(movedIds, moved, targetGroup));
+                // Dragging a shot within its row renumbers the row left to right.
+                return renumberShotRows(
+                    movedIds,
+                    moved.map((node) => {
+                        if (!movedIds.has(node.id) || node.type === CanvasNodeType.Group) return node;
+                        const groupId = findContainingGroupId(node, moved);
+                        if (node.metadata?.groupId === groupId) return node;
+                        return { ...node, metadata: { ...node.metadata, groupId } };
+                    }),
+                );
+            });
         }
 
         dragRef.current.isDraggingNode = false;

@@ -81,6 +81,16 @@ export function StoryboardPreviewModal({
             width={680}
             footer={null}
             onCancel={onClose}
+            modalRender={(node) => (
+                <div
+                    data-canvas-no-zoom
+                    onMouseDownCapture={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                >
+                    {node}
+                </div>
+            )}
         >
             <div className="flex flex-col gap-3 py-2 text-xs">
                 {clips.length === 0 ? (

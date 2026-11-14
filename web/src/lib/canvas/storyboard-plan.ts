@@ -346,6 +346,13 @@ export type AgentHistoryTurn = {
     text: string;
 };
 
+export function getNodeTextContent(n: CanvasNodeData): string {
+    const texts = n.metadata?.texts || [];
+    const primaryTextId = n.metadata?.primaryTextId || texts[0]?.id;
+    const primaryText = texts.find((t) => t.id === primaryTextId);
+    return (primaryText?.content || n.metadata?.content || "").trim();
+}
+
 async function blobToDataUrl(blob: Blob, fallbackMime: string): Promise<string> {
     const mime = blob.type || fallbackMime;
     const buffer = await blob.arrayBuffer();
@@ -366,21 +373,38 @@ async function resolveAttachedMedia(params: {
     signal?: AbortSignal;
 }): Promise<{
     labels: string[];
+    textBlocks: string[];
     parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }>;
 }> {
     const mentionedRefs = new Set(extractAtTokens(params.instruction));
-    const targetNodes = params.nodes.filter(
-        (n) =>
-            (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) &&
-            Boolean(n.metadata?.content) &&
-            (params.attachedNodeIds.includes(n.id) || (n.metadata?.refId && mentionedRefs.has(n.metadata.refId))),
-    );
+    const targetNodes = params.nodes.filter((n) => {
+        const isMatched =
+            params.attachedNodeIds.includes(n.id) || Boolean(n.metadata?.refId && mentionedRefs.has(n.metadata.refId));
+        if (!isMatched) return false;
+        if (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) {
+            return Boolean(n.metadata?.content);
+        }
+        if (n.type === CanvasNodeType.Text) {
+            return Boolean(getNodeTextContent(n));
+        }
+        return false;
+    });
     const labels: string[] = [];
+    const textBlocks: string[] = [];
     const parts: Array<{ type: "image_url"; image_url: { url: string } } | { type: "video"; video: { url: string; mimeType: string } }> = [];
     const reqCfg = resolveModelRequestConfig(params.config, params.config.model || params.config.textModel);
 
     for (const n of targetNodes) {
         try {
+            if (n.type === CanvasNodeType.Text) {
+                const txt = getNodeTextContent(n);
+                if (txt) {
+                    const refLabel = `@${n.metadata?.refId || n.id} (文本: ${n.title || "未命名"})`;
+                    labels.push(refLabel);
+                    textBlocks.push(`--- ${refLabel} ---\n${txt}`);
+                }
+                continue;
+            }
             const content = n.metadata?.content || "";
             if (n.type === CanvasNodeType.Image) {
                 const dataUrl = content.startsWith("data:")
@@ -410,7 +434,7 @@ async function resolveAttachedMedia(params: {
             }
         } catch {}
     }
-    return { labels, parts };
+    return { labels, textBlocks, parts };
 }
 
 export async function buildStoryboardAgentMessages(
@@ -427,7 +451,7 @@ export async function buildStoryboardAgentMessages(
 ): Promise<AiTextMessage[]> {
     const sb = storyboardNode?.metadata?.storyboard;
     const mediaNodes = nodes
-        .filter((n) => (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) && n.metadata?.refId)
+        .filter((n) => (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video || n.type === CanvasNodeType.Text) && n.metadata?.refId)
         .map((n) => `@${n.metadata!.refId} (${n.title || n.type})`);
 
     const snapshot = {
@@ -487,7 +511,9 @@ export async function buildStoryboardAgentMessages(
     });
 
     const userText = `【当前分镜表快照】\n${JSON.stringify(snapshot, null, 2)}\n\n${
-        media.labels.length ? `【本轮拖入/附带的画布素材（已附上真实视觉内容）】${media.labels.join("、")}\n\n` : ""
+        media.labels.length ? `【本轮拾取/附带的画布素材】${media.labels.join("、")}\n\n` : ""
+    }${
+        media.textBlocks.length ? `【拾取的画布文本节点内容】\n${media.textBlocks.join("\n\n")}\n\n` : ""
     }【用户消息】\n${instruction}`;
 
     const userContent: AiTextMessage["content"] =

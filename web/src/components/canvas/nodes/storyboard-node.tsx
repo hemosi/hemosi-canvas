@@ -294,14 +294,20 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                         <Film className="size-3" /> 预览 / 合成
                     </button>
                     <select
-                        className="rounded border bg-transparent px-1.5 py-0.5 text-[11px] outline-none"
-                        style={{ borderColor: border }}
+                        className="rounded border px-1.5 py-0.5 text-[11px] outline-none"
+                        style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
                         value={mode}
                         onChange={(e) => setMode(e.target.value as StoryboardAutopilotMode)}
                     >
-                        <option value="manual">手动</option>
-                        <option value="semi">半自动</option>
-                        <option value="auto">全自动</option>
+                        <option value="manual" style={{ background: theme.node.panel, color: theme.node.text }}>
+                            手动
+                        </option>
+                        <option value="semi" style={{ background: theme.node.panel, color: theme.node.text }}>
+                            半自动
+                        </option>
+                        <option value="auto" style={{ background: theme.node.panel, color: theme.node.text }}>
+                            全自动
+                        </option>
                     </select>
                     {autopilot?.status === "running" ? (
                         <button
@@ -774,6 +780,16 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                 cancelText="取消"
                 onCancel={() => setEditingSetting(null)}
                 onOk={saveSetting}
+                modalRender={(node) => (
+                    <div
+                        data-canvas-no-zoom
+                        onMouseDownCapture={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        {node}
+                    </div>
+                )}
                 footer={(_, { OkBtn, CancelBtn }) => (
                     <div className="flex items-center justify-between">
                         {editingSetting ? (

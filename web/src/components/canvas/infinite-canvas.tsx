@@ -108,7 +108,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom]")) return;
+        if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-modal-root,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
         const temporaryTool = event.ctrlKey || event.shiftKey || isSpacePressed;
@@ -141,7 +141,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
 
     const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom],[data-node-id],[data-connection-id]")) return;
+        if (target?.closest("[data-canvas-no-zoom],[data-node-id],[data-connection-id],.ant-modal,.ant-modal-root,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
         onCanvasDoubleClick?.(event);
     };
 

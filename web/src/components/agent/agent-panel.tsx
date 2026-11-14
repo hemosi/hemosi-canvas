@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App } from "antd";
-import { Hand, Loader2, Send, Sparkles, Square, Video, X } from "lucide-react";
+import { FileText, Hand, Loader2, Send, Sparkles, Square, Video, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
-import { previewPlan, requestStoryboardPlan, type AgentHistoryTurn, type Change, type Plan } from "@/lib/canvas/storyboard-plan";
+import { getNodeTextContent, previewPlan, requestStoryboardPlan, type AgentHistoryTurn, type Change, type Plan } from "@/lib/canvas/storyboard-plan";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
 import { createEmptyStoryboardData } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -93,11 +93,14 @@ export function AgentPanel() {
             if (!ids.length) return;
             const validIds = ids.filter((id) => {
                 const n = (getShotHost()?.getAllNodes?.() || []).find((item) => item.id === id);
-                return (
-                    n &&
-                    (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) &&
-                    Boolean(n.metadata?.content)
-                );
+                if (!n) return false;
+                if (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) {
+                    return Boolean(n.metadata?.content);
+                }
+                if (n.type === CanvasNodeType.Text) {
+                    return Boolean(getNodeTextContent(n));
+                }
+                return false;
             });
             if (!validIds.length) return;
             setAttachedNodeIds((prev) => Array.from(new Set([...prev, ...validIds])));
@@ -110,7 +113,16 @@ export function AgentPanel() {
         () =>
             attachedNodeIds
                 .map((id) => allNodes.find((n) => n.id === id))
-                .filter((n): n is CanvasNodeData => Boolean(n && n.metadata?.content)),
+                .filter((n): n is CanvasNodeData => {
+                    if (!n) return false;
+                    if (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) {
+                        return Boolean(n.metadata?.content);
+                    }
+                    if (n.type === CanvasNodeType.Text) {
+                        return Boolean(getNodeTextContent(n));
+                    }
+                    return false;
+                }),
         [allNodes, attachedNodeIds],
     );
 
@@ -308,7 +320,7 @@ export function AgentPanel() {
                 <div className="thin-scrollbar flex-1 space-y-3 overflow-y-auto p-3">
                     {messages.length === 0 ? (
                         <div className="rounded-xl border border-dashed p-4 text-center opacity-60" style={{ borderColor: border }}>
-                            开启下方「拾取画布素材」开关后，直接把画布上的图片或视频拖进这里（或点击节点），即可边看素材边讨论剧情、生成分镜表。
+                            开启下方「拾取画布素材」开关后，直接单击画布上的图片、视频或文本节点，即可边看素材边讨论剧情、生成分镜表。
                         </div>
                     ) : null}
 
@@ -505,7 +517,7 @@ export function AgentPanel() {
                             onClick={() => setMediaPickEnabled((v) => !v)}
                         >
                             <Hand className="size-3.5" />
-                            <span>{mediaPickEnabled ? "拾取画布素材：已开启（拖入或点选图/视频）" : "拾取画布素材"}</span>
+                            <span>{mediaPickEnabled ? "拾取画布素材：已开启（单击图/视频/文本）" : "拾取画布素材"}</span>
                         </button>
                         {attachedNodes.length > 0 ? (
                             <button
@@ -518,7 +530,7 @@ export function AgentPanel() {
                         ) : null}
                     </div>
 
-                    {/* Attached Image / Video Thumbnails */}
+                    {/* Attached Image / Video / Text Thumbnails */}
                     {attachedNodes.length > 0 ? (
                         <div className="mb-2 flex flex-wrap gap-2">
                             {attachedNodes.map((n) => (
@@ -533,7 +545,7 @@ export function AgentPanel() {
                                             alt={n.title}
                                             className="size-9 rounded object-cover"
                                         />
-                                    ) : (
+                                    ) : n.type === CanvasNodeType.Video ? (
                                         <div className="relative grid size-9 place-items-center overflow-hidden rounded bg-black">
                                             <video
                                                 src={n.metadata?.content}
@@ -542,10 +554,16 @@ export function AgentPanel() {
                                             />
                                             <Video className="pointer-events-none absolute size-3.5 text-white/90" />
                                         </div>
+                                    ) : (
+                                        <div className="grid size-9 place-items-center rounded">
+                                            <FileText className="size-4 opacity-80" />
+                                        </div>
                                     )}
-                                    <div className="max-w-[96px] truncate text-[11px]">
+                                    <div className="max-w-[110px] truncate text-[11px]">
                                         <div className="font-semibold">@{n.metadata?.refId || n.type}</div>
-                                        <div className="truncate text-[10px] opacity-70">{n.title}</div>
+                                        <div className="truncate text-[10px] opacity-70">
+                                            {n.type === CanvasNodeType.Text ? getNodeTextContent(n).slice(0, 24) || n.title : n.title}
+                                        </div>
                                     </div>
                                     <button
                                         type="button"
