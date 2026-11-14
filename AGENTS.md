@@ -98,3 +98,5 @@
 - 本地启动或浏览器验收时不要关闭用户已经打开的浏览器窗口或标签页；需要自动化验证时使用独立测试页面，避免打断用户当前页面和对话状态。
 - 浏览器冒烟/控制台报错检查用 `web/tests/e2e/smoke-canvas.py`（Playwright 1.49 自带 chromium headless shell，无需系统库）；沙箱里要把出网代理配给浏览器并 `ignore_https_errors`，否则外部请求会被误报为 CORS/证书错误。
 - 生成渠道只接官方 API：新厂商写进 `web/src/services/api/official-providers.ts`（纯函数拼请求体 + 创建/轮询），预设写进 `OFFICIAL_CHANNEL_PRESETS`；模型不可用时用 `modelNotReadyReason` 报原因，不得换用其他模型。
+- 提示词写法（图片/视频模型的写法模板）挂在渠道里的模型条目上（`ChannelModel.promptRule`），由用户在设置里编辑；不得按模型名关键词写死映射，内置预设只用于模型条目第一次加入时填默认值。
+- 分镜视频的参考图发送方式只以 `web/src/lib/video-send-plan.ts` 为准：默认全部按参考图，只有标了首帧/尾帧才按首尾帧发；不能做到时要在界面明确提示，不得静默改模式或丢图。
