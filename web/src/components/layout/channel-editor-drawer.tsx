@@ -1,19 +1,22 @@
-import { Button, Drawer, Input, Segmented, Select, Space, Switch } from "antd";
+import { Button, Drawer, Input, Modal, Segmented, Select, Space, Switch } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { API_CALL_FORMATS, API_FORMAT_LABELS, OFFICIAL_CHANNEL_PRESETS, defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, normalizeImageEditOptions, type ImageEditOptions, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultModelRuleOf, modelRulePresetsOf, seedModelRule } from "@/lib/model-prompt-presets";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
+type RuleTarget = { name: string; kind: "image" | "video"; value: string };
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void; onClose: () => void }) {
     const { t } = useTranslation();
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const [ruleTarget, setRuleTarget] = useState<RuleTarget | null>(null);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = API_CALL_FORMATS.map((value) => ({ label: API_FORMAT_LABELS[value], value }));
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
@@ -40,6 +43,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
     const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
+    const setPromptRule = (name: string, promptRule: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, promptRule } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
 
     const save = () => {
@@ -143,6 +147,11 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                                 <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
                                     {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
                                 </Button>
+                                {model.capability === "image" || model.capability === "video" ? (
+                                    <Button size="small" title="分镜 Agent 给这个模型写提示词时遵循的写法" onClick={() => setRuleTarget({ name: model.name, kind: model.capability as "image" | "video", value: model.promptRule ?? seedModelRule(model.capability as "image" | "video", model.name) })}>
+                                        提示词写法
+                                    </Button>
+                                ) : null}
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
                             </div>
                         </div>
@@ -162,6 +171,33 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
                 onClose={() => setScriptTarget(null)}
             />
+
+            <Modal
+                open={Boolean(ruleTarget)}
+                title={`提示词写法 · ${ruleTarget?.name || ""}`}
+                okText="保存"
+                cancelText="取消"
+                width={560}
+                onCancel={() => setRuleTarget(null)}
+                onOk={() => {
+                    if (ruleTarget) setPromptRule(ruleTarget.name, ruleTarget.value.trim());
+                    setRuleTarget(null);
+                }}
+            >
+                {ruleTarget ? (
+                    <div className="space-y-2 text-xs">
+                        <div className="text-stone-500">分镜 Agent 给这个{ruleTarget.kind === "image" ? "图片" : "视频"}模型写提示词时按这里的写法；跟着这条模型走，分镜表里也能临时改。点渠道抽屉右上「保存」后生效。留空＝用通用写法。</div>
+                        <Select
+                            className="w-full"
+                            placeholder="从内置预设填入…"
+                            value={null}
+                            options={[{ value: "default", label: "通用写法" }, ...modelRulePresetsOf(ruleTarget.kind).map((p) => ({ value: p.id, label: p.label }))]}
+                            onChange={(id) => setRuleTarget({ ...ruleTarget, value: id === "default" ? defaultModelRuleOf(ruleTarget.kind) : modelRulePresetsOf(ruleTarget.kind).find((p) => p.id === id)?.rule || ruleTarget.value })}
+                        />
+                        <Input.TextArea rows={8} value={ruleTarget.value} placeholder={defaultModelRuleOf(ruleTarget.kind)} onChange={(e) => setRuleTarget({ ...ruleTarget, value: e.target.value })} />
+                    </div>
+                ) : null}
+            </Modal>
         </Drawer>
     );
 }

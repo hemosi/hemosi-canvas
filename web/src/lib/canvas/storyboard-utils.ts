@@ -9,11 +9,7 @@ export type NodeHealth = "error" | "running" | "idle" | "stale" | "ok";
 
 export const AT_TOKEN_RE = /@(R\d+|S\d+|P\d+|图\d+|视\d+|文\d+|音\d+|S\d{2,})/g;
 
-export const DEFAULT_IMAGE_MODEL_RULE =
-    "【图片提示词规范】按「景别+机位角度 + 主体外观细节（与参考图保持一致）+ 环境道具与空间层次 + 光影氛围与色调 + 摄影质感」顺序描写纯静态首帧画面，严禁出现镜头运动词汇。";
-
-export const DEFAULT_VIDEO_MODEL_RULE =
-    "【视频提示词规范】基于首帧图，按「运镜方式（缓推/横摇/跟随等）+ 主体单一连贯动作 + 环境物理动态（风沙/烟雾/光影变化）+ 情绪节奏」顺序描写，每个镜头只聚焦一个核心动作，避免多动作堆砌导致画面崩坏。";
+export { DEFAULT_IMAGE_MODEL_RULE, DEFAULT_VIDEO_MODEL_RULE } from "@/lib/model-prompt-presets";
 
 export type StoryboardModelPresets = {
     imageModel?: string;
@@ -25,8 +21,9 @@ export type StoryboardModelPresets = {
 export function createEmptyStoryboardData(): StoryboardData {
     return {
         schemaVersion: 1,
-        imageModelRule: DEFAULT_IMAGE_MODEL_RULE,
-        videoModelRule: DEFAULT_VIDEO_MODEL_RULE,
+        // Empty = follow the prompt rule of the model picked in Settings; text here overrides it for this table only.
+        imageModelRule: "",
+        videoModelRule: "",
         settings: [],
         rows: [],
     };

@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { defaultModelRuleOf, seedModelRule } from "@/lib/model-prompt-presets";
 import type { CameraSettings, LightingSettings } from "@/types/cinematography";
 
 /** openai / gemini: generic protocols. The rest are official vendor APIs with their own request/poll shapes (see services/api/official-providers.ts). */
@@ -17,6 +18,12 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    /**
+     * How prompts for this image/video model should be written (used by the storyboard Agent and the 提示词模板 panel).
+     * Seeded once from the built-in presets when the entry is added; editable in Settings → 渠道 → 编辑 → 提示词写法.
+     * "" = use the generic rule.
+     */
+    promptRule?: string;
 };
 
 export type ModelChannel = {
@@ -238,6 +245,13 @@ function findChannelModel(config: AiConfig, value: string): { channel: ModelChan
     return channel && model ? { channel, model } : null;
 }
 
+/** The prompt-writing rule bound to the chosen model entry (Settings → 渠道), or the generic rule. */
+export function modelPromptRule(config: AiConfig, value: string | undefined, kind: "image" | "video"): { rule: string; modelName: string; custom: boolean } {
+    const hit = value ? findChannelModel(config, value) : null;
+    const rule = hit?.model.promptRule?.trim();
+    return { rule: rule || defaultModelRuleOf(kind), modelName: hit?.model.name || "", custom: Boolean(rule) };
+}
+
 export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
     return findChannelModel(config, value)?.model.capability;
 }
@@ -383,7 +397,10 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const savedRule = typeof item === "string" ? undefined : item.promptRule;
+        // Seed the built-in rule once, when an image/video entry has none yet; after that it is the user's text.
+        const promptRule = savedRule !== undefined ? savedRule : capability === "image" || capability === "video" ? seedModelRule(capability, name) : undefined;
+        result.push({ name, capability, script, ...(promptRule !== undefined ? { promptRule } : {}) });
     }
     return result;
 }

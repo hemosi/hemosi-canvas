@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
-import { syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
+import { effectiveStoryboardRule, syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
 import { SettingKindSchema, type SettingItem, type StoryboardData, type StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     extractAtTokens,
@@ -757,8 +757,9 @@ export async function buildStoryboardAgentMessages(
         mode === "storyboard"
             ? `【当前绑定分镜表（${storyboardNode?.metadata?.refId || storyboardNode?.title || "未创建"}）快照】\n${JSON.stringify(
                   {
-                      imageModelRule: sb?.imageModelRule || "",
-                      videoModelRule: sb?.videoModelRule || "",
+                      // The table's own override, else the rule bound to its model in Settings.
+                      imageModelRule: sb ? effectiveStoryboardRule("image", sb, config).rule : "",
+                      videoModelRule: sb ? effectiveStoryboardRule("video", sb, config).rule : "",
                       settings: sb?.settings || [],
                       rows: (sb?.rows || []).map((r) => ({
                           id: r.id,

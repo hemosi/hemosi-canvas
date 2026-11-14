@@ -5,13 +5,12 @@ import { nanoid } from "nanoid";
 
 import { StoryboardPreviewModal, type PreviewClip } from "@/components/canvas/storyboard-preview-modal";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
-import { isBuiltinModelRule, modelRulePreset } from "@/lib/canvas/storyboard-model-rules";
+import { effectiveStoryboardRule } from "@/lib/canvas/storyboard-model-rules";
+import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { canLoadImageNode, collectAutopilotTasks, runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
 import { autopilotModeOf, type SettingItem, type SettingKind, type StoryboardAutopilotMode, type StoryboardData, type StoryboardRow } from "@/lib/canvas/storyboard-types";
 import {
     createEmptyStoryboardData,
-    DEFAULT_IMAGE_MODEL_RULE,
-    DEFAULT_VIDEO_MODEL_RULE,
     nextSettingId,
     nextShotCode,
     resolveRowReferenceImageNodeIds,
@@ -65,6 +64,8 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
     const dragIndexRef = useRef<number | null>(null);
 
     const host = getShotHost();
+    const config = useEffectiveConfig();
+    const openConfigDialog = useConfigStore((s) => s.openConfigDialog);
     const allNodes = host?.getAllNodes?.() || [];
     const nodeMap = useMemo(() => new Map(allNodes.map((n) => [n.id, n])), [allNodes]);
 
@@ -435,26 +436,17 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                     style={{ borderColor: border, background: theme.node.panel }}
                     {...stop}
                 >
-                    {(
-                        [
-                            {
-                                key: "image" as const,
-                                label: "图片提示词模板",
-                                value: data.imageModelRule ?? DEFAULT_IMAGE_MODEL_RULE,
-                                preset: modelRulePreset("image", data.imageModel || nodeMap.get(data.rows[0]?.imageNodeId || "")?.metadata?.model),
-                                edited: !isBuiltinModelRule("image", data.imageModelRule),
-                                onChange: (v: string) => commit({ ...data, imageModelRule: v }),
-                            },
-                            {
-                                key: "video" as const,
-                                label: "视频提示词模板",
-                                value: data.videoModelRule ?? DEFAULT_VIDEO_MODEL_RULE,
-                                preset: modelRulePreset("video", data.videoModel || nodeMap.get(data.rows[0]?.videoNodeId || "")?.metadata?.model),
-                                edited: !isBuiltinModelRule("video", data.videoModelRule),
-                                onChange: (v: string) => commit({ ...data, videoModelRule: v }),
-                            },
-                        ]
-                    ).map((item) => {
+                    {(["image", "video"] as const).map((key) => {
+                        const eff = effectiveStoryboardRule(key, data, config);
+                        return {
+                            key,
+                            label: key === "image" ? "图片提示词模板" : "视频提示词模板",
+                            value: eff.rule,
+                            source: eff.source === "table" ? "本表自定义" : `跟随模型设置${eff.modelName ? ` · ${eff.modelName}` : ""}${eff.source === "default" ? "（通用写法）" : ""}`,
+                            edited: eff.source === "table",
+                            onChange: (v: string) => commit(key === "image" ? { ...data, imageModelRule: v } : { ...data, videoModelRule: v }),
+                        };
+                    }).map((item) => {
                         const isExpanded = activeTplTab === item.key;
                         return (
                             <div
@@ -471,9 +463,9 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                         <span className="shrink-0 text-[11px] font-medium">{item.label}</span>
                                         <span
                                             className="shrink-0 text-[10px] opacity-60"
-                                            title="按分镜表使用的生成模型自动套用内置写法；手动改过后切换模型不再覆盖"
+                                            title="默认跟随「设置 → 渠道 → 编辑 → 提示词写法」里给这个模型配的写法；在这里改只影响本表"
                                         >
-                                            {item.edited ? "已自定义" : `${item.preset.label}预设`}
+                                            {item.source}
                                         </span>
                                         {!isExpanded ? (
                                             <span className="truncate text-[11px] opacity-60">
@@ -482,16 +474,31 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                         ) : null}
                                     </div>
                                     {isExpanded ? (
-                                        <button
-                                            type="button"
-                                            className="shrink-0 rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                item.onChange(item.preset.rule);
-                                            }}
-                                        >
-                                            恢复模型预设
-                                        </button>
+                                        <div className="flex shrink-0 items-center gap-1">
+                                            {item.edited ? (
+                                                <button
+                                                    type="button"
+                                                    className="rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        item.onChange("");
+                                                    }}
+                                                >
+                                                    恢复跟随模型
+                                                </button>
+                                            ) : null}
+                                            <button
+                                                type="button"
+                                                className="rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+                                                title="在设置里改这个模型的默认写法（所有分镜表共用）"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    openConfigDialog(false, "channels");
+                                                }}
+                                            >
+                                                去设置里改
+                                            </button>
+                                        </div>
                                     ) : null}
                                 </div>
                                 {isExpanded ? (
