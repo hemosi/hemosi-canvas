@@ -365,7 +365,7 @@ export function applyCanvasPlan(params: {
             const created = createCanvasNode(CanvasNodeType.Text, pos, {
                 refId: allocated.refId,
                 content: ch.content,
-                texts: [{ id: textId, content: ch.content, status: "success", createdAt: Date.now() }],
+                texts: [{ id: textId, content: ch.content, status: "success" }],
                 primaryTextId: textId,
             });
             created.title = ch.title || "文本";
@@ -381,7 +381,7 @@ export function applyCanvasPlan(params: {
                 refId: allocated.refId,
                 prompt: ch.prompt,
                 ...(presets?.imageModel ? { model: presets.imageModel } : {}),
-                size: presets?.imageSize || ch.size || "9:16",
+                size: ch.size || presets?.imageSize || "9:16",
             });
             created.title = ch.title || "图片";
             nextNodes.push(created);
@@ -413,7 +413,7 @@ export function applyCanvasPlan(params: {
                 prompt: ch.prompt,
                 seconds: String(ch.duration || 5),
                 ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
-                size: presets?.videoSize || ch.size || "16:9",
+                size: ch.size || presets?.videoSize || "16:9",
             });
             created.title = ch.title || "视频";
             nextNodes.push(created);
@@ -476,10 +476,9 @@ export function applyPlan(params: {
         );
     }
 
-    // Ensure added rows have fresh unique IDs on commit
-    const finalRows = next.rows.map((r) =>
-        r.id.startsWith("row-c") || diff.addedRowIds.includes(r.id) ? { ...r, id: `row-${nanoid(8)}` } : r,
-    );
+    // Give rows added by this plan fresh unique IDs on commit; existing rows keep theirs.
+    const addedRowIds = new Set(diff.addedRowIds);
+    const finalRows = next.rows.map((r) => (addedRowIds.has(r.id) ? { ...r, id: `row-${nanoid(8)}` } : r));
 
     const reconciled = reconcileStoryboardGraph({
         storyboardNodeId: params.storyboardNodeId,
