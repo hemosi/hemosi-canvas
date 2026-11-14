@@ -10,6 +10,8 @@ import {
     nextSettingId,
     nextShotCode,
     reconcileStoryboardGraph,
+    settingImageNode,
+    settingsGate,
     type StoryboardModelPresets,
 } from "@/lib/canvas/storyboard-utils";
 import { requestImageQuestion, uploadGeminiFile, type AiTextMessage } from "@/services/api/image";
@@ -65,6 +67,8 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
             kind: SettingKindSchema,
             name: z.string().min(1),
             desc: z.string().default(""),
+            /** Prompt for the setting picture; a picture node is created with it and bound to the setting. */
+            imgPrompt: z.string().default(""),
         }),
     }),
     z.object({
@@ -74,7 +78,18 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
         patch: z.object({
             name: z.string().optional(),
             desc: z.string().optional(),
+            imgPrompt: z.string().optional(),
         }),
+    }),
+    z.object({
+        id: z.string().min(1),
+        kind: z.literal("setting.review"),
+        settingId: z.string().min(1),
+        /** What the generated picture actually shows. */
+        actual: z.string().default(""),
+        /** Conflicts with the outline / setting description; empty when none. */
+        conflicts: z.string().default(""),
+        ok: z.boolean().default(false),
     }),
     z.object({
         id: z.string().min(1),
@@ -105,6 +120,8 @@ export type AgentMode = "canvas" | "storyboard";
 
 export const PlanSchema = z.object({
     summary: z.string(),
+    /** Skills the model asks to load (auto-load by description); the app re-asks once with them. */
+    loadSkills: z.array(z.string()).optional(),
     changes: z.array(ChangeSchema),
     suggestRun: z
         .object({
@@ -114,6 +131,9 @@ export const PlanSchema = z.object({
         .optional(),
 });
 export type Plan = z.infer<typeof PlanSchema>;
+
+/** Most setting pictures sent to the model in one turn (images cost tokens). */
+export const MAX_AUTO_SETTING_IMAGES = 8;
 
 export type GhostPreviewNode = {
     key: string;
@@ -160,13 +180,17 @@ export function previewPlan(
     };
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     let removeCount = 0;
+    // 设定关 is judged on the table as it was when the plan arrived; settings this plan adds are not locked yet.
+    const gate = settingsGate(data.settings);
+    const gateNote = gate.empty ? "表里还没有设定" : `设定 ${gate.unlocked.join("、")} 还没锁定`;
+    let rowsBlocked = 0;
 
     for (const ch of plan.changes) {
         if (!enabledIds.has(ch.id)) continue;
 
         if (ch.kind === "setting.add") {
             const id = nextSettingId(ch.setting.kind, settings);
-            settings.push({ id, kind: ch.setting.kind, name: ch.setting.name, desc: ch.setting.desc });
+            settings.push({ id, kind: ch.setting.kind, name: ch.setting.name, desc: ch.setting.desc, prompt: ch.setting.imgPrompt || undefined, locked: false });
             diff.addedSettingIds.push(id);
             continue;
         }
@@ -177,8 +201,32 @@ export function previewPlan(
                 warnings.push(`设定 ${ch.settingId} 不存在`);
                 continue;
             }
-            settings[idx] = { ...settings[idx], ...ch.patch };
+            const cur = settings[idx];
+            const { imgPrompt, ...rest } = ch.patch;
+            const looksChanged = (rest.desc !== undefined && rest.desc !== cur.desc) || (imgPrompt !== undefined && imgPrompt !== cur.prompt);
+            if (cur.locked && looksChanged) warnings.push(`${cur.id} 已锁定，这次改了外观，应用后会解锁，需要重新出图并审核`);
+            settings[idx] = { ...cur, ...rest, ...(imgPrompt !== undefined ? { prompt: imgPrompt } : {}), ...(cur.locked && looksChanged ? { locked: false, review: undefined } : {}) };
             diff.updatedSettingIds.push(ch.settingId);
+            continue;
+        }
+
+        if (ch.kind === "setting.review") {
+            const idx = settings.findIndex((s) => s.id === ch.settingId);
+            if (idx < 0) {
+                warnings.push(`设定 ${ch.settingId} 不存在`);
+                continue;
+            }
+            const conflicts = ch.conflicts.trim();
+            const review = `${ch.actual.trim() ? `实际画面：${ch.actual.trim()}` : ""}${conflicts ? `${ch.actual.trim() ? "；" : ""}冲突：${conflicts}` : ""}` || (ch.ok ? "审核通过" : "");
+            if (conflicts) warnings.push(`${ch.settingId} 与梗概有冲突：${conflicts}`);
+            const autoLock = Boolean(data.autoLockSettings) && ch.ok && !conflicts;
+            settings[idx] = { ...settings[idx], review, ...(autoLock ? { locked: true } : {}) };
+            diff.updatedSettingIds.push(ch.settingId);
+            continue;
+        }
+
+        if ((ch.kind === "row.add" || ch.kind === "row.update") && !gate.ready) {
+            rowsBlocked++;
             continue;
         }
 
@@ -254,12 +302,21 @@ export function previewPlan(
         }
     }
 
+    if (rowsBlocked) {
+        warnings.push(`${gateNote}，${rowsBlocked} 条分镜行没有写入。先在分镜表设定栏审核设定图并点「锁定」，全部锁定后再让 Agent 写分镜`);
+    }
+
     if (removeCount > 3) {
         warnings.push(`本次将删除 ${removeCount} 行（超过 3 行），请确认`);
     }
 
     const settingIdSet = new Set(settings.map((s) => s.id));
+    const addedRows = new Set(diff.addedRowIds);
     for (const row of rows) {
+        if (addedRows.has(row.id)) {
+            if (!extractAtTokens(row.refs).some((tok) => /^[RSP]\d+$/.test(tok))) warnings.push(`${row.code} 的「角色/场景」没有引用任何设定，首帧图会没有设定图参考`);
+            if (!/\[(接上镜|切镜)\]/.test(row.note)) warnings.push(`${row.code} 备注没标 [接上镜] 或 [切镜]`);
+        }
         for (const tok of extractAtTokens(`${row.refs} ${row.staticScreen} ${row.action}`)) {
             if (/^[RSP]\d+$/.test(tok) && !settingIdSet.has(tok)) {
                 warnings.push(`${row.code} 引用了不存在的设定 @${tok}`);
@@ -528,6 +585,11 @@ export function applyPlan(params: {
     };
 }
 
+export type AgentSkillContext = {
+    index: Array<{ name: string; description: string }>;
+    loaded: Array<{ name: string; body: string }>;
+};
+
 export type AgentHistoryTurn = {
     role: "user" | "assistant";
     text: string;
@@ -558,6 +620,9 @@ async function resolveAttachedMedia(params: {
     attachedNodeIds: string[];
     instruction: string;
     signal?: AbortSignal;
+    /** Picked by the app itself (locked setting pictures), sent with these labels. */
+    autoNodeIds?: string[];
+    autoLabel?: (node: CanvasNodeData) => string;
 }): Promise<{
     labels: string[];
     textBlocks: string[];
@@ -567,7 +632,7 @@ async function resolveAttachedMedia(params: {
     const mentionedRefs = new Set(extractAtTokens(params.instruction));
     const targetNodes = params.nodes.filter((n) => {
         const isMatched =
-            params.attachedNodeIds.includes(n.id) || Boolean(n.metadata?.refId && mentionedRefs.has(n.metadata.refId));
+            params.attachedNodeIds.includes(n.id) || params.autoNodeIds?.includes(n.id) || Boolean(n.metadata?.refId && mentionedRefs.has(n.metadata.refId));
         if (!isMatched) return false;
         if (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video) {
             return Boolean(n.metadata?.content);
@@ -603,7 +668,7 @@ async function resolveAttachedMedia(params: {
                           storageKey: n.metadata?.storageKey,
                       });
                 if (dataUrl) {
-                    labels.push(`@${n.metadata?.refId || n.id} (图片: ${n.title || "未命名"})`);
+                    labels.push(params.autoLabel && params.autoNodeIds?.includes(n.id) && !params.attachedNodeIds.includes(n.id) ? params.autoLabel(n) : `@${n.metadata?.refId || n.id} (图片: ${n.title || "未命名"})`);
                     parts.push({ type: "image_url", image_url: { url: dataUrl } });
                 } else {
                     failures.push(`@${n.metadata?.refId || n.id}：读取结果为空`);
@@ -631,6 +696,23 @@ async function resolveAttachedMedia(params: {
         }
     }
     return { labels, textBlocks, parts, failures };
+}
+
+/**
+ * Setting pictures to send with a storyboard turn, without the user picking them. Before 设定关 passes: every setting
+ * that has a picture (unlocked first, so the Agent can review them). After: the locked ones the rows are written from.
+ * Capped at `max`; the rest are listed as omitted.
+ */
+export function pickAutoSettingImages(settings: SettingItem[], nodes: CanvasNodeData[], max = MAX_AUTO_SETTING_IMAGES): { ids: string[]; labels: Map<string, string>; omitted: string[] } {
+    const gate = settingsGate(settings);
+    const withImage = settings
+        .map((s) => ({ s, node: settingImageNode(s, nodes) }))
+        .filter((x): x is { s: SettingItem; node: CanvasNodeData } => Boolean(x.node?.metadata?.content))
+        .filter((x) => !gate.ready || x.s.locked)
+        .sort((a, b) => Number(Boolean(a.s.locked)) - Number(Boolean(b.s.locked)));
+    const picked = withImage.slice(0, max);
+    const labels = new Map(picked.map((x) => [x.node.id, `@${x.node.metadata?.refId || x.node.id} = 设定 @${x.s.id} ${x.s.name}（${x.s.locked ? "已锁定" : "未锁定，待审核"}）`]));
+    return { ids: picked.map((x) => x.node.id), labels, omitted: withImage.slice(max).map((x) => `@${x.s.id} ${x.s.name}`) };
 }
 
 /** Fallback when the model-written compact fails: keep each turn's head, newest last. */
@@ -693,6 +775,8 @@ export async function buildStoryboardAgentMessages(
         signal?: AbortSignal;
         /** Attached media that could not be read and was left out of the request. */
         onMediaFailures?: (failures: string[]) => void;
+        /** Skills: the name+description index (for auto-load) and the ones loaded for this turn. */
+        skills?: AgentSkillContext;
     },
 ): Promise<AiTextMessage[]> {
     const mode: AgentMode = options?.agentMode || "canvas";
@@ -719,37 +803,62 @@ export async function buildStoryboardAgentMessages(
     ].join("\n");
 
     const storyboardSystemPrompt = [
-        "你是 HemosiTV 分镜导演 Agent，专注于协助用户规划和修改当前选中的 10 列标准 AI 短剧分镜表（同时也支持生成独立画布节点）。",
+        "你是 HemosiTV 分镜导演 Agent，负责和用户一起把一句话需求做成：故事梗概 → 设定（角色/场景/物品）→ 设定图 → 10 列分镜表（同时也支持生成独立画布节点）。",
         "请输出 JSON 对象（不要加多余包裹），结构如下：",
         `{
-  "summary": "你对用户的自然回复或分镜修改说明",
+  "summary": "你对用户的自然回复或修改说明（可用 markdown）",
   "changes": [
-    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称", "desc": "外观描述（可带 @图1）" } },
-    { "id": "c2", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 / @S1", "note": "备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
-    { "id": "c3", "kind": "row.update", "rowId": "S01或rowId", "patch": { ... } },
-    { "id": "c4", "kind": "row.remove", "rowId": "S01或rowId" },
-    { "id": "c5", "kind": "row.move", "rowId": "S01或rowId", "to": 0 },
-    { "id": "c6", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "9:16|16:9", "refs": "@图1" }
+    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称（同一角色换装就拆成两个设定，如：林佳佳·皮夹克）", "desc": "外观要点 + 出现镜号（可带 @图1 绑定画布已有图片）", "imgPrompt": "可直接生成设定图的完整提示词" } },
+    { "id": "c2", "kind": "setting.update", "settingId": "R1", "patch": { "desc": "…", "imgPrompt": "…" } },
+    { "id": "c3", "kind": "setting.review", "settingId": "R1", "actual": "这张设定图实际画了什么（服装/发型/配色/背景/时间天气/载具外形）", "conflicts": "与梗概或设定描述冲突的地方，没有就填空字符串", "ok": true },
+    { "id": "c4", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 @S1 @P1", "note": "[切镜] 备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
+    { "id": "c5", "kind": "row.update", "rowId": "S01", "patch": { ... } },
+    { "id": "c6", "kind": "row.remove", "rowId": "S01" },
+    { "id": "c7", "kind": "row.move", "rowId": "S01", "to": 0 },
+    { "id": "c8", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "9:16|16:9", "refs": "@图1" }
   ],
-  "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" }
+  "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" },
+  "loadSkills": ["需要加载的 skill 名称（可省略）"]
 }`,
-        "铁律：",
-        "1. 如果用户只是在讨论或闲聊，直接把回答写在 summary 中，且必须将 changes 设为空数组 []！",
-        "2. 当用户附带了图片或视频（如 @图1、@视1）时，你已收到真实的图像/视频数据，请直接观察画面细节。",
-        "3. 生成或修改分镜表时：staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与模板直接写出每镜的 imgPrompt 与 vidPrompt；引用角色/场景/图片节点时使用 @R1、@S1、@图n。",
+        "【内置硬规则 · 最高优先级，下方任何 skill / 风格说明都不能推翻】",
+        "0. 用户只是讨论或闲聊时，把回答写在 summary 里，changes 必须是 []。用户附带了图片或视频（如 @图1、@视1）时，你已收到真实画面，请直接观察。",
+        "【先设计、后分镜】看快照里的 settingsGate：",
+        "1. settingsGate.ready=false（表里没有设定，或有设定未锁定，或你判断关键的人物/场景/物品/载具还没有设定）时，本轮只能输出 setting.add / setting.update / setting.review，严禁 row.add / row.update。",
+        "   - 还没有设定：summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写能直接生成设定图的完整提示词（角色：全身定妆/三视图，服装与梗概一致；场景：无人空镜，交代时间天气光线；物品：多角度、干净背景）。系统会为每个设定建好图片节点并绑定。",
+        "   - 本轮附带了设定图（标注为「设定 @R1 …」）：逐张观察，为每张输出 setting.review：actual 写图里实际画了什么，conflicts 写和梗概/设定描述对不上的地方。有冲突时 ok=false，并在 summary 里问用户是改图（你给出新的 imgPrompt 用 setting.update）还是改剧本，不要自己往下写分镜。",
+        "   - 设定由用户点「锁定」确认（用户也可开启让你自动锁定：审核无冲突时 ok=true）。",
+        "2. settingsGate.ready=true 后才能写分镜行，且只能引用已锁定的设定。",
+        "【镜头连贯硬规则】",
+        "3. 每一行 refs 必须列出本镜画面里出现的全部设定（@R/@S/@P），一个都不能漏——系统按 refs 把设定图连到首帧图，漏写的设定在画面里就会走样。",
+        "4. 每一镜的 staticScreen 和 imgPrompt 必须从上一镜结尾接着写：人物位置、朝向、姿态、手里拿的东西、所在载具、光线天气时间都承接上一镜结尾状态；状态要变（如上车、换装、换地点）就单独加一镜交代过程。",
+        "5. note 开头必须标 [接上镜]（同一空间的连续动作）或 [切镜]（景别/机位/场景变化）。不使用尾帧接首帧，一律靠同一套锁定的设定图和承接描述保持一致。",
+        "6. staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与提示词模板写出每镜的 imgPrompt 与 vidPrompt。",
+        "7. 写完或改完分镜行后，summary 末尾必须有「衔接自检」：逐条列出你发现的断点（服装/道具/位置/光线跳变、缺少交代的动作、引用了未锁定或不存在的设定），没有就写「未发现断点」。",
     ].join("\n");
+
+    const skillIndex = options?.skills?.index?.length
+        ? `【可用 skill 索引】需要时在 JSON 的 loadSkills 里写上名称，系统会把内容加载给你后重答：\n${options.skills.index.map((k) => `- ${k.name}：${k.description}`).join("\n")}`
+        : "";
+    const skillBodies = options?.skills?.loaded?.length
+        ? `【已加载的 skill · 风格/写法参考，优先级低于上面的内置硬规则，冲突时以硬规则为准】\n${options.skills.loaded.map((k) => `### skill：${k.name}\n${k.body}`).join("\n\n")}`
+        : "";
+    const withSkills = (base: string) => [base, skillIndex, skillBodies].filter(Boolean).join("\n\n");
 
     const historyMessages: AiTextMessage[] = (options?.history || []).map((turn) => ({
         role: turn.role,
         content: turn.text,
     }));
 
+    // Storyboard turns also carry the setting pictures (review before the gate, locked ones when writing rows).
+    const auto = mode === "storyboard" && sb ? pickAutoSettingImages(sb.settings, nodes) : null;
     const media = await resolveAttachedMedia({
         config,
         nodes,
         attachedNodeIds: options?.attachedNodeIds || [],
         instruction,
         signal: options?.signal,
+        autoNodeIds: auto?.ids,
+        autoLabel: (n) => auto?.labels.get(n.id) || `@${n.metadata?.refId || n.id}`,
     });
     if (media.failures.length) options?.onMediaFailures?.(media.failures);
 
@@ -760,7 +869,18 @@ export async function buildStoryboardAgentMessages(
                       // The table's own override, else the rule bound to its model in Settings.
                       imageModelRule: sb ? effectiveStoryboardRule("image", sb, config).rule : "",
                       videoModelRule: sb ? effectiveStoryboardRule("video", sb, config).rule : "",
-                      settings: sb?.settings || [],
+                      settingsGate: settingsGate(sb?.settings || []),
+                      autoLockSettings: Boolean(sb?.autoLockSettings),
+                      settings: (sb?.settings || []).map((st) => ({
+                          id: st.id,
+                          kind: st.kind,
+                          name: st.name,
+                          desc: st.desc,
+                          imgPrompt: st.prompt || "",
+                          locked: Boolean(st.locked),
+                          hasImage: Boolean(settingImageNode(st, nodes)?.metadata?.content),
+                          review: st.review || "",
+                      })),
                       rows: (sb?.rows || []).map((r) => ({
                           id: r.id,
                           code: r.code,
@@ -788,7 +908,8 @@ export async function buildStoryboardAgentMessages(
         ? `【早期对话压缩摘要（auto compact）】\n${options.compressedSummary}\n\n`
         : "";
 
-    const userText = `${summaryBlock}${snapshotBlock}${
+    const omittedBlock = auto?.omitted.length ? `【设定图超过 ${MAX_AUTO_SETTING_IMAGES} 张，以下没有附带给你（需要时让用户拾取）】${auto.omitted.join("、")}\n\n` : "";
+    const userText = `${summaryBlock}${snapshotBlock}${omittedBlock}${
         media.labels.length ? `【本轮拾取/附带的画布素材】${media.labels.join("、")}\n\n` : ""
     }${
         media.failures.length ? `【以下素材读取失败、未发送给你，不要假装看到了】${media.failures.join("；")}\n\n` : ""
@@ -800,7 +921,7 @@ export async function buildStoryboardAgentMessages(
         media.parts.length > 0 ? [...media.parts, { type: "text" as const, text: userText }] : userText;
 
     return [
-        { role: "system", content: mode === "storyboard" ? storyboardSystemPrompt : canvasSystemPrompt },
+        { role: "system", content: withSkills(mode === "storyboard" ? storyboardSystemPrompt : canvasSystemPrompt) },
         ...historyMessages,
         { role: "user", content: userContent },
     ];
@@ -828,6 +949,15 @@ function summaryOnlyText(trimmed: string): string {
     return trimmed;
 }
 
+export type AgentSkill = { name: string; description: string; body: string };
+
+/** Names the model asked for that exist and are not loaded yet. */
+export function skillsToAutoLoad(requested: string[] | undefined, available: AgentSkill[], loadedNames: string[]): string[] {
+    const known = new Map(available.map((k) => [k.name.trim().toLowerCase(), k.name]));
+    const loaded = new Set(loadedNames.map((n) => n.toLowerCase()));
+    return [...new Set((requested || []).map((n) => known.get(n.trim().toLowerCase())).filter((n): n is string => Boolean(n) && !loaded.has(n!.toLowerCase())))];
+}
+
 export async function requestStoryboardPlan(params: {
     config: AiConfig;
     storyboardNode: CanvasNodeData | null;
@@ -839,10 +969,33 @@ export async function requestStoryboardPlan(params: {
     history?: AgentHistoryTurn[];
     compressedSummary?: string;
     signal?: AbortSignal;
+    /** Enabled skills (their name+description go in the index) and the ones the user switched on for this chat. */
+    skills?: { available: AgentSkill[]; activeNames: string[] };
 }): Promise<
-    | { ok: true; plan: Plan; raw: string; mediaFailures: string[] }
-    | { ok: false; raw: string; error: string; mediaFailures: string[] }
+    | { ok: true; plan: Plan; raw: string; mediaFailures: string[]; autoLoadedSkills: string[] }
+    | { ok: false; raw: string; error: string; mediaFailures: string[]; autoLoadedSkills: string[] }
 > {
+    const available = params.skills?.available || [];
+    let loadedNames = (params.skills?.activeNames || []).filter((n) => available.some((k) => k.name === n));
+    const autoLoadedSkills: string[] = [];
+    // One extra round at most: the model may ask for skills by description, then answers again with them loaded.
+    for (let round = 0; round < 2; round++) {
+        const res = await requestPlanOnce(params, {
+            index: available.filter((k) => !loadedNames.includes(k.name)).map(({ name, description }) => ({ name, description })),
+            loaded: available.filter((k) => loadedNames.includes(k.name)).map(({ name, body }) => ({ name, body })),
+        });
+        const wanted = res.ok && round === 0 ? skillsToAutoLoad(res.plan.loadSkills, available, loadedNames) : [];
+        if (!wanted.length) return { ...res, autoLoadedSkills };
+        autoLoadedSkills.push(...wanted);
+        loadedNames = [...loadedNames, ...wanted];
+    }
+    throw new Error("unreachable");
+}
+
+async function requestPlanOnce(
+    params: Parameters<typeof requestStoryboardPlan>[0],
+    skills: AgentSkillContext,
+): Promise<{ ok: true; plan: Plan; raw: string; mediaFailures: string[] } | { ok: false; raw: string; error: string; mediaFailures: string[] }> {
     let mediaFailures: string[] = [];
     const messages = await buildStoryboardAgentMessages(
         params.config,
@@ -856,6 +1009,7 @@ export async function requestStoryboardPlan(params: {
             history: params.history,
             compressedSummary: params.compressedSummary,
             signal: params.signal,
+            skills,
             onMediaFailures: (failures) => {
                 mediaFailures = failures;
             },
@@ -889,7 +1043,7 @@ export async function requestStoryboardPlan(params: {
         try {
             const trimmed = raw.trim();
             if (!trimmed.includes('"changes"')) {
-                return { ok: true, plan: { summary: summaryOnlyText(trimmed), changes: [] }, raw, mediaFailures };
+                return { ok: true, plan: { summary: summaryOnlyText(trimmed), changes: [], loadSkills: loadSkillsOf(trimmed) }, raw, mediaFailures };
             }
             const parsed = JSON.parse(extractJsonObject(raw));
             const validated = PlanSchema.safeParse(parsed);
@@ -903,4 +1057,14 @@ export async function requestStoryboardPlan(params: {
     }
 
     return { ok: false, raw: lastRaw, error: lastError || "Plan 校验失败", mediaFailures };
+}
+
+function loadSkillsOf(trimmed: string): string[] | undefined {
+    if (!trimmed.includes('"loadSkills"')) return undefined;
+    try {
+        const parsed = JSON.parse(extractJsonObject(trimmed)) as { loadSkills?: unknown };
+        return Array.isArray(parsed.loadSkills) ? parsed.loadSkills.filter((n): n is string => typeof n === "string") : undefined;
+    } catch {
+        return undefined;
+    }
 }

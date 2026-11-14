@@ -484,7 +484,8 @@ function InfiniteCanvasPage() {
                     connectionsRef.current = result.connections;
                     setNodes(result.nodes);
                     setConnections(result.connections);
-                    return { warnings: result.warnings, createdTasks: result.createdTasks, applied: result.applied };
+                    const repromptedSettingIds = plan.changes.flatMap((c) => (enabledIds.has(c.id) && c.kind === "setting.update" && c.patch.imgPrompt ? [c.settingId] : []));
+                    return { warnings: result.warnings, createdTasks: result.createdTasks, applied: result.applied, settingIds: [...result.diff.addedSettingIds, ...repromptedSettingIds] };
                 },
                 applyCanvasAgentPlan: (plan, enabledIds, modelPresets) => {
                     const vp = viewportRef.current;

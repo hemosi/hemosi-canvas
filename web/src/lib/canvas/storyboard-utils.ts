@@ -90,6 +90,21 @@ export function deriveNodeHealth(node: CanvasNodeData | undefined): NodeHealth {
     return "ok";
 }
 
+/** 设定关: rows may only be written when the table has settings and every one of them is locked. */
+export function settingsGate(settings: SettingItem[]): { ready: boolean; empty: boolean; unlocked: string[] } {
+    const unlocked = settings.filter((s) => !s.locked).map((s) => s.id);
+    return { ready: settings.length > 0 && unlocked.length === 0, empty: settings.length === 0, unlocked };
+}
+
+/** The image node bound to a setting (first @图n in its desc that is an image node). */
+export function settingImageNode(setting: SettingItem, nodes: CanvasNodeData[]): CanvasNodeData | undefined {
+    for (const tok of extractAtTokens(setting.desc)) {
+        const node = nodes.find((n) => n.type === CanvasNodeType.Image && n.metadata?.refId === tok);
+        if (node) return node;
+    }
+    return undefined;
+}
+
 /** A row's first-frame and video health; a video made from a stale first frame is stale too. */
 export function rowHealth(row: StoryboardRow, nodeMap: Map<string, CanvasNodeData>): { image: NodeHealth; video: NodeHealth } {
     const image = deriveNodeHealth(nodeMap.get(row.imageNodeId));
@@ -258,10 +273,14 @@ export function reconcileStoryboardGraph(params: {
 
     // 1. Ensure each setting has a bound @图n image node if none exists yet
     const nextSettings: SettingItem[] = params.data.settings.map((setting) => {
-        const hasImageRef = extractAtTokens(setting.desc).some((tok) =>
-            nextNodes.some((n) => n.type === CanvasNodeType.Image && n.metadata?.refId === tok),
-        );
-        if (hasImageRef) return setting;
+        const bound = settingImageNode(setting, nextNodes);
+        if (bound) {
+            // Keep the bound picture's prompt in step with the setting's image prompt (unless the user edited it on the node).
+            if (setting.prompt && !bound.metadata?.manualPrompt && bound.metadata?.prompt !== setting.prompt) {
+                nextNodes = nextNodes.map((n) => (n.id === bound.id ? { ...n, metadata: { ...n.metadata, prompt: setting.prompt } } : n));
+            }
+            return setting;
+        }
 
         const allocated = allocateRefId(CanvasNodeType.Image, nextNodes, nextCounters);
         nextCounters = allocated.nextCounters;
@@ -270,7 +289,7 @@ export function reconcileStoryboardGraph(params: {
             { x: sbNode.position.x - 180, y: sbNode.position.y + 120 },
             {
                 refId: allocated.refId,
-                prompt: setting.desc || setting.name,
+                prompt: setting.prompt || setting.desc || setting.name,
                 imageRole: setting.kind === "person" ? "character" : setting.kind === "scene" ? "scene" : "reference",
                 ...(presets?.imageModel ? { model: presets.imageModel } : {}),
                 ...(presets?.imageSize ? { size: presets.imageSize } : {}),

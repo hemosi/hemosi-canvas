@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Film, GripVertical, LayoutGrid, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Film, GripVertical, LayoutGrid, Lock, Plus, Trash2, Unlock } from "lucide-react";
 import { App, Modal } from "antd";
 import { nanoid } from "nanoid";
 
@@ -15,6 +15,7 @@ import {
     nextShotCode,
     resolveRowReferenceImageNodeIds,
     rowHealth,
+    settingImageNode,
     settingImagesSignature,
     type NodeHealth,
 } from "@/lib/canvas/storyboard-utils";
@@ -522,19 +523,32 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
 
             {/* Settings Bar */}
             <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5" style={{ borderColor: border }} {...stop}>
-                {data.settings.map((s) => (
-                    <button
-                        key={s.id}
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
-                        style={{ border: `1px solid ${border}` }}
-                        title={s.desc || s.name}
-                        onClick={() => setEditingSetting(s)}
-                    >
-                        <span className="font-semibold opacity-70">{s.id}</span>
-                        <span>{s.name}</span>
-                    </button>
-                ))}
+                {data.settings.map((s) => {
+                    const hasPicture = Boolean(settingImageNode(s, allNodes)?.metadata?.content);
+                    const conflict = /冲突：/.test(s.review || "");
+                    return (
+                        <span
+                            key={s.id}
+                            className="inline-flex items-center rounded text-[11px]"
+                            style={{ border: `1px solid ${s.locked ? "#34d399" : conflict ? "#f59e0b" : border}` }}
+                            title={[s.desc || s.name, s.review ? `Agent 审图：${s.review}` : "", s.locked ? "已锁定" : hasPicture ? "未锁定：确认设定图没问题后点锁" : "未锁定：还没有设定图"].filter(Boolean).join("\n")}
+                        >
+                            <button type="button" className="inline-flex items-center gap-1 rounded-l px-2 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10" onClick={() => setEditingSetting(s)}>
+                                <span className="font-semibold opacity-70">{s.id}</span>
+                                <span>{s.name}</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="rounded-r px-1 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10"
+                                style={{ color: s.locked ? "#34d399" : muted }}
+                                title={s.locked ? "已锁定，点击解锁" : "锁定这个设定（确认设定图和描述没问题）"}
+                                onClick={() => commit({ ...data, settings: data.settings.map((x) => (x.id === s.id ? { ...x, locked: !x.locked } : x)) })}
+                            >
+                                {s.locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+                            </button>
+                        </span>
+                    );
+                })}
                 <button
                     type="button"
                     className="rounded px-1.5 py-0.5 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
@@ -559,6 +573,21 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                 >
                     ＋ 物品
                 </button>
+                {data.settings.some((x) => !x.locked) ? (
+                    <button
+                        type="button"
+                        className="rounded px-1.5 py-0.5 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
+                        style={{ color: muted }}
+                        title="确认全部设定（和设定图）都没问题后一次锁定；全部锁定后 Agent 才会写分镜行"
+                        onClick={() => commit({ ...data, settings: data.settings.map((x) => ({ ...x, locked: true })) })}
+                    >
+                        全部锁定
+                    </button>
+                ) : null}
+                <label className="ml-auto inline-flex cursor-pointer items-center gap-1 text-[11px]" style={{ color: muted }} title="开启后 Agent 审图没发现冲突时会自己锁定设定；默认关闭，由你点锁">
+                    <input type="checkbox" checked={Boolean(data.autoLockSettings)} onChange={(e) => commit({ ...data, autoLockSettings: e.target.checked })} />
+                    Agent 可自动锁定
+                </label>
             </div>
 
             {/* 10-Column Storyboard Table */}
@@ -953,6 +982,26 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                 onChange={(e) => setEditingSetting({ ...editingSetting, desc: e.target.value })}
                             />
                         </div>
+                        <div className="flex flex-col gap-1">
+                            <span>设定图提示词</span>
+                            <textarea
+                                rows={3}
+                                className="rounded border bg-transparent px-2 py-1 outline-none"
+                                placeholder="生成设定图用的提示词；留空用描述"
+                                value={editingSetting.prompt || ""}
+                                onChange={(e) => setEditingSetting({ ...editingSetting, prompt: e.target.value })}
+                            />
+                        </div>
+                        {editingSetting.review ? (
+                            <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 leading-5">
+                                <span className="font-medium">Agent 审图：</span>
+                                {editingSetting.review}
+                            </div>
+                        ) : null}
+                        <label className="inline-flex items-center gap-1.5">
+                            <input type="checkbox" checked={Boolean(editingSetting.locked)} onChange={(e) => setEditingSetting({ ...editingSetting, locked: e.target.checked })} />
+                            锁定（确认这个设定和设定图没问题；全部锁定后 Agent 才写分镜行）
+                        </label>
                     </div>
                 ) : null}
             </Modal>

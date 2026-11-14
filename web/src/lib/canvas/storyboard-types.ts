@@ -8,6 +8,12 @@ export const SettingItemSchema = z.object({
     kind: SettingKindSchema,
     name: z.string(),
     desc: z.string(),
+    /** Image prompt for this setting's picture (设定图). Falls back to desc. */
+    prompt: z.string().optional(),
+    /** Locked = approved by the user (or by the Agent when autoLockSettings is on). Rows are only written once all are locked. */
+    locked: z.boolean().optional(),
+    /** The Agent's look at the generated picture: what it actually shows and any conflict with the outline. */
+    review: z.string().optional(),
 });
 export type SettingItem = z.infer<typeof SettingItemSchema>;
 
@@ -44,6 +50,8 @@ export const StoryboardDataSchema = z.object({
     aspectRatio: z.string().optional(),
     /** 一键出片 mode of this table. Anything but "auto" (including the removed 半自动) reads as manual. */
     autopilotMode: z.string().optional(),
+    /** Let the Agent lock a setting itself when its review finds no conflict. Off by default: the user locks. */
+    autoLockSettings: z.boolean().optional(),
     settings: z.array(SettingItemSchema),
     rows: z.array(StoryboardRowSchema),
 });

@@ -22,7 +22,7 @@ import {
 } from "@/lib/canvas/storyboard-plan";
 import { syncStoryboardModelRules } from "@/lib/canvas/storyboard-model-rules";
 import type { StoryboardQueueTask } from "@/lib/canvas/storyboard-queue";
-import { createEmptyStoryboardData, type StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
+import { createEmptyStoryboardData, settingImageNode, settingsGate, type StoryboardModelPresets } from "@/lib/canvas/storyboard-utils";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -121,12 +121,23 @@ function turnsChars(summary: string, turns: AgentHistoryTurn[]) {
     return summary.length + turns.reduce((acc, t) => acc + t.text.length, 0);
 }
 
-function changeLabel(ch: Change): { badge: string; title: string; detail: string } {
+/** Row ids in a plan are shown as shot codes (S01), never as raw ids like row-LiFrWoth. */
+type RowCodeOf = (rowId: string) => string;
+const rawRowCode: RowCodeOf = (rowId) => rowId;
+
+function rowCodeLookup(node: CanvasNodeData | null): RowCodeOf {
+    const rows = node?.metadata?.storyboard?.rows || [];
+    return (rowId) => rows.find((r) => r.id === rowId || r.code === rowId)?.code || (rowId.startsWith("row-") ? "已删除的分镜" : rowId);
+}
+
+function changeLabel(ch: Change, codeOf: RowCodeOf = rawRowCode): { badge: string; title: string; detail: string } {
     switch (ch.kind) {
         case "setting.add":
-            return { badge: "加设定", title: `${ch.setting.name}`, detail: ch.setting.desc };
+            return { badge: "加设定", title: `${ch.setting.name}`, detail: [ch.setting.desc, ch.setting.imgPrompt ? `设定图提示词：${ch.setting.imgPrompt}` : ""].filter(Boolean).join("｜") };
         case "setting.update":
-            return { badge: "改设定", title: ch.settingId, detail: ch.patch.desc || ch.patch.name || "" };
+            return { badge: "改设定", title: ch.settingId, detail: ch.patch.desc || ch.patch.imgPrompt || ch.patch.name || "" };
+        case "setting.review":
+            return { badge: ch.ok && !ch.conflicts.trim() ? "审图通过" : "审图有问题", title: ch.settingId, detail: [ch.actual && `实际：${ch.actual}`, ch.conflicts && `冲突：${ch.conflicts}`].filter(Boolean).join("｜") };
         case "row.add":
             return {
                 badge: "加分镜",
@@ -136,13 +147,13 @@ function changeLabel(ch: Change): { badge: string; title: string; detail: string
         case "row.update":
             return {
                 badge: "改分镜",
-                title: ch.rowId,
+                title: codeOf(ch.rowId),
                 detail: [ch.patch.staticScreen, ch.patch.action, ch.patch.line].filter(Boolean).join(" · "),
             };
         case "row.remove":
-            return { badge: "删分镜", title: ch.rowId, detail: "删除该分镜行" };
+            return { badge: "删分镜", title: codeOf(ch.rowId), detail: "删除该分镜行" };
         case "row.move":
-            return { badge: "移分镜", title: ch.rowId, detail: `移动到第 ${ch.to + 1} 位` };
+            return { badge: "移分镜", title: codeOf(ch.rowId), detail: `移动到第 ${ch.to + 1} 位` };
         case "canvas.text.add":
             return { badge: "建文本", title: ch.title || "文本节点", detail: ch.content };
         case "canvas.image.add":
@@ -401,8 +412,8 @@ export function AgentPanel() {
         host?.setStoryboardGhostNodes?.(pendingPreview?.diff.ghostNodes || []);
     }, [host, pendingPreview]);
 
-    const handleSend = async () => {
-        const text = input.trim();
+    const handleSend = async (override?: string) => {
+        const text = (override ?? input).trim();
         if ((!text && attachedNodes.length === 0) || running) return;
         const activeTextModel = textModel || effectiveConfig.textModel || effectiveConfig.model;
         if (!activeTextModel) {
@@ -424,7 +435,7 @@ export function AgentPanel() {
         const sendScopeKey = scopeKey;
         const sendEpoch = scopeEpochs.get(sendScopeKey) || 0;
 
-        setInput("");
+        if (override === undefined) setInput("");
         setAttachedNodeIds([]);
         updateScopedMessages((prev) => [
             ...prev,
@@ -605,6 +616,16 @@ export function AgentPanel() {
             }
             createdTasks = result.createdTasks || [];
             appliedStoryboardId = sb.id;
+            if (autoRun && result.settingIds?.length) {
+                // 应用并生成设定图: the pictures bound to the settings this plan added or re-prompted.
+                const latestNodes = host.getAllNodes?.() || [];
+                const latestData = latestNodes.find((n) => n.id === sb!.id)?.metadata?.storyboard;
+                for (const st of latestData?.settings || []) {
+                    if (!result.settingIds.includes(st.id)) continue;
+                    const img = settingImageNode(st, latestNodes);
+                    if (img) createdTasks.push({ nodeId: img.id, kind: "image", label: `@${st.id} ${st.name} · 设定图`, prompt: img.metadata?.prompt || st.prompt || st.desc });
+                }
+            }
             const tableNote = createdTable ? `，已自动新建分镜表${sb.metadata?.refId ? ` @${sb.metadata.refId}` : ""}` : "";
             if (result.warnings.length) message.warning(`已应用 ${result.applied} 项改动${tableNote}；${result.warnings[0]}`);
             else message.success(`已应用 ${result.applied} 项改动${tableNote}`);
@@ -623,7 +644,7 @@ export function AgentPanel() {
         }
         // Runs go through the normal confirm card; images finish before videos start.
         if (autoRun && createdTasks.length) {
-            void host.runStoryboardBatch?.(createdTasks, { title: "生成节点内容" });
+            void host.runStoryboardBatch?.(createdTasks, { title: createdTasks.some((t) => t.label.endsWith("设定图")) ? "生成设定图" : "生成节点内容" });
         }
     };
 
@@ -762,11 +783,13 @@ export function AgentPanel() {
                             );
                         }
 
+                        const codeOf = rowCodeLookup(resolvePlanStoryboard(m.storyboardNodeId, allNodes, selectedIds).node);
                         const showImgPreset = planNeedsImagePreset(m.plan.changes);
                         const showVidPreset = planNeedsVideoPreset(m.plan.changes);
                         const hasDirectMediaAdd = m.plan.changes.some(
                             (c) => c.kind === "canvas.image.add" || c.kind === "canvas.video.add",
                         );
+                        const hasSettingPictures = m.plan.changes.some((c) => c.kind === "setting.add" || (c.kind === "setting.update" && Boolean(c.patch.imgPrompt)));
 
                         return (
                             <div key={m.id} className="space-y-2 rounded-xl border p-2.5" style={{ borderColor: border }}>
@@ -787,7 +810,7 @@ export function AgentPanel() {
 
                                 <div className="space-y-1.5">
                                     {m.plan.changes.map((ch) => {
-                                        const info = changeLabel(ch);
+                                        const info = changeLabel(ch, codeOf);
                                         const checked = m.enabledIds.includes(ch.id);
                                         return (
                                             <label
@@ -894,13 +917,14 @@ export function AgentPanel() {
                                             >
                                                 确认生成节点
                                             </button>
-                                            {hasDirectMediaAdd ? (
+                                            {hasDirectMediaAdd || hasSettingPictures ? (
                                                 <button
                                                     type="button"
                                                     className="flex-1 rounded-lg bg-emerald-500 py-1.5 font-medium text-white transition hover:bg-emerald-600"
+                                                    title="应用后弹出生成确认卡，确认后才开始生成"
                                                     onClick={() => handleApplyPlan(m.id, true)}
                                                 >
-                                                    生成节点并立即运行
+                                                    {hasDirectMediaAdd ? "生成节点并立即运行" : "应用并生成设定图"}
                                                 </button>
                                             ) : null}
                                             <button
@@ -983,6 +1007,23 @@ export function AgentPanel() {
                     className={`shrink-0 border-t p-3 transition ${mediaPickEnabled ? "ring-1 ring-inset ring-sky-500/60" : ""}`}
                     style={{ borderColor: border }}
                 >
+                    {agentMode === "storyboard" && targetSb?.metadata?.storyboard ? (() => {
+                        const sbData = targetSb.metadata.storyboard;
+                        const gate = settingsGate(sbData.settings);
+                        if (gate.ready) return <div className="mb-2 text-[11px] text-emerald-500">设定关已通过：设定全部锁定，可以写分镜（锁定的设定图会自动发给 Agent）</div>;
+                        const withPicture = sbData.settings.filter((st) => !st.locked && settingImageNode(st, allNodes)?.metadata?.content);
+                        return (
+                            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[11px] text-amber-500" style={{ background: theme.toolbar.activeBg }}>
+                                <span className="min-w-0">{gate.empty ? "先设计后分镜：让 Agent 先出故事梗概和设定清单" : `设定关未通过：${gate.unlocked.join("、")} 未锁定，分镜行暂不写入`}</span>
+                                {withPicture.length && !running ? (
+                                    <button type="button" className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-black/5 dark:hover:bg-white/10" onClick={() => void handleSend("请逐张审核已生成的设定图：写出每张实际画了什么，和梗概/设定描述有没有冲突。")}>
+                                        让 Agent 审设定图
+                                    </button>
+                                ) : null}
+                            </div>
+                        );
+                    })() : null}
+
                     {/* Fixed Switch: 拾取画布素材 */}
                     <div className="mb-2 flex items-center justify-between gap-2">
                         <button
