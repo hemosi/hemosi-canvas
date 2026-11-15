@@ -49,7 +49,7 @@ function readTarget(url) {
 function requestHeaders(req) {
     const headers = {};
     for (const [key, value] of Object.entries(req.headers)) {
-        if (SKIP_REQUEST_HEADERS.has(key) || value === undefined) continue;
+        if (SKIP_REQUEST_HEADERS.has(key) || key.startsWith("sec-") || value === undefined) continue;
         headers[key] = Array.isArray(value) ? value.join(", ") : value;
     }
     return headers;

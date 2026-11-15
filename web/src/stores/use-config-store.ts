@@ -4,7 +4,9 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
-import { defaultModelRuleOf, seedModelRule } from "@/lib/model-prompt-presets";
+import { defaultModelRuleOf, isBuiltinModelRuleText } from "@/lib/model-prompt-presets";
+
+const MODEL_RULE_CLEANUP_KEY = "hemosi-model-rule-cleanup-v1";
 import type { CameraSettings, LightingSettings } from "@/types/cinematography";
 
 /** openai / gemini: generic protocols. The rest are official vendor APIs with their own request/poll shapes (see services/api/official-providers.ts). */
@@ -20,7 +22,7 @@ export type ChannelModel = {
     script?: string;
     /**
      * How prompts for this image/video model should be written (used by the storyboard Agent and the 提示词模板 panel).
-     * Seeded once from the built-in presets when the entry is added; editable in Settings → 渠道 → 编辑 → 提示词写法.
+     * Seeded once from the built-in presets when the entry is added; editable in Settings → 模型模板.
      * "" = use the generic rule.
      */
     promptRule?: string;
@@ -35,7 +37,11 @@ export type ModelChannel = {
     models: ChannelModel[];
     /** How reference images are sent to /images/edits. Different gateways accept different shapes. */
     imageEdit?: ImageEditOptions;
+    /** Local proxy for this channel: follow the global switch, always on, or always off (direct). */
+    proxyMode?: ChannelProxyMode;
 };
+
+export type ChannelProxyMode = "global" | "on" | "off";
 
 export type ImageEditOptions = {
     /** multipart: standard multipart/form-data upload. json: JSON body with images as data URLs. */
@@ -212,7 +218,7 @@ type ConfigStore = {
     webdav: WebdavSyncConfig;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
-    /** Model name the 提示词写法 tab scrolls to when opened from a storyboard. */
+    /** Model name the 模型模板 tab scrolls to when opened from a storyboard. */
     configFocusModel: string;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
@@ -347,6 +353,16 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
                 const config = { ...defaultConfig, ...persistedConfig };
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
+                // One-time cleanup (v0.21.16): earlier versions pre-filled every image/video model with built-in text; clear those copies.
+                if (typeof localStorage !== "undefined" && !localStorage.getItem(MODEL_RULE_CLEANUP_KEY)) {
+                    config.channels = config.channels.map((channel) => ({
+                        ...channel,
+                        models: (channel.models || []).map((model) =>
+                            typeof model !== "string" && (model.capability === "image" || model.capability === "video") && isBuiltinModelRuleText(model.capability, model.promptRule) ? { ...model, promptRule: undefined } : model,
+                        ),
+                    }));
+                    localStorage.setItem(MODEL_RULE_CLEANUP_KEY, "1");
+                }
                 const channels = normalizeChannels(config);
                 const models = modelOptionsFromChannels(channels);
                 return {
@@ -403,8 +419,8 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
         const savedRule = typeof item === "string" ? undefined : item.promptRule;
-        // Seed the built-in rule once, when an image/video entry has none yet; after that it is the user's text.
-        const promptRule = savedRule !== undefined ? savedRule : capability === "image" || capability === "video" ? seedModelRule(capability, name) : undefined;
+        // Empty by default: no built-in text is pre-filled (empty = generic rule at generation time).
+        const promptRule = savedRule?.trim() ? savedRule : undefined;
         result.push({ name, capability, script, ...(promptRule !== undefined ? { promptRule } : {}) });
     }
     return result;
@@ -420,6 +436,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiFormat,
         models: normalizeChannelModels(channel?.models),
         imageEdit: normalizeImageEditOptions(channel?.imageEdit),
+        proxyMode: channel?.proxyMode === "on" || channel?.proxyMode === "off" ? channel.proxyMode : "global",
     };
 }
 
@@ -599,9 +616,17 @@ export function normalizeLocalProxyUrl(value: string) {
 
 /** Prefix an outgoing request with the local forwarding proxy so the browser is not blocked by CORS. */
 export function withLocalProxy(url: string) {
-    const { proxyEnabled, proxyUrl } = useConfigStore.getState().config;
-    if (!proxyEnabled || !/^https?:\/\//i.test(url)) return url;
-    const base = normalizeLocalProxyUrl(proxyUrl);
+    const { proxyEnabled, proxyUrl, channels } = useConfigStore.getState().config;
+    if (!/^https?:\/\//i.test(url)) return url;
+    // A channel can override the global switch (e.g. one gateway needs the proxy for CORS, another breaks behind it).
+    const lower = url.toLowerCase();
+    const channel = (channels || [])
+        .filter((item) => item.baseUrl && lower.startsWith(item.baseUrl.trim().replace(/\/+$/, "").toLowerCase()))
+        .sort((a, b) => b.baseUrl.length - a.baseUrl.length)[0];
+    const mode = channel?.proxyMode || "global";
+    const enabled = mode === "on" ? true : mode === "off" ? false : proxyEnabled;
+    if (!enabled) return url;
+    const base = normalizeLocalProxyUrl(proxyUrl || DEFAULT_LOCAL_PROXY_URL);
     if (!base || url.startsWith(`${base}/`)) return url;
     return `${base}/${url}`;
 }

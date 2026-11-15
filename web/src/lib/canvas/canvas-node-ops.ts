@@ -32,7 +32,13 @@ export function newNodeId(type: string) {
 /** Copy one node next to itself; withConnections also re-creates its incoming and outgoing links on the copy. */
 export function duplicateNodeWithLinks(source: CanvasNodeData, connections: CanvasConnection[], withConnections: boolean) {
     const id = newNodeId(source.type);
-    const node: CanvasNodeData = { ...source, id, title: `${source.title} 副本`, position: { x: source.position.x + 36, y: source.position.y + 36 }, metadata: { ...source.metadata, locked: false } };
+    // 带连线复制 a generated image = the same generation again: keep prompt, params and links, drop the result, so the copy's own
+    // image is not sent back as a reference when it is generated.
+    const blankResult = withConnections && source.type === CanvasNodeType.Image && Boolean(source.metadata?.prompt?.trim());
+    const metadata = blankResult
+        ? { ...source.metadata, locked: false, content: undefined, storageKey: undefined, images: undefined, primaryImageId: undefined, status: undefined, errorDetails: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, versions: undefined }
+        : { ...source.metadata, locked: false };
+    const node: CanvasNodeData = { ...source, id, title: `${source.title} 副本`, position: { x: source.position.x + 36, y: source.position.y + 36 }, metadata };
     const links = withConnections
         ? connections.flatMap((connection) =>
               connection.toNodeId === source.id ? [{ ...connection, id: nanoid(), toNodeId: id }] : connection.fromNodeId === source.id ? [{ ...connection, id: nanoid(), fromNodeId: id }] : [],

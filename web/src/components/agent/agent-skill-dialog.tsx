@@ -2,7 +2,9 @@ import { useRef, useState } from "react";
 import { App, Button, Empty, Input, Modal, Popconfirm, Switch } from "antd";
 import { Pencil, Plus, Trash2, Upload } from "lucide-react";
 
-import { parseSkillMarkdown, type ParsedSkill } from "@/lib/agent-skills";
+import { unzip } from "fflate";
+
+import { parseSkillFolder, parseSkillMarkdown, type ParsedSkill, type SkillSourceFile } from "@/lib/agent-skills";
 import { useAgentSkillStore, type LocalSkill } from "@/stores/use-agent-skill-store";
 
 /** Manage imported SKILL.md files: import, edit, delete, enable. */
@@ -15,13 +17,51 @@ export function AgentSkillDialog({ open, onClose }: { open: boolean; onClose: ()
     const [editing, setEditing] = useState<(ParsedSkill & { id?: string }) | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
+    const folderRef = useRef<HTMLInputElement>(null);
+
+    const finishImport = (parsed: ParsedSkill[], skipped: string[] = []) => {
+        const usable = parsed.filter((s) => s.body);
+        if (!usable.length) return message.warning("没找到 SKILL.md");
+        const res = addSkills(usable);
+        message.success(`已导入 ${res.added} 个 skill${res.replaced ? `，覆盖同名 ${res.replaced} 个` : ""}${skipped.length ? `，跳过 ${skipped.length} 个非文本/过大的文件` : ""}`);
+        if (usable.some((s) => !s.description)) message.warning("有 skill 没写 description，Agent 无法按描述自动加载它，只能手动开启");
+    };
+
+    const unzipFile = (file: File) =>
+        file.arrayBuffer().then(
+            (buf) =>
+                new Promise<SkillSourceFile[]>((resolve, reject) =>
+                    unzip(new Uint8Array(buf), (err, out) => {
+                        if (err) return reject(err);
+                        const decoder = new TextDecoder();
+                        resolve(Object.entries(out).filter(([path]) => !path.endsWith("/")).map(([path, data]) => ({ path, size: data.byteLength, read: async () => decoder.decode(data) })));
+                    }),
+                ),
+        );
+
     const importFiles = async (files: FileList | null) => {
         if (!files?.length) return;
-        const parsed = await Promise.all([...files].map(async (file) => parseSkillMarkdown(await file.text(), file.name)));
-        const usable = parsed.filter((s) => s.body);
-        const res = addSkills(usable);
-        message.success(`已导入 ${res.added} 个 skill${res.replaced ? `，覆盖同名 ${res.replaced} 个` : ""}`);
-        if (usable.some((s) => !s.description)) message.warning("有 skill 没写 description，Agent 无法按描述自动加载它，只能手动开启");
+        try {
+            const parsed: ParsedSkill[] = [];
+            const skipped: string[] = [];
+            for (const file of [...files]) {
+                if (/\.zip$/i.test(file.name)) {
+                    const res = await parseSkillFolder(await unzipFile(file));
+                    parsed.push(...res.skills);
+                    skipped.push(...res.skipped);
+                } else parsed.push(parseSkillMarkdown(await file.text(), file.name));
+            }
+            finishImport(parsed, skipped);
+        } catch (err) {
+            message.error(`导入失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+    };
+
+    const importFolder = async (files: FileList | null) => {
+        if (!files?.length) return;
+        const list: SkillSourceFile[] = [...files].map((file) => ({ path: file.webkitRelativePath || file.name, size: file.size, read: () => file.text() }));
+        const res = await parseSkillFolder(list);
+        finishImport(res.skills, res.skipped);
     };
 
     const save = () => {
@@ -39,11 +79,14 @@ export function AgentSkillDialog({ open, onClose }: { open: boolean; onClose: ()
             <Modal open={open} title="Agent skill" footer={null} width={620} onCancel={onClose} centered>
                 <div className="space-y-3 text-xs">
                     <div className="opacity-70">
-                        导入 SKILL.md（开头 frontmatter 写 name 和 description，下面是正文），只存在本机。用法：在 Agent 面板点亮 skill 手动加载；或者 Agent 看 description 觉得这次用得上时自己加载。skill 只算风格/写法参考，排在内置硬规则后面，冲突时以硬规则为准。
+                        导入标准 skill：单个 SKILL.md、整个 skill 文件夹或 zip 都行（文件夹里的参考文档、模板会一起带上，脚本只当文字参考不会运行），只存在本机。用法：在 Agent 面板点亮 skill 手动加载；或者 Agent 看 description 觉得这次用得上时自己加载。skill 只算风格/写法参考，排在内置硬规则后面，冲突时以硬规则为准。
                     </div>
                     <div className="flex gap-2">
                         <Button icon={<Upload className="size-3.5" />} onClick={() => fileRef.current?.click()}>
-                            导入 SKILL.md
+                            导入文件（.md / .zip）
+                        </Button>
+                        <Button icon={<Upload className="size-3.5" />} onClick={() => folderRef.current?.click()}>
+                            导入文件夹
                         </Button>
                         <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ name: "", description: "", body: "" })}>
                             新建
@@ -51,11 +94,22 @@ export function AgentSkillDialog({ open, onClose }: { open: boolean; onClose: ()
                         <input
                             ref={fileRef}
                             type="file"
-                            accept=".md,.markdown,text/markdown,text/plain"
+                            accept=".md,.markdown,.zip,text/markdown,text/plain,application/zip"
                             multiple
                             hidden
                             onChange={(e) => {
                                 void importFiles(e.target.files);
+                                e.target.value = "";
+                            }}
+                        />
+                        <input
+                            ref={folderRef}
+                            type="file"
+                            multiple
+                            hidden
+                            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                            onChange={(e) => {
+                                void importFolder(e.target.files);
                                 e.target.value = "";
                             }}
                         />

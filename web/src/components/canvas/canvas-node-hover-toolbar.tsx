@@ -132,7 +132,11 @@ export function CanvasNodeHoverToolbar({
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
     const isConfig = node.type === CanvasNodeType.Config;
-    const canRetry = node.metadata?.status === "error" && !(isVideo && Boolean(node.metadata?.videoTaskId) && !hasVideo);
+    // 重新生成: failed nodes, and finished generated image/video nodes (same prompt, params and references, result replaces in place; old one kept as a version).
+    const isGenerated = Boolean(node.metadata?.prompt?.trim()) && (Boolean(node.metadata?.generationType) || Boolean(node.metadata?.model));
+    const canRetry =
+        (node.metadata?.status === "error" && !(isVideo && Boolean(node.metadata?.videoTaskId) && !hasVideo)) ||
+        (node.metadata?.status !== "loading" && isGenerated && (hasImage || hasVideo));
     const canQueryVideoTask = isVideo && Boolean(node.metadata?.videoTaskId) && !hasVideo && node.metadata?.status !== "loading";
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {

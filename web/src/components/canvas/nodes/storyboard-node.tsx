@@ -464,7 +464,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                                         <span className="shrink-0 text-[11px] font-medium">{item.label}</span>
                                         <span
                                             className="shrink-0 text-[10px] opacity-60"
-                                            title="默认跟随「设置 → 渠道 → 编辑 → 提示词写法」里给这个模型配的写法；在这里改只影响本表"
+                                            title="默认跟随「设置 → 渠道 → 编辑 → 模型模板」里给这个模型配的写法；在这里改只影响本表"
                                         >
                                             {item.source}
                                         </span>

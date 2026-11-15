@@ -1,30 +1,46 @@
-import { Input, Select } from "antd";
+import { Collapse, Input, Select } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { defaultModelRuleOf, modelRulePresetsOf } from "@/lib/model-prompt-presets";
 import { useConfigStore, type ModelChannel } from "@/stores/use-config-store";
 
-/** Settings → 提示词写法: every image/video model of every channel gets a box (may stay empty = generic rule). */
+/** Settings → 模型模板: every image/video model of every channel gets a box (may stay empty = generic rule). */
 export function ModelRulesPanel({ channels, active, onChange }: { channels: ModelChannel[]; active: boolean; onChange: (channels: ModelChannel[]) => void }) {
     const focusModel = useConfigStore((state) => state.configFocusModel);
     const rootRef = useRef<HTMLDivElement>(null);
     const rows = channels.flatMap((channel) => channel.models.filter((model) => model.capability === "image" || model.capability === "video").map((model) => ({ channel, model, kind: model.capability as "image" | "video" })));
+    const focusKind = rows.find((row) => row.model.name === focusModel)?.kind;
+    const [openKeys, setOpenKeys] = useState<string[]>([]);
 
     useEffect(() => {
-        if (!active || !focusModel) return;
-        const el = rootRef.current?.querySelector(`[data-model="${CSS.escape(focusModel)}"]`);
-        el?.scrollIntoView({ block: "center" });
-    }, [active, focusModel]);
+        if (!active || !focusModel || !focusKind) return;
+        setOpenKeys((keys) => (keys.includes(focusKind) ? keys : [...keys, focusKind]));
+        const timer = window.setTimeout(() => rootRef.current?.querySelector(`[data-model="${CSS.escape(focusModel)}"]`)?.scrollIntoView({ block: "center" }), 120);
+        return () => window.clearTimeout(timer);
+    }, [active, focusModel, focusKind]);
 
     const save = (channelId: string, name: string, rule: string) =>
-        onChange(channels.map((channel) => (channel.id === channelId ? { ...channel, models: channel.models.map((model) => (model.name === name ? { ...model, promptRule: rule } : model)) } : channel)));
+        onChange(channels.map((channel) => (channel.id === channelId ? { ...channel, models: channel.models.map((model) => (model.name === name ? { ...model, promptRule: rule || undefined } : model)) } : channel)));
 
     if (!rows.length) return <div className="py-10 text-center text-sm text-stone-500">还没有图片或视频模型。先在「渠道」里添加模型。</div>;
+    const groups = (["image", "video"] as const).map((kind) => ({ kind, items: rows.filter((row) => row.kind === kind) })).filter((group) => group.items.length);
     return (
         <div ref={rootRef} className="space-y-3">
-            <div className="text-xs text-stone-500">分镜 Agent 给这个模型写提示词时按这里的写法。留空＝用通用写法。分镜表里也能临时改单张表。</div>
-            {rows.map(({ channel, model, kind }) => (
-                <RuleRow key={`${channel.id}:${model.name}`} name={model.name} channelName={channel.name} kind={kind} value={model.promptRule || ""} highlight={focusModel === model.name} onSave={(rule) => save(channel.id, model.name, rule)} />
-            ))}
+            <div className="text-xs text-stone-500">分镜 Agent 给这个模型写提示词时按这里的模板。默认留空＝用通用写法；需要时从右侧「填入预设」选一个再改。</div>
+            <Collapse
+                activeKey={openKeys}
+                onChange={(keys) => setOpenKeys(Array.isArray(keys) ? keys.map(String) : [String(keys)])}
+                items={groups.map(({ kind, items }) => ({
+                    key: kind,
+                    label: `${kind === "image" ? "图片模型" : "视频模型"}（${items.length}，已填 ${items.filter((row) => row.model.promptRule?.trim()).length}）`,
+                    children: (
+                        <div className="space-y-3">
+                            {items.map(({ channel, model }) => (
+                                <RuleRow key={`${channel.id}:${model.name}`} name={model.name} channelName={channel.name} kind={kind} value={model.promptRule || ""} highlight={focusModel === model.name} onSave={(rule) => save(channel.id, model.name, rule)} />
+                            ))}
+                        </div>
+                    ),
+                }))}
+            />
         </div>
     );
 }

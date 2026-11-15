@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { API_CALL_FORMATS, API_FORMAT_LABELS, OFFICIAL_CHANNEL_PRESETS, defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, normalizeImageEditOptions, type ImageEditOptions, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
-import { defaultModelRuleOf, modelRulePresetsOf, seedModelRule } from "@/lib/model-prompt-presets";
+import { defaultModelRuleOf, modelRulePresetsOf } from "@/lib/model-prompt-presets";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -85,6 +85,21 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
                     {OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.id === draft.id || preset.apiFormat === draft.apiFormat) ? <span className="mt-1 block text-xs text-stone-500">Key 在哪里拿：{(OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.id === draft.id) || OFFICIAL_CHANNEL_PRESETS.find((preset) => preset.apiFormat === draft.apiFormat))!.keyHint}。Key 只存在本机浏览器，请求由前端直连官方接口。</span> : null}
                 </label>
+            </div>
+
+            <div className="mt-6 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                <div className="text-sm font-semibold">本地代理</div>
+                <div className="mt-0.5 mb-3 text-xs text-stone-500">这个渠道走不走本地代理。跟随全局＝按「本地代理」页的总开关；有的接口不开代理连不上，有的开了反而报错，可以单独设。</div>
+                <Segmented
+                    block
+                    value={draft.proxyMode || "global"}
+                    options={[
+                        { label: "跟随全局", value: "global" },
+                        { label: "总是走代理", value: "on" },
+                        { label: "总是直连", value: "off" },
+                    ]}
+                    onChange={(value) => patch({ proxyMode: value as ModelChannel["proxyMode"] })}
+                />
             </div>
 
             {draft.apiFormat === "openai" ? (
@@ -169,7 +184,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
             <Modal
                 open={Boolean(ruleTarget)}
-                title={`提示词写法 · ${ruleTarget?.name || ""}`}
+                title={`模型模板 · ${ruleTarget?.name || ""}`}
                 okText="保存"
                 cancelText="取消"
                 width={560}

@@ -386,7 +386,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     },
                     {
                         key: "model-rules",
-                        label: "提示词写法",
+                        label: "模型模板",
                         children: <ModelRulesPanel channels={config.channels} active={activeTab === "model-rules"} onChange={updateChannels} />,
                     },
                 ]}
