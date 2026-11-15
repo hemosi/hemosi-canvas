@@ -39,6 +39,7 @@ export type ShotHost = {
     createStoryboardNode?: () => string;
     setStoryboardGhostNodes?: (ghosts: GhostPreviewNode[]) => void;
     getAllNodes?: () => CanvasNodeData[];
+    getAllConnections?: () => CanvasConnection[];
     getSelectedNodeIds?: () => string[];
     getProjectId?: () => string;
     setStoryboardHover?: (nodeIds: string[]) => void;

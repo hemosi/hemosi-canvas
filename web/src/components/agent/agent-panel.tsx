@@ -500,7 +500,8 @@ export function AgentPanel() {
             const res = await requestStoryboardPlan({
                 config: { ...effectiveConfig, model: activeTextModel, textModel: activeTextModel },
                 storyboardNode: sbSnapshot,
-                nodes: allNodes,
+                nodes: host?.getAllNodes?.() || allNodes,
+                connections: host?.getAllConnections?.() || [],
                 instruction: text || "请分析我附上的画布素材",
                 agentMode,
                 selectedRowId: matchedRow?.code || null,

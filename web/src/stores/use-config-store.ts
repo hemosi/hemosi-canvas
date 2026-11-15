@@ -601,11 +601,11 @@ function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
 }
 
-export function buildApiUrl(baseUrl: string, path: string) {
+export function buildApiUrl(baseUrl: string, path: string, proxyMode?: ModelChannel["proxyMode"]) {
     const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
-    return withLocalProxy(`${apiBaseUrl}${path}`);
+    return withLocalProxy(`${apiBaseUrl}${path}`, proxyMode);
 }
 
 export function normalizeLocalProxyUrl(value: string) {
@@ -615,7 +615,8 @@ export function normalizeLocalProxyUrl(value: string) {
 }
 
 /** Prefix an outgoing request with the local forwarding proxy so the browser is not blocked by CORS. */
-export function withLocalProxy(url: string) {
+/** `proxyMode` overrides the saved channel's setting (the channel being edited and not saved yet). */
+export function withLocalProxy(url: string, proxyMode?: ModelChannel["proxyMode"]) {
     const { proxyEnabled, proxyUrl, channels } = useConfigStore.getState().config;
     if (!/^https?:\/\//i.test(url)) return url;
     // A channel can override the global switch (e.g. one gateway needs the proxy for CORS, another breaks behind it).
@@ -623,7 +624,7 @@ export function withLocalProxy(url: string) {
     const channel = (channels || [])
         .filter((item) => item.baseUrl && lower.startsWith(item.baseUrl.trim().replace(/\/+$/, "").toLowerCase()))
         .sort((a, b) => b.baseUrl.length - a.baseUrl.length)[0];
-    const mode = channel?.proxyMode || "global";
+    const mode = proxyMode || channel?.proxyMode || "global";
     const enabled = mode === "on" ? true : mode === "off" ? false : proxyEnabled;
     if (!enabled) return url;
     const base = normalizeLocalProxyUrl(proxyUrl || DEFAULT_LOCAL_PROXY_URL);

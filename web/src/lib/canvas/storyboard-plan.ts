@@ -19,6 +19,7 @@ import { getMediaBlob } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { buildAgentCanvasSnapshot } from "@/lib/canvas/agent-canvas-snapshot";
 
 export const RowInputSchema = z.object({
     code: z.string().optional(),
@@ -777,6 +778,8 @@ export async function buildStoryboardAgentMessages(
         onMediaFailures?: (failures: string[]) => void;
         /** Skills: the name+description index (for auto-load) and the ones loaded for this turn. */
         skills?: AgentSkillContext;
+        /** Every link on the canvas, so the agent reads the board as the user sees it. */
+        connections?: CanvasConnection[];
     },
 ): Promise<AiTextMessage[]> {
     const mode: AgentMode = options?.agentMode || "canvas";
@@ -800,6 +803,8 @@ export async function buildStoryboardAgentMessages(
         "1. 当用户只是聊天、提问、讨论剧情时，把回答写在 summary 中，changes 设为空数组 []。",
         "2. 当用户明确让你生成角色卡、图片节点、文本节点或视频节点（例如说“生成一张角色卡”、“出图”、“写个剧本放画布上”）时，必须输出对应的 canvas.image.add / canvas.text.add / canvas.video.add 到 changes 数组中，绝不能只在文字里嘴炮说“已建好”而不输出 changes！",
         "3. 如果用户提供了参考图（如 @图20）让你基于它生成新角色卡或新图片，必须在 canvas.image.add 的 refs 字段里写上 \"@图20\"，系统会自动把 @图20 连线给新生成的图片节点。",
+        "4. 每轮都会给你【当前画布完整快照】：全部节点（类型、标题、提示词、模型、比例、状态、分组、位置）、每个节点的上游输入和全部连线。回答和改图都以快照为准，不要猜，也不要说看不到连线。",
+        "5. 用户要你改某张已有图（如 @图9）重新生成时：先看快照里 @图9 的提示词和「上游输入」，新节点的 refs 沿用 @图9 原来的上游参考图（已关闭的除外），除非用户明确要换参考。",
     ].join("\n");
 
     const storyboardSystemPrompt = [
@@ -903,14 +908,15 @@ export async function buildStoryboardAgentMessages(
                   null,
                   2,
               )}\n\n`
-            : `【画布已有素材引用编号】${mediaNodes.length ? mediaNodes.join("、") : "暂无"}\n\n`;
+            : "";
+    const canvasBlock = `${buildAgentCanvasSnapshot(nodes, options?.connections || [])}\n\n`;
 
     const summaryBlock = options?.compressedSummary
         ? `【早期对话压缩摘要（auto compact）】\n${options.compressedSummary}\n\n`
         : "";
 
     const omittedBlock = auto?.omitted.length ? `【设定图超过 ${MAX_AUTO_SETTING_IMAGES} 张，以下没有附带给你（需要时让用户拾取）】${auto.omitted.join("、")}\n\n` : "";
-    const userText = `${summaryBlock}${snapshotBlock}${omittedBlock}${
+    const userText = `${summaryBlock}${canvasBlock}${snapshotBlock}${omittedBlock}${
         media.labels.length ? `【本轮拾取/附带的画布素材】${media.labels.join("、")}\n\n` : ""
     }${
         media.failures.length ? `【以下素材读取失败、未发送给你，不要假装看到了】${media.failures.join("；")}\n\n` : ""
@@ -972,6 +978,7 @@ export async function requestStoryboardPlan(params: {
     signal?: AbortSignal;
     /** Enabled skills (their name+description go in the index) and the ones the user switched on for this chat. */
     skills?: { available: AgentSkill[]; activeNames: string[] };
+    connections?: CanvasConnection[];
 }): Promise<
     | { ok: true; plan: Plan; raw: string; mediaFailures: string[]; autoLoadedSkills: string[] }
     | { ok: false; raw: string; error: string; mediaFailures: string[]; autoLoadedSkills: string[] }
@@ -1011,6 +1018,7 @@ async function requestPlanOnce(
             compressedSummary: params.compressedSummary,
             signal: params.signal,
             skills,
+            connections: params.connections,
             onMediaFailures: (failures) => {
                 mediaFailures = failures;
             },

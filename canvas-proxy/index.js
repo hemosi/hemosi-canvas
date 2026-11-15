@@ -46,12 +46,14 @@ function readTarget(url) {
     return /^https?:\/\/[^/]/i.test(target) ? target : "";
 }
 
-function requestHeaders(req) {
+function requestHeaders(req, target = "") {
     const headers = {};
     for (const [key, value] of Object.entries(req.headers)) {
         if (SKIP_REQUEST_HEADERS.has(key) || key.startsWith("sec-") || value === undefined) continue;
         headers[key] = Array.isArray(value) ? value.join(", ") : value;
     }
+    // Local gateways (e.g. Magpie) refuse calls that look like a browser page; name the app instead.
+    if (/^https?:\/\/(127\.|localhost[:/]|\[::1\])/i.test(target) && /^mozilla\//i.test(headers["user-agent"] || "")) headers["user-agent"] = "HemosiTV";
     return headers;
 }
 
@@ -75,7 +77,7 @@ function logForward(method, target, outcome, startedAt) {
 
 async function forward(req, res, target) {
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req);
-    const upstream = await fetch(target, { method: req.method, headers: requestHeaders(req), body, redirect: "follow" });
+    const upstream = await fetch(target, { method: req.method, headers: requestHeaders(req, target), body, redirect: "follow" });
     // Logged as soon as the status line arrives, so a long SSE stream still shows up immediately.
     res.writeHead(upstream.status, responseHeaders(upstream));
     if (!upstream.body) {

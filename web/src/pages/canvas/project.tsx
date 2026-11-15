@@ -598,6 +598,7 @@ function InfiniteCanvasPage() {
                     });
                 },
                 getAllNodes: () => nodesRef.current,
+                getAllConnections: () => connectionsRef.current,
                 getSelectedNodeIds: () => Array.from(selectedNodeIdsRef.current),
                 getProjectId: () => projectId || "default",
                 setStoryboardHover: (nodeIds) => setStoryboardHoverIds(nodeIds),
