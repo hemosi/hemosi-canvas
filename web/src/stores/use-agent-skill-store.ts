@@ -46,7 +46,14 @@ export const useAgentSkillStore = create<AgentSkillStore>()(
                 set({ skills });
                 return { added, replaced };
             },
-            updateSkill: (id, patch) => set({ skills: get().skills.map((s) => (s.id === id ? { ...s, ...patch, updatedAt: Date.now() } : s)) }),
+            updateSkill: (id, patch) =>
+                set({
+                    skills: get().skills.map((s) => (s.id === id ? { ...s, ...patch, updatedAt: Date.now() } : s)),
+                    activeByScope:
+                        patch.enabled === false
+                            ? Object.fromEntries(Object.entries(get().activeByScope).map(([k, v]) => [k, v.filter((x) => x !== id)]))
+                            : get().activeByScope,
+                }),
             removeSkill: (id) =>
                 set({
                     skills: get().skills.filter((s) => s.id !== id),

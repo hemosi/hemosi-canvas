@@ -121,8 +121,10 @@ export type AgentMode = "canvas" | "storyboard";
 
 export const PlanSchema = z.object({
     summary: z.string(),
-    /** Skills the model asks to load (auto-load by description); the app re-asks once with them. */
+    /** Skills the model asks to load (L2 SKILL.md); the app re-asks with them loaded. */
     loadSkills: z.array(z.string()).optional(),
+    /** Reference files inside a skill folder the model asks to read on demand (L3, e.g. "references/script-engine.md"). */
+    loadSkillFiles: z.array(z.string()).optional(),
     changes: z.array(ChangeSchema),
     suggestRun: z
         .object({
@@ -588,7 +590,8 @@ export function applyPlan(params: {
 
 export type AgentSkillContext = {
     index: Array<{ name: string; description: string }>;
-    loaded: Array<{ name: string; body: string }>;
+    loaded: Array<{ name: string; body: string; fileList?: string[] }>;
+    loadedFiles?: Array<{ path: string; content: string }>;
 };
 
 export type AgentHistoryTurn = {
@@ -797,7 +800,9 @@ export async function buildStoryboardAgentMessages(
     { "id": "c1", "kind": "canvas.text.add", "title": "文本标题", "content": "文本节点的完整内容" },
     { "id": "c2", "kind": "canvas.image.add", "title": "图片标题（如：林佳佳·废土角色卡）", "prompt": "完整详细的生图提示词", "size": "9:16|16:9|1:1", "refs": "@图20（如需垫图/参考画布已有图片，填对应 @图n，会自动连线；无则填 空字符串）" },
     { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "完整详细的生视频提示词", "duration": 5, "size": "16:9|9:16", "refs": "@图20（如需以画布图片作为首帧/参考图，填对应 @图n）" }
-  ]
+  ],
+  "loadSkills": ["需要加载的 skill 名称（可省略）"],
+  "loadSkillFiles": ["需要按需读取的 skill 内部参考文件路径，如 references/xxx.md（可省略）"]
 }`,
         "铁律：",
         "1. 当用户只是聊天、提问、讨论剧情时，把回答写在 summary 中，changes 设为空数组 []。",
@@ -823,10 +828,11 @@ export async function buildStoryboardAgentMessages(
     { "id": "c8", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "9:16|16:9", "refs": "@图1" }
   ],
   "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" },
-  "loadSkills": ["需要加载的 skill 名称（可省略）"]
+  "loadSkills": ["需要加载的 skill 名称（可省略）"],
+  "loadSkillFiles": ["需要按需读取的 skill 内部参考文件路径，如 references/xxx.md（可省略）"]
 }`,
-        "【内置硬规则 · 最高优先级，下方任何 skill / 风格说明都不能推翻】",
-        "0. 用户只是讨论或闲聊时，把回答写在 summary 里，changes 必须是 []。用户附带了图片或视频（如 @图1、@视1）时，你已收到真实画面，请直接观察。",
+        "【基础交互与画布操作规则】",
+        "0. 用户只是讨论、写剧本或闲聊（或者当前已加载的 skill 要求分步确认、先出文本/剧本再进下一步）时，把回答写在 summary 里，changes 设为 []。用户附带了图片或视频（如 @图1、@视1）时，你已收到真实画面，请直接观察。",
         "【先设计、后分镜】看快照里的 settingsGate：",
         "1. settingsGate.ready=false（表里没有设定，或有设定未锁定，或你判断关键的人物/场景/物品/载具还没有设定）时，本轮只能输出 setting.add / setting.update / setting.review，严禁 row.add / row.update。",
         "   - 还没有设定：summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写能直接生成设定图的完整提示词（角色：全身定妆/三视图，服装与梗概一致；场景：无人空镜，交代时间天气光线；物品：多角度、干净背景）。系统会为每个设定建好图片节点并绑定。",
@@ -843,12 +849,22 @@ export async function buildStoryboardAgentMessages(
     ].join("\n");
 
     const skillIndex = options?.skills?.index?.length
-        ? `【可用 skill 索引】需要时在 JSON 的 loadSkills 里写上名称，系统会把内容加载给你后重答：\n${options.skills.index.map((k) => `- ${k.name}：${k.description}`).join("\n")}`
+        ? `【可用 skill 索引（L1）】当用户需求匹配某个 skill 时，在 JSON 的 loadSkills 里写上名称，系统会把该 skill 的 SKILL.md 加载给你后继续回答：\n${options.skills.index.map((k) => `- ${k.name}：${k.description}`).join("\n")}`
         : "";
     const skillBodies = options?.skills?.loaded?.length
-        ? `【已加载的 skill · 风格/写法参考，优先级低于上面的内置硬规则，冲突时以硬规则为准】\n${options.skills.loaded.map((k) => `### skill：${k.name}\n${k.body}`).join("\n\n")}`
+        ? `【已激活的 skill（L2 · 请严格遵循以下 skill 的工作流、分步规则与提示词规范；若 SKILL.md 中指示调用 read 读取某个 references/... 参考文件，请在 JSON 的 loadSkillFiles 中填入该文件路径，系统会自动读取后让你继续回答）】\n${options.skills.loaded
+              .map((k) => {
+                  const filesHint = k.fileList?.length
+                      ? `\n\n【skill「${k.name}」文件夹内可按需读取的参考文件（L3 · 在 loadSkillFiles 中填路径即可读取）】\n${k.fileList.map((f) => `- ${k.name}/${f}`).join("\n")}`
+                      : "";
+                  return `### skill：${k.name}\n${k.body}${filesHint}`;
+              })
+              .join("\n\n")}`
         : "";
-    const withSkills = (base: string) => [base, skillIndex, skillBodies].filter(Boolean).join("\n\n");
+    const skillRefFiles = options?.skills?.loadedFiles?.length
+        ? `【已按需读取的 skill 内部参考文件（L3）】\n${options.skills.loadedFiles.map((f) => `#### 参考文件：${f.path}\n${f.content}`).join("\n\n")}`
+        : "";
+    const withSkills = (base: string) => [base, skillIndex, skillBodies, skillRefFiles].filter(Boolean).join("\n\n");
 
     const historyMessages: AiTextMessage[] = (options?.history || []).map((turn) => ({
         role: turn.role,
@@ -956,13 +972,52 @@ function summaryOnlyText(trimmed: string): string {
     return trimmed;
 }
 
-export type AgentSkill = { name: string; description: string; body: string };
+export type AgentSkill = { name: string; description: string; body: string; files?: Record<string, string> };
 
 /** Names the model asked for that exist and are not loaded yet. */
 export function skillsToAutoLoad(requested: string[] | undefined, available: AgentSkill[], loadedNames: string[]): string[] {
     const known = new Map(available.map((k) => [k.name.trim().toLowerCase(), k.name]));
     const loaded = new Set(loadedNames.map((n) => n.toLowerCase()));
     return [...new Set((requested || []).map((n) => known.get(n.trim().toLowerCase())).filter((n): n is string => Boolean(n) && !loaded.has(n!.toLowerCase())))];
+}
+
+/** Resolve L3 reference file paths requested by the model against skill.files. */
+export function skillFilesToAutoLoad(
+    requested: string[] | undefined,
+    available: AgentSkill[],
+    loadedNames: string[],
+    alreadyLoadedPaths: Set<string>,
+): Array<{ path: string; content: string; skillName: string }> {
+    if (!requested?.length) return [];
+    const loadedSet = new Set(loadedNames.map((n) => n.toLowerCase()));
+    // Search already-loaded skills first, then remaining available skills
+    const ordered = [
+        ...available.filter((k) => loadedSet.has(k.name.toLowerCase())),
+        ...available.filter((k) => !loadedSet.has(k.name.toLowerCase())),
+    ];
+    const out: Array<{ path: string; content: string; skillName: string }> = [];
+    for (const raw of requested) {
+        const clean = raw.replace(/\\/g, "/").replace(/^(\.\/|\/)+/, "").trim();
+        if (!clean) continue;
+        const lower = clean.toLowerCase();
+        for (const skill of ordered) {
+            if (!skill.files) continue;
+            const prefix = `${skill.name.toLowerCase()}/`;
+            const relTarget = lower.startsWith(prefix) ? clean.slice(prefix.length) : clean;
+            const matchedRel = Object.keys(skill.files).find(
+                (rel) => rel.toLowerCase() === relTarget.toLowerCase() || rel.toLowerCase().endsWith(`/${relTarget.toLowerCase()}`),
+            );
+            if (matchedRel) {
+                const fullKey = `${skill.name}/${matchedRel}`;
+                if (!alreadyLoadedPaths.has(fullKey.toLowerCase())) {
+                    alreadyLoadedPaths.add(fullKey.toLowerCase());
+                    out.push({ path: fullKey, content: skill.files[matchedRel], skillName: skill.name });
+                }
+                break;
+            }
+        }
+    }
+    return out;
 }
 
 export async function requestStoryboardPlan(params: {
@@ -984,18 +1039,41 @@ export async function requestStoryboardPlan(params: {
     | { ok: false; raw: string; error: string; mediaFailures: string[]; autoLoadedSkills: string[] }
 > {
     const available = params.skills?.available || [];
-    let loadedNames = (params.skills?.activeNames || []).filter((n) => available.some((k) => k.name === n));
-    const autoLoadedSkills: string[] = [];
-    // One extra round at most: the model may ask for skills by description, then answers again with them loaded.
-    for (let round = 0; round < 2; round++) {
+    const mentionedInText = available
+        .filter((k) => {
+            const esc = k.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            return new RegExp(`(?:^|[\\s/$])${esc}(?=$|[\\s，。！？、,.!?])`, "i").test(params.instruction);
+        })
+        .map((k) => k.name);
+    let loadedNames = [...new Set([...(params.skills?.activeNames || []).filter((n) => available.some((k) => k.name === n)), ...mentionedInText])];
+    const autoLoadedSkills: string[] = [...mentionedInText];
+    const loadedFiles: Array<{ path: string; content: string }> = [];
+    const loadedFileKeys = new Set<string>();
+
+    // Progressive disclosure: L1 (index) -> L2 (SKILL.md) -> L3 (references/* on demand).
+    for (let round = 0; round < 3; round++) {
         const res = await requestPlanOnce(params, {
             index: available.filter((k) => !loadedNames.includes(k.name)).map(({ name, description }) => ({ name, description })),
-            loaded: available.filter((k) => loadedNames.includes(k.name)).map(({ name, body }) => ({ name, body })),
+            loaded: available
+                .filter((k) => loadedNames.includes(k.name))
+                .map(({ name, body, files }) => ({ name, body, fileList: files ? Object.keys(files) : undefined })),
+            loadedFiles,
         });
-        const wanted = res.ok && round === 0 ? skillsToAutoLoad(res.plan.loadSkills, available, loadedNames) : [];
-        if (!wanted.length) return { ...res, autoLoadedSkills };
-        autoLoadedSkills.push(...wanted);
-        loadedNames = [...loadedNames, ...wanted];
+        if (!res.ok || round === 2) return { ...res, autoLoadedSkills: [...new Set(autoLoadedSkills)] };
+        const wantedSkills = skillsToAutoLoad(res.plan.loadSkills, available, loadedNames);
+        const wantedFiles = skillFilesToAutoLoad(res.plan.loadSkillFiles, available, [...loadedNames, ...wantedSkills], loadedFileKeys);
+        if (!wantedSkills.length && !wantedFiles.length) {
+            return { ...res, autoLoadedSkills: [...new Set(autoLoadedSkills)] };
+        }
+        for (const sName of wantedSkills) {
+            if (!loadedNames.includes(sName)) loadedNames.push(sName);
+            autoLoadedSkills.push(sName);
+        }
+        for (const wf of wantedFiles) {
+            if (!loadedNames.includes(wf.skillName)) loadedNames.push(wf.skillName);
+            loadedFiles.push({ path: wf.path, content: wf.content });
+            autoLoadedSkills.push(wf.path);
+        }
     }
     throw new Error("unreachable");
 }

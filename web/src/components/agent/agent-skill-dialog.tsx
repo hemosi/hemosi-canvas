@@ -1,57 +1,37 @@
-import { useRef, useState } from "react";
-import { App, Button, Empty, Input, Modal, Popconfirm, Switch } from "antd";
-import { Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useRef } from "react";
+import { App, Button, Empty, Modal, Popconfirm, Switch } from "antd";
+import { FolderUp, Trash2, Upload, Wrench } from "lucide-react";
 
-import { unzip } from "fflate";
-
-import { parseSkillFolder, parseSkillMarkdown, type ParsedSkill, type SkillSourceFile } from "@/lib/agent-skills";
+import { parseSkillFolder, unzipBytesToSkillFiles, type ParsedSkill, type SkillSourceFile } from "@/lib/agent-skills";
 import { useAgentSkillStore, type LocalSkill } from "@/stores/use-agent-skill-store";
 
-/** Manage imported SKILL.md files: import, edit, delete, enable. */
+/** Manage imported Agent Skills (folder / zip / SKILL.md): enable, disable, delete. */
 export function AgentSkillDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     const { message } = App.useApp();
     const skills = useAgentSkillStore((s) => s.skills);
     const addSkills = useAgentSkillStore((s) => s.addSkills);
     const updateSkill = useAgentSkillStore((s) => s.updateSkill);
     const removeSkill = useAgentSkillStore((s) => s.removeSkill);
-    const [editing, setEditing] = useState<(ParsedSkill & { id?: string }) | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
-
     const folderRef = useRef<HTMLInputElement>(null);
 
-    const finishImport = (parsed: ParsedSkill[], skipped: string[] = []) => {
+    const finishImport = (parsed: ParsedSkill[]) => {
         const usable = parsed.filter((s) => s.body);
-        if (!usable.length) return message.warning("没找到 SKILL.md");
+        if (!usable.length) return message.warning("未找到有效的 SKILL.md");
         const res = addSkills(usable);
-        message.success(`已导入 ${res.added} 个 skill${res.replaced ? `，覆盖同名 ${res.replaced} 个` : ""}${skipped.length ? `，跳过 ${skipped.length} 个非文本/过大的文件` : ""}`);
-        if (usable.some((s) => !s.description)) message.warning("有 skill 没写 description，Agent 无法按描述自动加载它，只能手动开启");
+        message.success(`已导入 ${res.added} 个 Skill${res.replaced ? `，更新同名 ${res.replaced} 个` : ""}`);
     };
 
-    const unzipFile = (file: File) =>
-        file.arrayBuffer().then(
-            (buf) =>
-                new Promise<SkillSourceFile[]>((resolve, reject) =>
-                    unzip(new Uint8Array(buf), (err, out) => {
-                        if (err) return reject(err);
-                        const decoder = new TextDecoder();
-                        resolve(Object.entries(out).filter(([path]) => !path.endsWith("/")).map(([path, data]) => ({ path, size: data.byteLength, read: async () => decoder.decode(data) })));
-                    }),
-                ),
-        );
-
-    const importFiles = async (files: FileList | null) => {
+    const importZip = async (files: FileList | null) => {
         if (!files?.length) return;
         try {
             const parsed: ParsedSkill[] = [];
-            const skipped: string[] = [];
             for (const file of [...files]) {
-                if (/\.zip$/i.test(file.name)) {
-                    const res = await parseSkillFolder(await unzipFile(file));
-                    parsed.push(...res.skills);
-                    skipped.push(...res.skipped);
-                } else parsed.push(parseSkillMarkdown(await file.text(), file.name));
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                const res = await parseSkillFolder(await unzipBytesToSkillFiles(bytes));
+                parsed.push(...res.skills);
             }
-            finishImport(parsed, skipped);
+            finishImport(parsed);
         } catch (err) {
             message.error(`导入失败：${err instanceof Error ? err.message : String(err)}`);
         }
@@ -59,91 +39,89 @@ export function AgentSkillDialog({ open, onClose }: { open: boolean; onClose: ()
 
     const importFolder = async (files: FileList | null) => {
         if (!files?.length) return;
-        const list: SkillSourceFile[] = [...files].map((file) => ({ path: file.webkitRelativePath || file.name, size: file.size, read: () => file.text() }));
-        const res = await parseSkillFolder(list);
-        finishImport(res.skills, res.skipped);
-    };
-
-    const save = () => {
-        if (!editing) return;
-        const item = { name: editing.name.trim(), description: editing.description.trim(), body: editing.body.trim() };
-        if (!item.name || !item.body) return message.warning("名称和内容不能为空");
-        if (skills.some((s) => s.name === item.name && s.id !== editing.id)) return message.warning("已有同名 skill");
-        if (editing.id) updateSkill(editing.id, item);
-        else addSkills([item]);
-        setEditing(null);
+        try {
+            const list: SkillSourceFile[] = [...files].map((file) => ({
+                path: file.webkitRelativePath || file.name,
+                size: file.size,
+                read: () => file.text(),
+                readBytes: async () => new Uint8Array(await file.arrayBuffer()),
+            }));
+            const res = await parseSkillFolder(list);
+            finishImport(res.skills);
+        } catch (err) {
+            message.error(`导入失败：${err instanceof Error ? err.message : String(err)}`);
+        }
     };
 
     return (
-        <>
-            <Modal open={open} title="Agent skill" footer={null} width={620} onCancel={onClose} centered>
-                <div className="space-y-3 text-xs">
-                    <div className="opacity-70">
-                        导入标准 skill：单个 SKILL.md、整个 skill 文件夹或 zip 都行（文件夹里的参考文档、模板会一起带上，脚本只当文字参考不会运行），只存在本机。用法：在 Agent 面板点亮 skill 手动加载；或者 Agent 看 description 觉得这次用得上时自己加载。skill 只算风格/写法参考，排在内置硬规则后面，冲突时以硬规则为准。
+        <Modal open={open} title={`技能 (${skills.length})`} footer={null} width={560} onCancel={onClose} centered>
+            <div className="space-y-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                    <span className="opacity-65">开关打开即放入面板顶栏（模型可按需自动调用，也可在顶栏点蓝强制启动）</span>
+                    <div className="flex shrink-0 gap-1.5">
+                        <Button size="small" type="primary" icon={<FolderUp className="size-3.5" />} onClick={() => folderRef.current?.click()}>
+                            导入 Skill 文件夹
+                        </Button>
+                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileRef.current?.click()}>
+                            导入 .zip
+                        </Button>
                     </div>
-                    <div className="flex gap-2">
-                        <Button icon={<Upload className="size-3.5" />} onClick={() => fileRef.current?.click()}>
-                            导入文件（.md / .zip）
-                        </Button>
-                        <Button icon={<Upload className="size-3.5" />} onClick={() => folderRef.current?.click()}>
-                            导入文件夹
-                        </Button>
-                        <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ name: "", description: "", body: "" })}>
-                            新建
-                        </Button>
-                        <input
-                            ref={fileRef}
-                            type="file"
-                            accept=".md,.markdown,.zip,text/markdown,text/plain,application/zip"
-                            multiple
-                            hidden
-                            onChange={(e) => {
-                                void importFiles(e.target.files);
-                                e.target.value = "";
-                            }}
-                        />
-                        <input
-                            ref={folderRef}
-                            type="file"
-                            multiple
-                            hidden
-                            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-                            onChange={(e) => {
-                                void importFolder(e.target.files);
-                                e.target.value = "";
-                            }}
-                        />
-                    </div>
-                    {skills.length ? (
-                        <div className="thin-scrollbar max-h-[50vh] space-y-1.5 overflow-y-auto">
-                            {skills.map((s: LocalSkill) => (
-                                <div key={s.id} className="flex items-start gap-2 rounded-lg border border-black/10 p-2 dark:border-white/10">
-                                    <Switch size="small" className="mt-0.5" checked={s.enabled} title={s.enabled ? "已启用" : "已停用"} onChange={(enabled) => updateSkill(s.id, { enabled })} />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="font-medium">{s.name}</div>
-                                        <div className="line-clamp-2 opacity-65">{s.description || "（没有 description，只能手动开启）"}</div>
-                                    </div>
-                                    <Button size="small" type="text" icon={<Pencil className="size-3.5" />} onClick={() => setEditing({ id: s.id, name: s.name, description: s.description, body: s.body })} />
-                                    <Popconfirm title={`删除 skill「${s.name}」？`} okText="删除" cancelText="取消" onConfirm={() => removeSkill(s.id)}>
+                    <input
+                        ref={fileRef}
+                        type="file"
+                        accept=".zip,application/zip"
+                        multiple
+                        hidden
+                        onChange={(e) => {
+                            void importZip(e.target.files);
+                            e.target.value = "";
+                        }}
+                    />
+                    <input
+                        ref={folderRef}
+                        type="file"
+                        multiple
+                        hidden
+                        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                        onChange={(e) => {
+                            void importFolder(e.target.files);
+                            e.target.value = "";
+                        }}
+                    />
+                </div>
+                {skills.length ? (
+                    <div className="thin-scrollbar max-h-[55vh] space-y-1 overflow-y-auto">
+                        {skills.map((s: LocalSkill) => {
+                            const refCount = s.files ? Object.keys(s.files).length : 0;
+                            return (
+                                <div
+                                    key={s.id}
+                                    className="flex items-center gap-2.5 rounded-lg border border-black/10 px-2.5 py-2 transition hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
+                                >
+                                    <Switch
+                                        size="small"
+                                        checked={s.enabled}
+                                        title={s.enabled ? "常用：已显示在面板顶栏" : "未设为常用：不显示在顶栏"}
+                                        onChange={(enabled) => updateSkill(s.id, { enabled })}
+                                    />
+                                    <span className="shrink-0 font-medium">{s.name}</span>
+                                    {refCount > 0 ? (
+                                        <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-400">
+                                            +{refCount} 文件
+                                        </span>
+                                    ) : null}
+                                    <span className="min-w-0 flex-1 truncate opacity-55">{s.description}</span>
+                                    <Popconfirm title={`删除 Skill「${s.name}」？`} okText="删除" cancelText="取消" onConfirm={() => removeSkill(s.id)}>
                                         <Button size="small" type="text" danger icon={<Trash2 className="size-3.5" />} />
                                     </Popconfirm>
                                 </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有 skill" />
-                    )}
-                </div>
-            </Modal>
-            <Modal open={Boolean(editing)} title={editing?.id ? "编辑 skill" : "新建 skill"} okText="保存" cancelText="取消" width={640} onOk={save} onCancel={() => setEditing(null)} centered>
-                {editing ? (
-                    <div className="space-y-2 text-xs">
-                        <Input placeholder="名称（name）" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-                        <Input placeholder="描述（description）：什么时候该用它，Agent 靠这句判断是否自动加载" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
-                        <Input.TextArea rows={14} placeholder="正文（markdown）" value={editing.body} onChange={(e) => setEditing({ ...editing, body: e.target.value })} />
+                            );
+                        })}
                     </div>
-                ) : null}
-            </Modal>
-        </>
+                ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂未导入技能" />
+                )}
+            </div>
+        </Modal>
     );
 }

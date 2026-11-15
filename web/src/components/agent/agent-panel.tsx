@@ -510,7 +510,7 @@ export function AgentPanel() {
                 compressedSummary: summaryForSend,
                 signal: controller.signal,
                 skills: {
-                    available: enabledSkills.map(({ name, description, body }) => ({ name, description, body })),
+                    available: enabledSkills.map(({ name, description, body, files }) => ({ name, description, body, files })),
                     activeNames: enabledSkills.filter((k) => activeSkillIds.includes(k.id)).map((k) => k.name),
                 },
             });
@@ -744,7 +744,7 @@ export function AgentPanel() {
                     </div>
                 </div>
 
-                {/* Skill chips: click to load a skill for this chat by hand; the Agent can also load enabled ones by description. */}
+                {/* Skill chips: switch ON in dialog = shown here as 常用; click to turn blue = 启动 for this chat. */}
                 <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b px-3 py-1 thin-scrollbar" style={{ borderColor: border }}>
                     <span className="shrink-0 text-[11px] opacity-65">Skill</span>
                     {enabledSkills.map((k) => {
@@ -755,14 +755,14 @@ export function AgentPanel() {
                                 type="button"
                                 className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] transition ${on ? "bg-sky-500 text-white" : "hover:bg-black/5 dark:hover:bg-white/10"}`}
                                 style={on ? undefined : { border: `1px solid ${border}` }}
-                                title={`${k.description || "没有描述"}\n${on ? "已手动加载（点击取消）" : "点击为本对话手动加载；不点也可能被 Agent 按描述自动加载"}`}
+                                title={`${k.description || k.name}\n${on ? "已手动启动（点击取消，恢复由模型自动判断）" : "待命：模型会按需自动调用，点击变蓝可强制启动"}`}
                                 onClick={() => toggleSkill(scopeKey, k.id)}
                             >
                                 {k.name}
                             </button>
                         );
                     })}
-                    {!enabledSkills.length ? <span className="shrink-0 text-[10px] opacity-50">未导入</span> : null}
+                    {!enabledSkills.length ? <span className="shrink-0 text-[10px] opacity-50">{allSkills.length ? "未设常用" : "未导入"}</span> : null}
                     <button type="button" className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10" onClick={() => setSkillDialogOpen(true)}>
                         管理
                     </button>
