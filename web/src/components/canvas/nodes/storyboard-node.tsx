@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Film, GripVertical, LayoutGrid, Lock, Plus, Trash2, Unlock } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Film, GripVertical, LayoutGrid, Link2, Lock, Plus, Trash2, Unlock } from "lucide-react";
 import { App, Modal } from "antd";
 import { nanoid } from "nanoid";
 
 import { StoryboardPreviewModal, type PreviewClip } from "@/components/canvas/storyboard-preview-modal";
 import { getShotHost } from "@/lib/canvas/canvas-shot-actions";
+import { BIND_PANEL_EVENT } from "@/components/canvas/storyboard-bind-panel";
 import { effectiveStoryboardRule } from "@/lib/canvas/storyboard-model-rules";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { canLoadImageNode, collectAutopilotTasks, runStoryboardAutopilot, type AutopilotState } from "@/lib/canvas/storyboard-autopilot";
@@ -537,6 +538,16 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
 
             {/* Settings Bar */}
             <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5" style={{ borderColor: border }} {...dragStop}>
+                <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition hover:bg-black/5 dark:hover:bg-white/10"
+                    style={{ borderColor: border }}
+                    title="在分镜表左边打开绑卡界面，把画布上的图拉线到设定上"
+                    onClick={() => window.dispatchEvent(new CustomEvent(BIND_PANEL_EVENT, { detail: { tableId: ctx.node.id } }))}
+                >
+                    <Link2 className="size-3" />
+                    绑卡
+                </button>
                 {data.settings.map((s) => {
                     const hasPicture = Boolean(settingImageNode(s, allNodes)?.metadata?.content);
                     const conflict = /冲突：/.test(s.review || "");

@@ -58,6 +58,7 @@ import { layerByUpstream, runWithConcurrency, summarizeStoryboardRun } from "@/l
 import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { allocateRefId, ensureNodeRefIds } from "@/lib/canvas/node-ref-id";
 import { BatchParamsPanel, isUngenerated } from "@/components/canvas/batch-params-button";
+import { BIND_PANEL_EVENT, BindPanelLines, StoryboardBindPanel } from "@/components/canvas/storyboard-bind-panel";
 import { createEmptyStoryboardData, nextSettingId, reconcileStoryboardGraph, settingImageNode } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -2221,8 +2222,17 @@ function InfiniteCanvasPage() {
     );
 
     // 图片节点和分镜表互相拉线 = 把这张图绑定成分镜表的一个设定，名称/描述/提示词按节点自动填好，不再手敲 @图n。
-    const bindImageToStoryboardRef = useRef<(a: string, b: string) => boolean>(() => false);
-    bindImageToStoryboardRef.current = (a: string, b: string) => {
+    const [bindPanelTableId, setBindPanelTableId] = useState<string | null>(null);
+    useEffect(() => {
+        const onToggle = (event: Event) => {
+            const tableId = (event as CustomEvent<{ tableId: string }>).detail?.tableId;
+            if (tableId) setBindPanelTableId((current) => (current === tableId ? null : tableId));
+        };
+        window.addEventListener(BIND_PANEL_EVENT, onToggle);
+        return () => window.removeEventListener(BIND_PANEL_EVENT, onToggle);
+    }, []);
+    const bindImageToStoryboardRef = useRef<(a: string, b: string, slotId?: string) => boolean>(() => false);
+    bindImageToStoryboardRef.current = (a: string, b: string, slotId?: string) => {
         const pair = [a, b].map((id) => nodesRef.current.find((n) => n.id === id));
         const image = pair.find((n) => n?.type === CanvasNodeType.Image);
         const table = pair.find((n) => n?.type === HemosiNodeType.Storyboard);
@@ -2231,6 +2241,17 @@ function InfiniteCanvasPage() {
         if (!data) return false;
         if (data.settings.some((s) => settingImageNode(s, nodesRef.current)?.id === image.id)) {
             message.info("这张图已经绑在分镜表的设定上了");
+            return true;
+        }
+        if (slotId && slotId !== "__new__") {
+            const target = data.settings.find((s) => s.id === slotId);
+            if (!target) return true;
+            if (settingImageNode(target, nodesRef.current)) {
+                message.info(`设定 ${slotId} 已经绑定了图片`);
+                return true;
+            }
+            setNodes((prev) => prev.map((n) => (n.id === table.id && n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: n.metadata.storyboard.settings.map((s) => (s.id === slotId ? { ...s, imageNodeId: image.id } : s)) } } } : n)));
+            message.success(`已绑定到设定 ${slotId}「${target.name}」`);
             return true;
         }
         const role = image.metadata?.imageRole;
@@ -2271,6 +2292,12 @@ function InfiniteCanvasPage() {
 
             const currentConnection = connectingParamsRef.current;
             if (currentConnection) {
+                const slot = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>("[data-bind-slot]");
+                if (slot?.dataset.bindTable && slot.dataset.bindSlot) {
+                    if (!bindImageToStoryboardRef.current(currentConnection.nodeId, slot.dataset.bindTable, slot.dataset.bindSlot)) message.info("只有图片节点可以绑定到设定");
+                    setConnecting(null);
+                    return;
+                }
                 const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, currentConnection);
                 if (dropTarget.nodeId) {
                     if (!bindImageToStoryboardRef.current(currentConnection.nodeId, dropTarget.nodeId)) connectNodes(currentConnection, dropTarget.nodeId);
@@ -2283,7 +2310,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [connectNodes, finishNodeDrag, getConnectionDropTarget, screenToCanvas, setConnecting],
+        [connectNodes, finishNodeDrag, message, getConnectionDropTarget, screenToCanvas, setConnecting],
     );
 
     useEffect(() => {
@@ -4409,6 +4436,7 @@ function InfiniteCanvasPage() {
                             />
                             );
                         })}
+                        {bindPanelTableId && nodeById.get(bindPanelTableId) ? <BindPanelLines table={nodeById.get(bindPanelTableId)!} nodes={nodes} color={theme.node.muted} /> : null}
                         {connectingParams ? (
                             connectingParams.handleType === "source" && selectedNodeIds.size > 1 && selectedNodeIds.has(connectingParams.nodeId) ? (
                                 selectedNodes.map((selNode) => (
@@ -4427,6 +4455,10 @@ function InfiniteCanvasPage() {
                     </svg>
 
                     <StoryboardGhostLayer ghosts={storyboardGhostNodes} />
+
+                    {bindPanelTableId && nodeById.get(bindPanelTableId) ? (
+                        <StoryboardBindPanel table={nodeById.get(bindPanelTableId)!} nodes={nodes} theme={{ panel: theme.toolbar.panel, border: theme.toolbar.border, text: theme.node.text, muted: theme.node.muted }} onClose={() => setBindPanelTableId(null)} />
+                    ) : null}
 
                     {visibleNodes.map((node) => (
                         <CanvasNode

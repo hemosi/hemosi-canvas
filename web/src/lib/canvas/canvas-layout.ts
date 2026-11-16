@@ -37,14 +37,21 @@ export function autoLayoutNodes(nodes: CanvasNodeData[], connections: CanvasConn
     }
     const left = Math.min(...units.map((unit) => unit.position.x));
     const top = Math.min(...units.map((unit) => unit.position.y));
-    const columns = new Map<number, CanvasNodeData[]>();
-    units.forEach((unit) => columns.set(depth.get(unit.id) || 0, [...(columns.get(depth.get(unit.id) || 0) || []), unit]));
     const delta = new Map<string, { x: number; y: number }>();
+    // 分镜表单独置顶成一排，其余节点整体排在它下面，不和分镜表混在同一列。
+    const tables = units.filter((unit) => unit.type === HemosiNodeType.Storyboard).sort((a, b) => a.position.x - b.position.x);
+    let tableX = left;
+    tables.forEach((unit) => {
+        delta.set(unit.id, { x: tableX - unit.position.x, y: top - unit.position.y });
+        tableX += unit.width + GAP_X;
+    });
+    const bodyTop = tables.length ? top + Math.max(...tables.map((unit) => unit.height)) + GAP_Y * 2 : top;
+    const columns = new Map<number, CanvasNodeData[]>();
+    units.filter((unit) => unit.type !== HemosiNodeType.Storyboard).forEach((unit) => columns.set(depth.get(unit.id) || 0, [...(columns.get(depth.get(unit.id) || 0) || []), unit]));
     let x = left;
     [...columns.keys()].sort((a, b) => a - b).forEach((column) => {
-        const pinned = (unit: CanvasNodeData) => (unit.type === HemosiNodeType.Storyboard ? 0 : 1);
-        const members = columns.get(column)!.sort((a, b) => pinned(a) - pinned(b) || a.position.y - b.position.y || a.position.x - b.position.x);
-        let y = top;
+        const members = columns.get(column)!.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+        let y = bodyTop;
         members.forEach((unit) => {
             delta.set(unit.id, { x: x - unit.position.x, y: y - unit.position.y });
             y += unit.height + GAP_Y;
