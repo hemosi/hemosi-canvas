@@ -8,6 +8,7 @@ import type { NodeGenerationInput } from "@/components/canvas/canvas-node-genera
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import type { ReferenceImage } from "@/types/image";
+import { getNodeSpec } from "@/constant/canvas";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export function imageExtension(dataUrl: string) {
@@ -252,4 +253,9 @@ export function buildAngleLabel(params: CanvasImageAngleParams) {
 
 export function buildAnglePrompt(params: CanvasImageAngleParams) {
     return i18n.t("canvas.generation.anglePrompt", { angle: buildAngleLabel(params) });
+}
+
+/** 同类型来源节点已有明确名称（非该类型默认名）时沿用，生成不再用提示词覆盖名称。 */
+export function keepNodeTitle(node: CanvasNodeData | undefined, type: string, fallback: string) {
+    return node?.type === type && node.title && node.title !== getNodeSpec(type).title ? node.title : fallback;
 }

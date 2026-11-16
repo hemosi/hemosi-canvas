@@ -29,6 +29,20 @@ const stop = {
     onKeyDown: (e: { stopPropagation: () => void }) => e.stopPropagation(),
 };
 
+type DownEvent = { target: EventTarget; currentTarget: EventTarget; clientX: number; clientY: number; stopPropagation: () => void; preventDefault: () => void };
+const INTERACTIVE = "input,textarea,select,button,a,label,[contenteditable],[role='button']";
+/** 控件和滚动条上的按下不触发节点拖动；表内空白处放行给画布，按住即可拖动整张分镜表，同时不再刷蓝文字。 */
+const guardDown = (preventSelect: boolean) => (e: DownEvent) => {
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    if ((e.target as HTMLElement).closest(INTERACTIVE) || e.clientX > rect.left + el.clientWidth || e.clientY > rect.top + el.clientHeight) return e.stopPropagation();
+    if (preventSelect) {
+        e.preventDefault();
+        (document.activeElement as HTMLElement | null)?.blur?.();
+    }
+};
+const dragStop = { ...stop, onMouseDown: guardDown(true), onPointerDown: guardDown(false) };
+
 const HEALTH_COLOR: Record<NodeHealth, string> = {
     ok: "#34d399",
     stale: "#f59e0b",
@@ -522,7 +536,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
             ) : null}
 
             {/* Settings Bar */}
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5" style={{ borderColor: border }} {...stop}>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b px-3 py-1.5" style={{ borderColor: border }} {...dragStop}>
                 {data.settings.map((s) => {
                     const hasPicture = Boolean(settingImageNode(s, allNodes)?.metadata?.content);
                     const conflict = /冲突：/.test(s.review || "");
@@ -609,7 +623,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
             </div>
 
             {/* 10-Column Storyboard Table */}
-            <div data-canvas-no-zoom className="thin-scrollbar min-h-0 flex-1 overflow-auto" {...stop}>
+            <div data-canvas-no-zoom className="thin-scrollbar min-h-0 flex-1 overflow-auto" {...dragStop}>
                 {data.rows.length === 0 ? (
                     <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 opacity-60">
                         <span>暂无分镜，点击右上角「＋ 分镜」或通过右侧导演 Agent 生成</span>
@@ -882,7 +896,7 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
 
             {/* Timeline Bar */}
             {data.rows.length > 0 ? (
-                <div className="flex shrink-0 items-center gap-1 border-t px-3 py-1.5" style={{ borderColor: border }} {...stop}>
+                <div className="flex shrink-0 items-center gap-1 border-t px-3 py-1.5" style={{ borderColor: border }} {...dragStop}>
                     {data.rows.map((row) => {
                         const vidHealth = rowHealth(row, nodeMap).video;
                         return (

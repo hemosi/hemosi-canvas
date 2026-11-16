@@ -1,11 +1,11 @@
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, HemosiNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 const GAP_X = 120;
 const GAP_Y = 48;
 
 /**
  * 一键整理: lay the chosen nodes out in columns by link depth (sources left, results right), each column stacked
- * top to bottom in its current vertical order. A chosen group moves as one block with its members.
+ * top to bottom in its current vertical order, with 分镜表 pinned to the top of its column as the anchor. A chosen group moves as one block with its members.
  */
 export function autoLayoutNodes(nodes: CanvasNodeData[], connections: CanvasConnection[], ids: Set<string>) {
     const chosen = nodes.filter((node) => ids.has(node.id));
@@ -42,7 +42,8 @@ export function autoLayoutNodes(nodes: CanvasNodeData[], connections: CanvasConn
     const delta = new Map<string, { x: number; y: number }>();
     let x = left;
     [...columns.keys()].sort((a, b) => a - b).forEach((column) => {
-        const members = columns.get(column)!.sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+        const pinned = (unit: CanvasNodeData) => (unit.type === HemosiNodeType.Storyboard ? 0 : 1);
+        const members = columns.get(column)!.sort((a, b) => pinned(a) - pinned(b) || a.position.y - b.position.y || a.position.x - b.position.x);
         let y = top;
         members.forEach((unit) => {
             delta.set(unit.id, { x: x - unit.position.x, y: y - unit.position.y });

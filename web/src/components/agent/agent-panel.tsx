@@ -78,7 +78,16 @@ function setScopedMemory(key: string, memory: ScopedMemory) {
 async function loadScopedMemory(key: string) {
     if (loadedScopes.has(key)) return;
     loadedScopes.add(key);
-    const saved = await memoryStorage.getItem<ScopedMemory>(key).catch(() => null);
+    let saved = await memoryStorage.getItem<ScopedMemory>(key).catch(() => null);
+    // 旧版分镜聊天按表存在「项目:sb:表id」下；新版按项目存，第一次打开时把旧记录合并过来（旧键保留不删）。
+    if (!saved && key.endsWith(":sb")) {
+        const legacyKeys = ((await memoryStorage.keys().catch(() => [])) as string[]).filter((k) => k.startsWith(`${key}:`)).sort();
+        const legacy = (await Promise.all(legacyKeys.map((k) => memoryStorage.getItem<ScopedMemory>(k).catch(() => null)))).filter((m): m is ScopedMemory => Boolean(m?.messages?.length));
+        if (legacy.length) {
+            saved = { ...emptyMemory(), messages: legacy.flatMap((m) => m.messages) };
+            void memoryStorage.setItem(key, saved).catch(() => undefined);
+        }
+    }
     if (!saved) return;
     // Messages written before the load finished go after the saved ones.
     const cur = scopedMemoryStore.get(key);
@@ -289,12 +298,8 @@ export function AgentPanel() {
         return selected || storyboardNodes[0] || null;
     }, [selectedIds, storyboardNodes]);
 
-    const scopeKey = useMemo(() => {
-        if (agentMode === "storyboard") {
-            return `${projectId}:sb:${targetSb?.id || "none"}`;
-        }
-        return `${projectId}:canvas`;
-    }, [agentMode, projectId, targetSb?.id]);
+    // 聊天按项目存，不绑分镜表节点：删表、撤销都不影响记录；计划消息自带 storyboardNodeId，应用时仍落到对应的表。
+    const scopeKey = useMemo(() => (agentMode === "storyboard" ? `${projectId}:sb` : `${projectId}:canvas`), [agentMode, projectId]);
 
     useEffect(() => {
         if (loadedScopes.has(scopeKey)) return;
@@ -651,14 +656,6 @@ export function AgentPanel() {
         updateScopedMessages((prev) =>
             prev.map((m) => (m.id === msgId && m.role === "plan" ? { ...m, status: "applied", storyboardNodeId: appliedStoryboardId } : m)),
         );
-        // A conversation held before any table existed moves onto the table it just filled, so it stays in view.
-        const tableScopeKey = `${projectId}:sb:${appliedStoryboardId}`;
-        if (appliedStoryboardId && scopeKey === `${projectId}:sb:none` && !scopedMemoryStore.get(tableScopeKey)?.messages.length) {
-            setScopedMemory(tableScopeKey, scopedMemoryStore.get(scopeKey) || emptyMemory());
-            setScopedMemory(scopeKey, emptyMemory());
-            loadedScopes.add(tableScopeKey);
-            setMemoryTick((t) => t + 1);
-        }
         // Runs go through the normal confirm card; images finish before videos start.
         if (autoRun && createdTasks.length) {
             void host.runStoryboardBatch?.(createdTasks, { title: createdTasks.some((t) => t.label.endsWith("设定图")) ? "生成设定图" : "生成节点内容" });
@@ -783,7 +780,7 @@ export function AgentPanel() {
                     {messages.length === 0 ? (
                         <div className="rounded-xl border border-dashed p-4 text-center opacity-60" style={{ borderColor: border }}>
                             {agentMode === "storyboard"
-                                ? `当前为「分镜模式」（已隔离绑定 ${targetSb?.metadata?.refId ? `@${targetSb.metadata.refId}` : "分镜表"} 记忆）。可拾取素材讨论并生成 10 列分镜表。`
+                                ? "当前为「分镜模式」（聊天按项目保存，删除分镜表不会丢失）。可拾取素材讨论并生成 10 列分镜表。"
                                 : "当前为「画布助手」模式（已按当前画布隔离记忆）。可自由聊天分析素材，或直接让助手在画布上生成文本、图片（含角色卡）、视频节点。"}
                         </div>
                     ) : null}

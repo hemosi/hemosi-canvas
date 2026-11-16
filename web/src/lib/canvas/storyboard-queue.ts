@@ -98,3 +98,19 @@ export async function runWithConcurrency<T>(
     await Promise.all(workers);
     return { completed, canceled: Boolean(signal?.aborted) };
 }
+
+/** 按上游参考连线给同阶段任务分层：上游也在本批里的任务排到后面一层（如反打等正打出图）；成环的剩余任务放最后一层。 */
+export function layerByUpstream<T extends { nodeId: string }>(tasks: T[], connections: { fromNodeId: string; toNodeId: string }[]): T[][] {
+    const ids = new Set(tasks.map((task) => task.nodeId));
+    const done = new Set<string>();
+    const layers: T[][] = [];
+    let rest = tasks;
+    while (rest.length) {
+        const layer = rest.filter((task) => connections.every((c) => c.toNodeId !== task.nodeId || !ids.has(c.fromNodeId) || c.fromNodeId === task.nodeId || done.has(c.fromNodeId)));
+        const current = layer.length ? layer : rest;
+        layers.push(current);
+        current.forEach((task) => done.add(task.nodeId));
+        rest = rest.filter((task) => !current.includes(task));
+    }
+    return layers;
+}

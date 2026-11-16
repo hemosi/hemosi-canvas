@@ -96,9 +96,13 @@ export function settingsGate(settings: SettingItem[]): { ready: boolean; empty: 
     return { ready: settings.length > 0 && unlocked.length === 0, empty: settings.length === 0, unlocked };
 }
 
-/** The image node bound to a setting (first @图n in its desc that is an image node). */
+/** The image node bound to a setting: explicit imageNodeId first, else the first @图n in its desc that is not listed in refs (refs are upstream references, not the picture itself). */
 export function settingImageNode(setting: SettingItem, nodes: CanvasNodeData[]): CanvasNodeData | undefined {
+    const explicit = setting.imageNodeId ? nodes.find((n) => n.type === CanvasNodeType.Image && n.id === setting.imageNodeId) : undefined;
+    if (explicit) return explicit;
+    const refTokens = new Set(extractAtTokens(setting.refs || ""));
     for (const tok of extractAtTokens(setting.desc)) {
+        if (refTokens.has(tok)) continue;
         const node = nodes.find((n) => n.type === CanvasNodeType.Image && n.metadata?.refId === tok);
         if (node) return node;
     }
@@ -144,28 +148,16 @@ export function resolveRowReferenceImageNodeIds(
     for (const token of tokens) {
         pushNode(refToNode.get(token));
         const setting = settingMap.get(token);
-        if (setting) {
-            for (const subToken of extractAtTokens(setting.desc)) {
-                pushNode(refToNode.get(subToken));
-            }
-        }
+        if (setting) pushNode(settingImageNode(setting, nodes));
     }
     return result;
 }
 
 export function collectStoryboardSettingImageIds(settings: SettingItem[], nodes: CanvasNodeData[]): string[] {
-    const refToNode = new Map<string, CanvasNodeData>();
-    for (const node of nodes) {
-        if (node.metadata?.refId) refToNode.set(node.metadata.refId, node);
-    }
     const ids: string[] = [];
     for (const setting of settings) {
-        for (const token of extractAtTokens(setting.desc)) {
-            const node = refToNode.get(token);
-            if (node && node.type === CanvasNodeType.Image && !ids.includes(node.id)) {
-                ids.push(node.id);
-            }
-        }
+        const node = settingImageNode(setting, nodes);
+        if (node && !ids.includes(node.id)) ids.push(node.id);
     }
     return ids;
 }
@@ -276,15 +268,30 @@ export function reconcileStoryboardGraph(params: {
         return { data: params.data, nodes: nextNodes, connections: params.connections, refCounters: nextCounters };
     }
 
-    // 1. Ensure each setting has a bound @图n image node if none exists yet
-    const nextSettings: SettingItem[] = params.data.settings.map((setting) => {
-        const bound = settingImageNode(setting, nextNodes);
+    // 1. Ensure each setting has a bound image node; settings built on other pictures (refs) get a NEW node wired to them.
+    const settingNodeIds = new Map<string, string>();
+    const refEdges: CanvasConnection[] = [];
+    const nextSettings: SettingItem[] = params.data.settings.map((originalSetting) => {
+        let setting = originalSetting;
+        let bound = settingImageNode(setting, nextNodes);
+        // 描述里提到的是一张已出图、且名字明显是别的角色/场景的卡（如日常角色卡）：当上游参考，新建节点，不占用原卡。
+        if (bound && !setting.imageNodeId && bound.metadata?.content && bound.metadata?.refId) {
+            const title = (bound.title || "").trim();
+            const name = (setting.name || "").trim();
+            const otherName = title && name && title !== name && !title.includes(name) && !name.includes(title) && !/^(Generated|电影|真人|写实)/.test(title);
+            if (otherName) {
+                const token = `@${bound.metadata.refId}`;
+                setting = { ...setting, refs: setting.refs?.includes(token) ? setting.refs : `${setting.refs || ""} ${token}`.trim() };
+                bound = undefined;
+            }
+        }
         if (bound) {
-            // Keep the bound picture's prompt in step with the setting's image prompt (unless the user edited it on the node).
-            if (setting.prompt && !bound.metadata?.manualPrompt && bound.metadata?.prompt !== setting.prompt) {
+            settingNodeIds.set(setting.id, bound.id);
+            // Keep an ungenerated picture's prompt in step with the setting's image prompt; a generated one is never overwritten.
+            if (setting.prompt && !bound.metadata?.content && !bound.metadata?.manualPrompt && bound.metadata?.prompt !== setting.prompt) {
                 nextNodes = nextNodes.map((n) => (n.id === bound.id ? { ...n, metadata: { ...n.metadata, prompt: setting.prompt } } : n));
             }
-            return setting;
+            return setting.imageNodeId === bound.id ? setting : { ...setting, imageNodeId: bound.id };
         }
 
         const allocated = allocateRefId(CanvasNodeType.Image, nextNodes, nextCounters);
@@ -301,9 +308,14 @@ export function reconcileStoryboardGraph(params: {
             },
         );
         created.title = setting.name || setting.id;
+        for (const token of extractAtTokens(setting.refs || "")) {
+            const fromId = token.startsWith("图") ? nextNodes.find((n) => n.type === CanvasNodeType.Image && n.metadata?.refId === token)?.id : settingNodeIds.get(token);
+            if (fromId && fromId !== created.id) refEdges.push({ id: nanoid(), fromNodeId: fromId, toNodeId: created.id, kind: "reference" });
+        }
         nextNodes.push(created);
+        settingNodeIds.set(setting.id, created.id);
         const nextDesc = setting.desc.trim() ? `${setting.desc.trim()} @${allocated.refId}` : `@${allocated.refId}`;
-        return { ...setting, desc: nextDesc };
+        return { ...setting, desc: nextDesc, imageNodeId: created.id };
     });
 
     // 2. Ensure each row has downstream imageNodeId & videoNodeId and sync prompt/seconds/inputsHash
@@ -431,6 +443,7 @@ export function reconcileStoryboardGraph(params: {
 
     // 5. Sync connections
     const nextConnections = syncStoryboardConnections(params.storyboardNodeId, nextData, nextNodes, params.connections);
+    nextConnections.push(...refEdges);
 
     return {
         data: nextData,

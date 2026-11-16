@@ -10,6 +10,10 @@ export const SettingItemSchema = z.object({
     desc: z.string(),
     /** Image prompt for this setting's picture (设定图). Falls back to desc. */
     prompt: z.string().optional(),
+    /** 绑定的画布图片节点 id（新建、点选或连线绑定后写入）；有它就不再靠 desc 里的 @图n 猜。 */
+    imageNodeId: z.string().optional(),
+    /** 生成设定图时作为上游参考图的来源：@图n（画布已有图）或 @S1 等设定编号（如正打→反打）；新建节点时自动连线，不会占用被引用的图。 */
+    refs: z.string().optional(),
     /** Locked = approved by the user (or by the Agent when autoLockSettings is on). Rows are only written once all are locked. */
     locked: z.boolean().optional(),
     /** The Agent's look at the generated picture: what it actually shows and any conflict with the outline. */

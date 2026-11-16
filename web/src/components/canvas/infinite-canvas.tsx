@@ -11,6 +11,8 @@ type InfiniteCanvasProps = {
     backgroundMode?: CanvasBackgroundMode;
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
+    /** 背景按下落在多选虚线框内时由外部接管（整体拖动选中节点），返回 true 表示已处理，不再平移/框选。 */
+    onSelectionPress?: (event: React.PointerEvent<HTMLDivElement>) => boolean;
     onCanvasDeselect?: () => void;
     onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
@@ -18,7 +20,7 @@ type InfiniteCanvasProps = {
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onSelectionPress, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -113,6 +115,11 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
         const temporaryTool = event.ctrlKey || event.shiftKey || isSpacePressed;
         const activeTool = temporaryTool ? (tool === "select" ? "pan" : "select") : tool;
+        if (event.button === 0 && isBackgroundClick && !temporaryTool && onSelectionPress?.(event)) {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            return;
+        }
         const shouldPan = event.button === 1 || (event.button === 0 && activeTool === "pan" && isBackgroundClick);
 
         if (shouldPan) {

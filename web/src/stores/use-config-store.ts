@@ -94,6 +94,8 @@ export type AiConfig = {
     proxyUrl: string;
     nodeRegenerateBehavior: "new-node" | "overwrite";
     autoFocusOnSelect: boolean;
+    /** 单击节点时自动弹出下方提示词面板；关掉后靠节点顶栏「编辑」展开。 */
+    autoOpenPromptPanel: boolean;
     /** Show the pre-generation confirm card before a canvas node fires a generation request. */
     confirmBeforeGenerate: boolean;
     /** Also show the confirm card when the Agent starts a generation (needs confirmBeforeGenerate); on by default, same mechanism as user generations. */
@@ -201,6 +203,7 @@ export const defaultConfig: AiConfig = {
     proxyUrl: DEFAULT_LOCAL_PROXY_URL,
     nodeRegenerateBehavior: "new-node",
     autoFocusOnSelect: false,
+    autoOpenPromptPanel: true,
     confirmBeforeGenerate: true,
     confirmAgentGenerations: true,
 };
@@ -394,6 +397,7 @@ export const useConfigStore = create<ConfigStore>()(
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
                         autoFocusOnSelect: Boolean(config.autoFocusOnSelect),
+                        autoOpenPromptPanel: config.autoOpenPromptPanel !== false,
                         confirmBeforeGenerate: config.confirmBeforeGenerate !== false,
                         confirmAgentGenerations: config.confirmAgentGenerations !== false,
                     },

@@ -70,6 +70,8 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
             desc: z.string().default(""),
             /** Prompt for the setting picture; a picture node is created with it and bound to the setting. */
             imgPrompt: z.string().default(""),
+            /** 设定图的上游参考：@图n（基于画布已有图改出的新设定）或 @S1（如反打参考正打）；系统新建节点并连线。 */
+            refs: z.string().default(""),
         }),
     }),
     z.object({
@@ -193,7 +195,7 @@ export function previewPlan(
 
         if (ch.kind === "setting.add") {
             const id = nextSettingId(ch.setting.kind, settings);
-            settings.push({ id, kind: ch.setting.kind, name: ch.setting.name, desc: ch.setting.desc, prompt: ch.setting.imgPrompt || undefined, locked: false });
+            settings.push({ id, kind: ch.setting.kind, name: ch.setting.name, desc: ch.setting.desc, prompt: ch.setting.imgPrompt || undefined, refs: ch.setting.refs || undefined, locked: false });
             diff.addedSettingIds.push(id);
             continue;
         }
@@ -818,7 +820,7 @@ export async function buildStoryboardAgentMessages(
         `{
   "summary": "你对用户的自然回复或修改说明（可用 markdown）",
   "changes": [
-    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称（同一角色换装就拆成两个设定，如：林佳佳·皮夹克）", "desc": "外观要点 + 出现镜号（可带 @图1 绑定画布已有图片）", "imgPrompt": "可直接生成设定图的完整提示词" } },
+    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称（同一角色换装就拆成两个设定，如：林佳佳·皮夹克）", "desc": "外观要点 + 出现镜号（写 @图1 表示这张图就是设定图，直接绑定）", "imgPrompt": "可直接生成设定图的完整提示词", "refs": "可选：@图1 或 @S1，表示参考它另出一张新设定图（不占用被引用的图），无则空字符串" } },
     { "id": "c2", "kind": "setting.update", "settingId": "R1", "patch": { "desc": "…", "imgPrompt": "…" } },
     { "id": "c3", "kind": "setting.review", "settingId": "R1", "actual": "这张设定图实际画了什么（服装/发型/配色/背景/时间天气/载具外形）", "conflicts": "与梗概或设定描述冲突的地方，没有就填空字符串", "ok": true },
     { "id": "c4", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 @S1 @P1", "note": "[切镜] 备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
@@ -837,7 +839,7 @@ export async function buildStoryboardAgentMessages(
         "1. settingsGate.ready=false（表里没有设定，或有设定未锁定，或你判断关键的人物/场景/物品/载具还没有设定）时，本轮只能输出 setting.add / setting.update / setting.review，严禁 row.add / row.update。",
         "   - 还没有设定：summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写能直接生成设定图的完整提示词（角色：全身定妆/三视图，服装与梗概一致；场景：无人空镜，交代时间天气光线；物品：多角度、干净背景）。系统会为每个设定建好图片节点并绑定。",
         "   - 本轮附带了设定图（标注为「设定 @R1 …」）：逐张观察，为每张输出 setting.review：actual 写图里实际画了什么，conflicts 写和梗概/设定描述对不上的地方。有冲突时 ok=false，并在 summary 里问用户是改图（你给出新的 imgPrompt 用 setting.update）还是改剧本，不要自己往下写分镜。",
-        "   - 用户给的图数量和类型都不固定（可能 0 张，也可能多张角色/场景/物品/风格参考混在一起）：逐张看图判断它属于哪个设定。图本身就能当设定图（如角色三视图、定妆照、场景图）时，在该 setting.add 的 desc 里写上它的 @图n，系统会直接绑定这张图，不再新建空节点；只是参考（如风格图、局部参考）时不要绑定，把它的特征写进 imgPrompt。引用画布图片一律用 @图n，不要用节点 id。summary 里逐张说明每张图用在哪个设定、是直接用还是只作参考。",
+        "   - 用户给的图数量和类型都不固定（可能 0 张，也可能多张角色/场景/物品/风格参考混在一起）：逐张看图判断它属于哪个设定。图本身就能当设定图（如角色三视图、定妆照、场景图）时，在该 setting.add 的 desc 里写上它的 @图n，系统会直接绑定这张图，不再新建空节点；只是参考（如风格图、局部参考）时不要绑定，把它的特征写进 imgPrompt。基于画布已有图改出新设定（如日常角色卡 @图1 → 剧情里的废土装）时，不要把 @图1 写进 desc，而是写进 refs：系统会新建一个以设定名命名的节点，并把 @图1 连线为它的上游参考图，原图不会被改动。同一空间的正反打场景，反打设定的 refs 写正打设定编号（如 \"@S1\"）：系统会先出正打，再带着正打图生成反打，反打 imgPrompt 里写明同一空间、相反机位。引用画布图片一律用 @图n，不要用节点 id。summary 里逐张说明每张图用在哪个设定、是直接用还是只作参考。",
         "   - 设定由用户点「锁定」确认（用户也可开启让你自动锁定：审核无冲突时 ok=true）。",
         "2. settingsGate.ready=true 后才能写分镜行，且只能引用已锁定的设定。",
         "【镜头连贯硬规则】",
