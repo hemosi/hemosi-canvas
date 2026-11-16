@@ -57,7 +57,8 @@ import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/
 import { layerByUpstream, runWithConcurrency, summarizeStoryboardRun } from "@/lib/canvas/storyboard-queue";
 import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { allocateRefId, ensureNodeRefIds } from "@/lib/canvas/node-ref-id";
-import { createEmptyStoryboardData, reconcileStoryboardGraph } from "@/lib/canvas/storyboard-utils";
+import { BatchParamsButton, isUngenerated } from "@/components/canvas/batch-params-button";
+import { createEmptyStoryboardData, nextSettingId, reconcileStoryboardGraph, settingImageNode } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
@@ -2219,6 +2220,46 @@ function InfiniteCanvasPage() {
         [screenToCanvas],
     );
 
+    // 图片节点和分镜表互相拉线 = 把这张图绑定成分镜表的一个设定，名称/描述/提示词按节点自动填好，不再手敲 @图n。
+    const bindImageToStoryboardRef = useRef<(a: string, b: string) => boolean>(() => false);
+    bindImageToStoryboardRef.current = (a: string, b: string) => {
+        const pair = [a, b].map((id) => nodesRef.current.find((n) => n.id === id));
+        const image = pair.find((n) => n?.type === CanvasNodeType.Image);
+        const table = pair.find((n) => n?.type === HemosiNodeType.Storyboard);
+        if (!image || !table) return false;
+        const data = table.metadata?.storyboard;
+        if (!data) return false;
+        if (data.settings.some((s) => settingImageNode(s, nodesRef.current)?.id === image.id)) {
+            message.info("这张图已经绑在分镜表的设定上了");
+            return true;
+        }
+        const role = image.metadata?.imageRole;
+        const kind = role === "scene" ? "scene" : role === "reference" ? "prop" : "person";
+        const refId = image.metadata?.refId;
+        const defaultTitle = !image.title || image.title === getNodeSpec(CanvasNodeType.Image).title || /^(Generated|电影|真人|写实)/.test(image.title);
+        const prompt = (image.metadata?.prompt || "").trim();
+        const name = defaultTitle ? (prompt.split(/[，,。\n]/)[0] || refId || "新设定").slice(0, 20) : image.title;
+        const id = nextSettingId(kind, data.settings);
+        const setting = { id, kind, name, desc: `${prompt.slice(0, 80)}${refId ? ` @${refId}` : ""}`.trim(), prompt: prompt || undefined, imageNodeId: image.id, locked: false } as (typeof data.settings)[number];
+        setNodes((prev) => prev.map((n) => (n.id === table.id && n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: [...n.metadata.storyboard.settings, setting] } } } : n)));
+        message.success(`已绑定为设定 ${id}「${name}」，可在分镜表里改名或锁定`);
+        return true;
+    };
+
+    // 分镜表里已锁定设定绑定的图片节点：画布上显示翠绿边框。
+    const lockedImageIds = useMemo(() => {
+        const ids = new Set<string>();
+        for (const table of nodes) {
+            if (table.type !== HemosiNodeType.Storyboard) continue;
+            for (const setting of table.metadata?.storyboard?.settings || []) {
+                if (!setting.locked) continue;
+                const bound = settingImageNode(setting, nodes);
+                if (bound) ids.add(bound.id);
+            }
+        }
+        return ids;
+    }, [nodes]);
+
     const handleGlobalMouseUp = useCallback(
         (event: MouseEvent) => {
             finishNodeDrag(event.clientX, event.clientY);
@@ -2232,7 +2273,7 @@ function InfiniteCanvasPage() {
             if (currentConnection) {
                 const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, currentConnection);
                 if (dropTarget.nodeId) {
-                    connectNodes(currentConnection, dropTarget.nodeId);
+                    if (!bindImageToStoryboardRef.current(currentConnection.nodeId, dropTarget.nodeId)) connectNodes(currentConnection, dropTarget.nodeId);
                     setConnecting(null);
                 } else if (dropTarget.isNearNode) {
                     setConnecting(null);
@@ -4289,6 +4330,15 @@ function InfiniteCanvasPage() {
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} projectId={projectId} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
+                <BatchParamsButton
+                    nodes={nodes}
+                    config={config}
+                    onApply={(kind, patch) => {
+                        const type = kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video;
+                        setNodes((prev) => prev.map((n) => (n.type === type && isUngenerated(n) ? { ...n, metadata: { ...n.metadata, ...(patch.model ? { model: patch.model } : {}), ...(patch.size ? { size: patch.size } : {}) } } : n)));
+                        message.success("已批量修改未生成的节点");
+                    }}
+                />
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
                     titleDraft={titleDraft}
@@ -4393,6 +4443,7 @@ function InfiniteCanvasPage() {
                             scale={viewport.k}
                             isSelected={selectedNodeIds.has(node.id)}
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
+                            isLocked={lockedImageIds.has(node.id)}
                             isFocusRelated={activeNodeId === node.id}
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
