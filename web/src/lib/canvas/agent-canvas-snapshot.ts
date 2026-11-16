@@ -32,8 +32,11 @@ export function buildAgentCanvasSnapshot(nodes: CanvasNodeData[], connections: C
         if (m.imageRole) parts.push(`身份=${m.imageRole}`);
         if (m.material) parts.push("素材文件");
         const prompt = m.rawPrompt || m.prompt;
-        if (prompt) parts.push(`提示词=${clip(prompt, 300)}`);
-        if (n.type === CanvasNodeType.Text && m.content) parts.push(`内容=${clip(m.content, 300)}`);
+        if (prompt && n.type !== CanvasNodeType.Text) parts.push(`提示词=${clip(prompt, 300)}`);
+        if (n.type === CanvasNodeType.Text) {
+            const fullText = (m.texts?.find((t) => t.id === m.primaryTextId)?.content || m.texts?.[0]?.content || m.content || m.prompt || "").trim();
+            if (fullText) parts.push(`全文内容=\n"""\n${fullText}\n"""`);
+        }
         if (m.model) parts.push(`模型=${m.model}`);
         if (m.size) parts.push(`比例=${m.size}`);
         if (m.seconds) parts.push(`时长=${m.seconds}s`);

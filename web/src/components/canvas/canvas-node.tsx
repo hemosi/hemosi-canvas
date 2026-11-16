@@ -332,6 +332,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onHoverEnd(data.id);
             }}
             onMouseDownCapture={(event) => {
+                if ((event.target as HTMLElement | null)?.closest?.("[data-node-title]")) return;
                 if (!referenceSelectionState) onSelectCapture?.(event, data.id);
             }}
             onContextMenu={(event) => {
@@ -340,7 +341,16 @@ export const CanvasNode = React.memo(function CanvasNode({
             }}
         >
             {!referenceSelectionState && (
-                <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <div
+                    data-node-title
+                    className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        setIsEditingTitle(true);
+                    }}
+                >
                     {isEditingTitle ? (
                         <input
                             ref={titleInputRef}

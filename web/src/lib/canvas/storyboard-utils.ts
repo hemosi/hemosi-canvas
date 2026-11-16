@@ -192,24 +192,30 @@ export function computeStoryboardLayout(
     const sbW = storyboardNode.width;
 
     const settingImgIds = collectStoryboardSettingImageIds(data.settings, nodes);
-    settingImgIds.forEach((id, idx) => {
+    let settingY = sbY;
+    settingImgIds.forEach((id) => {
         const node = nodeMap.get(id);
-        if (!node || node.metadata?.manualPos) return;
-        positions.set(id, { x: sbX - 300, y: sbY + idx * 240 });
+        if (!node) return;
+        if (!node.metadata?.manualPos) {
+            positions.set(id, { x: sbX - 300, y: settingY });
+        }
+        settingY += (node.height || 180) + 48;
     });
 
     const imgColX = sbX + sbW + 100;
     const vidColX = sbX + sbW + 420;
-    data.rows.forEach((row, idx) => {
-        const y = sbY + idx * 230;
+    let rowY = sbY;
+    data.rows.forEach((row) => {
         const imgNode = nodeMap.get(row.imageNodeId);
-        if (imgNode && !imgNode.metadata?.manualPos) {
-            positions.set(imgNode.id, { x: imgColX, y });
-        }
         const vidNode = nodeMap.get(row.videoNodeId);
-        if (vidNode && !vidNode.metadata?.manualPos) {
-            positions.set(vidNode.id, { x: vidColX, y });
+        const rowH = Math.max(imgNode?.height || 180, vidNode?.height || 180);
+        if (imgNode && !imgNode.metadata?.manualPos) {
+            positions.set(imgNode.id, { x: imgColX, y: rowY });
         }
+        if (vidNode && !vidNode.metadata?.manualPos) {
+            positions.set(vidNode.id, { x: vidColX, y: rowY });
+        }
+        rowY += rowH + 48;
     });
 
     return positions;
@@ -303,17 +309,6 @@ export function reconcileStoryboardGraph(params: {
             if (guess && !claimed.has(guess.id)) {
                 bound = guess;
                 claimed.add(guess.id);
-            }
-        }
-        // 描述里提到的是一张已出图、且名字明显是别的角色/场景的卡（如日常角色卡）：当上游参考，新建节点，不占用原卡。
-        if (bound && !setting.imageNodeId && bound.metadata?.content && bound.metadata?.refId) {
-            const title = (bound.title || "").trim();
-            const name = (setting.name || "").trim();
-            const otherName = title && name && title !== name && !title.includes(name) && !name.includes(title) && !/^(Generated|电影|真人|写实)/.test(title);
-            if (otherName) {
-                const token = `@${bound.metadata.refId}`;
-                setting = { ...setting, refs: setting.refs?.includes(token) ? setting.refs : `${setting.refs || ""} ${token}`.trim() };
-                bound = undefined;
             }
         }
         if (bound) {

@@ -63,6 +63,7 @@ export function CanvasGenerationQueue({
     onEdit: (nodeId: string) => void;
     onRetry: (item: QueueItem) => void;
     onStop: (nodeId: string) => void;
+    onStopAll?: () => void;
     onRetryAll: (items: QueueItem[]) => void;
 }) {
     const [tab, setTab] = useState<"queue" | "records">("queue");
@@ -76,6 +77,7 @@ export function CanvasGenerationQueue({
         return () => window.clearInterval(timer);
     }, [items, open]);
     const failed = items.filter((item) => item.state === "error");
+    const runningItems = items.filter((item) => item.state !== "error");
     const nodeExists = new Set(nodes.map((node) => node.id));
 
     return (
@@ -83,6 +85,11 @@ export function CanvasGenerationQueue({
             <div data-canvas-shortcuts-ignore className="space-y-2">
                 {tab === "queue" ? (
                     <>
+                        {runningItems.length > 0 && onStopAll ? (
+                            <Button block size="small" danger icon={<Square className="size-3.5" />} onClick={onStopAll}>
+                                全部停止（{runningItems.length}）
+                            </Button>
+                        ) : null}
                         {failed.length > 1 ? (
                             <Button block size="small" icon={<RotateCcw className="size-3.5" />} onClick={() => onRetryAll(failed)}>
                                 全部失败项重跑（{failed.length}）

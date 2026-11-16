@@ -537,6 +537,7 @@ export function AgentPanel() {
                     available: enabledSkills.map(({ name, description, body, files }) => ({ name, description, body, files })),
                     activeNames: enabledSkills.filter((k) => activeSkillIds.includes(k.id)).map((k) => k.name),
                 },
+                projectAspectRatio: presetRatio,
             });
             if (!stillWanted()) return;
             const autoSkills = res.autoLoadedSkills.length ? res.autoLoadedSkills : undefined;
@@ -548,9 +549,6 @@ export function AgentPanel() {
             }
             if (res.ok) {
                 const hasChanges = res.plan.changes.length > 0;
-                // A table keeps its own ratio; otherwise start from the ratio the Agent proposed.
-                const proposed = res.plan.changes.find((c) => (c.kind === "canvas.image.add" || c.kind === "canvas.video.add") && c.size);
-                if (!sbSnapshot?.metadata?.storyboard?.aspectRatio && proposed && "size" in proposed && proposed.size) setPresetRatio(proposed.size);
                 if (!hasChanges) {
                     writeBack((prev) => [
                         ...prev,
@@ -749,7 +747,7 @@ export function AgentPanel() {
                     </div>
                 </div>
 
-                {/* Chat Model Selector */}
+                {/* Chat Model Selector & Project Aspect Ratio */}
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5" style={{ borderColor: border }}>
                     <span className="shrink-0 opacity-65">对话模型</span>
                     <div className="min-w-0 flex-1">
@@ -760,6 +758,29 @@ export function AgentPanel() {
                             value={textModel}
                             onChange={(model) => updateConfig("textModel", model)}
                         />
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1" title="项目成片画幅（自动同步给模型与新增节点；独立道具图仍保持 1:1）">
+                        <span className="text-[11px] opacity-65">画幅</span>
+                        <select
+                            className="rounded border px-1.5 py-0.5 text-[11px] outline-none"
+                            style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
+                            value={presetRatio}
+                            onChange={(e) => {
+                                const nextRatio = e.target.value;
+                                setPresetRatio(nextRatio);
+                                if (targetSb?.metadata?.storyboard) {
+                                    host?.updateMetadata(targetSb.id, {
+                                        storyboard: { ...targetSb.metadata.storyboard, aspectRatio: nextRatio },
+                                    });
+                                }
+                            }}
+                        >
+                            {["16:9", "9:16", "1:1", "4:3", "3:4"].map((r) => (
+                                <option key={r} value={r} style={{ background: theme.node.panel, color: theme.node.text }}>
+                                    {r}
+                                </option>
+                            ))}
+                        </select>
                     </div>
                 </div>
 

@@ -103,10 +103,10 @@ type GeminiPart = {
 };
 type GeminiContent = { role?: "user" | "model"; parts: GeminiPart[] };
 type GeminiPayload = {
-    candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
+    candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string; finishMessage?: string }>;
     models?: Array<{ name?: string }>;
     error?: { message?: string };
-    promptFeedback?: { blockReason?: string };
+    promptFeedback?: { blockReason?: string; blockReasonMessage?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 type RequestOptions = { signal?: AbortSignal };
@@ -431,7 +431,17 @@ function validateResponsePayload(payload: ResponseApiPayload) {
 
 function validateGeminiPayload(payload: GeminiPayload) {
     if (payload.error?.message) throw new Error(payload.error.message);
-    if (payload.promptFeedback?.blockReason) throw new Error(apiText("geminiRejected", { reason: payload.promptFeedback.blockReason }));
+    if (payload.promptFeedback?.blockReason) {
+        const detail = payload.promptFeedback.blockReasonMessage ? `：${payload.promptFeedback.blockReasonMessage}` : "";
+        throw new Error(`触发风控拦截 (${payload.promptFeedback.blockReason})${detail}`);
+    }
+    const blocked = payload.candidates?.find(
+        (c) => c.finishReason && /^(SAFETY|IMAGE_SAFETY|PROHIBITED_CONTENT|BLOCKLIST|SPII|RECITATION|IMAGE_PROHIBITED_CONTENT)$/i.test(c.finishReason),
+    );
+    if (blocked?.finishReason) {
+        const detail = blocked.finishMessage ? `：${blocked.finishMessage}` : "";
+        throw new Error(`触发安全/风控拦截 (${blocked.finishReason})${detail}`);
+    }
 }
 
 async function readFetchError(response: Response, fallback: string) {
@@ -735,7 +745,12 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
             })
             .filter((value): value is string => Boolean(value))
             .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
-    if (!images.length) throw new Error(apiText("geminiNoImage"));
+    if (!images.length) {
+        const candidate = payload.candidates?.[0];
+        const textHint = candidate?.content?.parts?.map((p) => p.text || "").join("").trim();
+        const reason = candidate?.finishMessage || textHint || candidate?.finishReason;
+        throw new Error(reason ? `未生成图片（${reason.slice(0, 160)}）` : apiText("geminiNoImage"));
+    }
     return images;
 }
 
@@ -922,10 +937,14 @@ async function requestChatCompletionsStream(
         if (!data || data === "[DONE]") return;
         try {
             const parsed = JSON.parse(data) as {
-                choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>;
+                choices?: Array<{ delta?: { content?: string }; message?: { content?: string }; finish_reason?: string | null }>;
                 error?: { message?: string };
             };
             if (parsed.error?.message) throw new Error(parsed.error.message);
+            const finishReason = parsed.choices?.[0]?.finish_reason;
+            if (finishReason === "content_filter" || finishReason === "safety") {
+                throw new Error(`触发内容风控拦截 (${finishReason})`);
+            }
             const delta = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
             if (delta) {
                 fullText += delta;

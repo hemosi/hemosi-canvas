@@ -83,6 +83,11 @@ export function StoryboardBindPanel({ table, nodes, theme, onClose, onChangeSett
                         className="group relative flex items-center gap-2 border-b pl-1 pr-2"
                         style={{ ...slotStyle, opacity: dragId === s.id ? 0.4 : 1 }}
                         title={image ? "已绑定；按住左侧把手拖动排序" : "从画布上的图片拉线到这里绑定"}
+                        onPointerEnter={() => {
+                            if (dragId && dragId !== s.id) {
+                                move(dragId, s.id);
+                            }
+                        }}
                         onDragOver={(e) => {
                             if (!dragId) return;
                             e.preventDefault();
@@ -98,7 +103,17 @@ export function StoryboardBindPanel({ table, nodes, theme, onClose, onChangeSett
                     >
                         <span
                             draggable
-                            className="cursor-grab opacity-40 hover:opacity-100"
+                            className="nodrag nopan cursor-grab p-1 opacity-50 hover:opacity-100 active:cursor-grabbing"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => {
+                                e.stopPropagation();
+                                setDragId(s.id);
+                                const onUp = () => {
+                                    setDragId(null);
+                                    window.removeEventListener("pointerup", onUp, true);
+                                };
+                                window.addEventListener("pointerup", onUp, true);
+                            }}
                             onDragStart={(e) => {
                                 e.stopPropagation();
                                 e.dataTransfer.effectAllowed = "move";

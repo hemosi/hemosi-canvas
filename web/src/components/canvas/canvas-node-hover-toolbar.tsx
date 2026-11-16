@@ -123,7 +123,8 @@ export function CanvasNodeHoverToolbar({
 
     const activeNode = node;
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    // Float above the node's top-[-28px] title bar so clicking/double-clicking the title never hits the toolbar.
+    const top = viewport.y + (node.position.y - 30) * viewport.k - 8;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;

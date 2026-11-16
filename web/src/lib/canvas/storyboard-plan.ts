@@ -37,6 +37,29 @@ export const RowInputSchema = z.object({
 });
 export type RowInput = z.infer<typeof RowInputSchema>;
 
+export const RowPatchSchema = z.object({
+    code: z.string().optional(),
+    duration: z.number().positive().optional(),
+    shotSize: z.string().optional(),
+    move: z.string().optional(),
+    staticScreen: z.string().optional(),
+    action: z.string().optional(),
+    line: z.string().optional(),
+    sfx: z.string().optional(),
+    refs: z.string().optional(),
+    note: z.string().optional(),
+    imgPrompt: z.string().optional(),
+    vidPrompt: z.string().optional(),
+});
+
+function inferSettingKind(kind: z.infer<typeof SettingKindSchema> | undefined, name: string): z.infer<typeof SettingKindSchema> {
+    const trimmed = (name || "").trim();
+    if (/^(P\d+|道具|物品)/i.test(trimmed)) return "prop";
+    if (/^(S\d+|场景)/i.test(trimmed)) return "scene";
+    if (/^(CH\d+|R\d+|角色|人物)/i.test(trimmed)) return "person";
+    return kind || "person";
+}
+
 export const ChangeSchema = z.discriminatedUnion("kind", [
     z.object({
         id: z.string().min(1),
@@ -48,7 +71,7 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
         id: z.string().min(1),
         kind: z.literal("row.update"),
         rowId: z.string().min(1),
-        patch: RowInputSchema.partial(),
+        patch: RowPatchSchema,
     }),
     z.object({
         id: z.string().min(1),
@@ -65,7 +88,7 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
         id: z.string().min(1),
         kind: z.literal("setting.add"),
         setting: z.object({
-            kind: SettingKindSchema,
+            kind: SettingKindSchema.optional(),
             name: z.string().min(1),
             desc: z.string().default(""),
             /** Prompt for the setting picture; a picture node is created with it and bound to the setting. */
@@ -198,16 +221,13 @@ export function previewPlan(
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     let removeCount = 0;
     // 设定关 is judged on the table as it was when the plan arrived; settings this plan adds are not locked yet.
-    const gate = settingsGate(data.settings);
-    const gateNote = gate.empty ? "表里还没有设定" : `设定 ${gate.unlocked.join("、")} 还没锁定`;
-    let rowsBlocked = 0;
-
     for (const ch of plan.changes) {
         if (!enabledIds.has(ch.id)) continue;
 
         if (ch.kind === "setting.add") {
-            const id = nextSettingId(ch.setting.kind, settings);
-            settings.push({ id, kind: ch.setting.kind, name: ch.setting.name, desc: ch.setting.desc, prompt: ch.setting.imgPrompt || undefined, refs: ch.setting.refs || undefined, locked: false });
+            const resolvedKind = inferSettingKind(ch.setting.kind, ch.setting.name);
+            const id = nextSettingId(resolvedKind, settings);
+            settings.push({ id, kind: resolvedKind, name: ch.setting.name, desc: ch.setting.desc, prompt: ch.setting.imgPrompt || undefined, refs: ch.setting.refs || undefined, locked: false });
             diff.addedSettingIds.push(id);
             continue;
         }
@@ -221,7 +241,6 @@ export function previewPlan(
             const cur = settings[idx];
             const { imgPrompt, ...rest } = ch.patch;
             const looksChanged = (rest.desc !== undefined && rest.desc !== cur.desc) || (imgPrompt !== undefined && imgPrompt !== cur.prompt);
-            if (cur.locked && looksChanged) warnings.push(`${cur.id} 已锁定，这次改了外观，应用后会解锁，需要重新出图并审核`);
             settings[idx] = { ...cur, ...rest, ...(imgPrompt !== undefined ? { prompt: imgPrompt } : {}), ...(cur.locked && looksChanged ? { locked: false, review: undefined } : {}) };
             diff.updatedSettingIds.push(ch.settingId);
             continue;
@@ -239,11 +258,6 @@ export function previewPlan(
             const autoLock = Boolean(data.autoLockSettings) && ch.ok && !conflicts;
             settings[idx] = { ...settings[idx], review, ...(autoLock ? { locked: true } : {}) };
             diff.updatedSettingIds.push(ch.settingId);
-            continue;
-        }
-
-        if ((ch.kind === "row.add" || ch.kind === "row.update") && !gate.ready) {
-            rowsBlocked++;
             continue;
         }
 
@@ -281,16 +295,18 @@ export function previewPlan(
             const cur = rows[idx];
             const imgNode = nodeMap.get(cur.imageNodeId);
             const vidNode = nodeMap.get(cur.videoNodeId);
-            const patch = { ...ch.patch };
-            if (imgNode?.metadata?.manualPrompt && patch.imgPrompt !== undefined) {
+            const cleanPatch = Object.fromEntries(
+                Object.entries(ch.patch).filter(([, v]) => v !== undefined),
+            ) as Partial<StoryboardRow>;
+            if (imgNode?.metadata?.manualPrompt && cleanPatch.imgPrompt !== undefined) {
                 warnings.push(`跳过已手改首帧图提示词的 ${cur.code}`);
-                delete patch.imgPrompt;
+                delete cleanPatch.imgPrompt;
             }
-            if (vidNode?.metadata?.manualPrompt && patch.vidPrompt !== undefined) {
+            if (vidNode?.metadata?.manualPrompt && cleanPatch.vidPrompt !== undefined) {
                 warnings.push(`跳过已手改视频提示词的 ${cur.code}`);
-                delete patch.vidPrompt;
+                delete cleanPatch.vidPrompt;
             }
-            rows[idx] = { ...cur, ...patch };
+            rows[idx] = { ...cur, ...cleanPatch };
             diff.updatedRowIds.push(cur.id);
             continue;
         }
@@ -317,10 +333,6 @@ export function previewPlan(
             const [moved] = rows.splice(idx, 1);
             rows.splice(to, 0, moved);
         }
-    }
-
-    if (rowsBlocked) {
-        warnings.push(`${gateNote}，${rowsBlocked} 条分镜行没有写入。先在分镜表设定栏审核设定图并点「锁定」，全部锁定后再让 Agent 写分镜`);
     }
 
     if (removeCount > 3) {
@@ -475,8 +487,78 @@ export function applyCanvasPlan(params: {
                     };
                 }
             } else if (updated.type === CanvasNodeType.Image || updated.type === CanvasNodeType.Video) {
-                if (ch.prompt !== undefined) updated.metadata!.prompt = ch.prompt;
-                if (ch.size) updated.metadata!.size = ch.size;
+                const nextPrompt = ch.prompt !== undefined ? ch.prompt : updated.metadata?.prompt || "";
+                const nextSize =
+                    ch.size ||
+                    updated.metadata?.size ||
+                    (updated.type === CanvasNodeType.Video ? presets?.videoSize || "16:9" : presets?.imageSize || "16:9");
+                const existingUpstreamIds = nextConnections
+                    .filter((c) => c.toNodeId === targetNode.id && (c.kind || "reference") === "reference")
+                    .map((c) => c.fromNodeId);
+                const finalRefIds =
+                    ch.refs !== undefined && ch.refs.trim()
+                        ? refNodes.filter((rn) => rn.type === CanvasNodeType.Image && rn.id !== targetNode.id).map((rn) => rn.id)
+                        : existingUpstreamIds;
+
+                // 已生成结果的节点改图一律新开卡（放旧图右侧并自动继承原参考图），保留旧图供对比抽卡；仅未生成的草稿才原地改。
+                if (Boolean(targetNode.metadata?.content)) {
+                    const forkPos = { x: targetNode.position.x + targetNode.width + 60, y: targetNode.position.y };
+                    const allocated = allocateRefId(updated.type, nextNodes, nextCounters);
+                    nextCounters = allocated.nextCounters;
+                    const created = createCanvasNode(
+                        updated.type,
+                        forkPos,
+                        updated.type === CanvasNodeType.Video
+                            ? {
+                                  refId: allocated.refId,
+                                  prompt: nextPrompt,
+                                  rawPrompt: nextPrompt,
+                                  seconds: String(ch.duration || updated.metadata?.seconds || 5),
+                                  model: presets?.videoModel || updated.metadata?.model,
+                                  videoModel: presets?.videoModel || updated.metadata?.videoModel || updated.metadata?.model,
+                                  size: nextSize,
+                              }
+                            : {
+                                  refId: allocated.refId,
+                                  prompt: nextPrompt,
+                                  rawPrompt: nextPrompt,
+                                  model: presets?.imageModel || updated.metadata?.model,
+                                  size: nextSize,
+                              },
+                    );
+                    created.title = ch.title || targetNode.title || (updated.type === CanvasNodeType.Video ? "视频" : "图片");
+                    nextNodes.push(created);
+                    refToNode.set(allocated.refId, created);
+                    refToNode.set(created.id, created);
+                    refToNode.set(ch.id, created);
+                    refToNode.set(`$${ch.id}`, created);
+                    for (const fromId of finalRefIds) {
+                        nextConnections.push({
+                            id: nanoid(),
+                            fromNodeId: fromId,
+                            toNodeId: created.id,
+                            kind: "reference",
+                        });
+                    }
+                    if (nextPrompt) {
+                        createdTasks.push({
+                            nodeId: created.id,
+                            kind: updated.type === CanvasNodeType.Video ? "video" : "image",
+                            label: `@${allocated.refId} ${created.title}`,
+                            prompt: nextPrompt,
+                        });
+                    }
+                    continue;
+                }
+
+                if (ch.prompt !== undefined) {
+                    updated.metadata!.prompt = ch.prompt;
+                    updated.metadata!.rawPrompt = ch.prompt;
+                }
+                updated.metadata!.size = nextSize;
+                updated.metadata!.generationType = undefined;
+                updated.metadata!.references = undefined;
+                updated.metadata!.errorDetails = undefined;
                 if (updated.type === CanvasNodeType.Video && ch.duration) {
                     updated.metadata!.seconds = String(ch.duration);
                 }
@@ -484,15 +566,13 @@ export function applyCanvasPlan(params: {
                     nextConnections = nextConnections.filter(
                         (c) => !(c.toNodeId === updated.id && (c.kind || "reference") === "reference"),
                     );
-                    for (const rn of refNodes) {
-                        if (rn.type === CanvasNodeType.Image && rn.id !== updated.id) {
-                            nextConnections.push({
-                                id: nanoid(),
-                                fromNodeId: rn.id,
-                                toNodeId: updated.id,
-                                kind: "reference",
-                            });
-                        }
+                    for (const fromId of finalRefIds) {
+                        nextConnections.push({
+                            id: nanoid(),
+                            fromNodeId: fromId,
+                            toNodeId: updated.id,
+                            kind: "reference",
+                        });
                     }
                 }
                 const finalPrompt = updated.metadata?.prompt || "";
@@ -893,41 +973,51 @@ export async function buildStoryboardAgentMessages(
         skills?: AgentSkillContext;
         /** Every link on the canvas, so the agent reads the board as the user sees it. */
         connections?: CanvasConnection[];
+        /** Project aspect ratio selected in the UI (e.g. "16:9" or "9:16"). */
+        projectAspectRatio?: string;
     },
 ): Promise<AiTextMessage[]> {
     const mode: AgentMode = options?.agentMode || "canvas";
     const sb = storyboardNode?.metadata?.storyboard;
+    const activeRatio = sb?.aspectRatio || options?.projectAspectRatio || "16:9";
+    const turnaroundLayoutHint =
+        activeRatio === "9:16"
+            ? "当前项目画幅为 9:16 竖屏（角色身份板/三视图可采用「上大头特写 + 下全身三视图」或横版 16:9 身份板，下游视频引用时按实际构图写上下或左右）"
+            : "当前项目画幅为 16:9 横屏（角色身份板采用「左全身/面部特写 + 右三视图」，下游视频引用时写左/右对应区域）";
     const mediaNodes = nodes
         .filter((n) => (n.type === CanvasNodeType.Image || n.type === CanvasNodeType.Video || n.type === CanvasNodeType.Text) && n.metadata?.refId)
         .map((n) => `@${n.metadata!.refId} (${n.title || n.type})`);
 
     const canvasSystemPrompt = [
-        "你是 HemosiTV 画布助手，既可以和用户自然对话（看图、看视频、改写剧本、讨论创意），也可以根据用户要求直接在画布上生成或原地更新「文本节点」、「图片节点（含角色卡/场景图/道具图）」或「视频节点」。",
+        "你是 HemosiTV 画布助手，既可以和用户自然对话（看图、看视频、改写剧本、讨论创意），也可以根据用户要求直接在画布上生成或修改「文本节点」、「图片节点（含角色卡/场景图/道具图）」或「视频节点」。",
+        `【当前项目画幅设置】：${activeRatio}（系统已在界面设置好，默认除独立道具图用 "1:1" 外，场景、人物、视频节点默认 size 均使用 "${activeRatio}"，无需再向用户追问横竖屏！${turnaroundLayoutHint}）`,
         "请输出合法 JSON 对象（不要加多余包裹），结构如下：",
         `{
-  "summary": "你对用户的自然回复（纯聊天/分析时写完整回答；生成或更新画布节点时写简明说明）",
+  "summary": "你对用户的回复（当用户说“改”或“出卡”时，先给 changes 卡片，summary 解释最多一句话！）",
   "changes": [
     { "id": "c1", "kind": "canvas.text.add", "title": "文本标题", "content": "文本节点的完整内容" },
-    { "id": "c2", "kind": "canvas.image.add", "title": "图片标题（如：林佳佳·废土角色卡）", "prompt": "100%正向纯视觉的画面描写提示词", "size": "9:16|16:9|1:1", "refs": "@图20（如需垫图/参考画布已有图片，填对应 @图n，会自动连线；无则填空字符串）" },
-    { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "完整详细的生视频提示词", "duration": 5, "size": "16:9|9:16", "refs": "@图20（如需以画布图片作为首帧/参考图，填对应 @图n）" },
-    { "id": "c4", "kind": "canvas.node.update", "target": "@图5", "title": "可选新标题", "prompt": "原地更新后的提示词", "size": "16:9|9:16|1:1（可选）", "refs": "@图1（可选，不填则保留原节点已有上游连线）" }
+    { "id": "c2", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "${activeRatio}|1:1", "refs": "@图20（如需参考画布已有图片，填对应 @图n；无则填空字符串）" },
+    { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "生视频提示词", "duration": 5, "size": "${activeRatio}", "refs": "@图20（首帧/参考图 @图n）" },
+    { "id": "c4", "kind": "canvas.node.update", "target": "@图5", "title": "可选新标题", "prompt": "修改后的提示词", "size": "${activeRatio}|1:1（可选）", "refs": "@图1（可选，不填则自动继承原节点参考图）" }
   ],
   "loadSkills": ["需要加载的 skill 名称（可省略）"],
   "loadSkillFiles": ["需要按需读取的 skill 内部参考文件路径，如 references/xxx.md（可省略）"]
 }`,
         "铁律：",
-        "1. 当用户只是聊天、提问、讨论剧情，或者处于需先与用户对齐全局参数（画幅比例、画风、核心角色造型）的阶段时，把回答写在 summary 中，changes 设为空数组 []。",
-        "2. 当用户明确让你新建角色卡、图片节点、文本节点或视频节点时，输出对应的 canvas.image.add / canvas.text.add / canvas.video.add 到 changes 数组中，绝不能只在文字里嘴炮说“已建好”而不输出 changes！",
-        "3. 【原地更新 vs 新建节点】当用户选中或点名某个已有节点（如 @图5、@文1、@视2）要求“重写提示词”、“修改细节”、“改比例”或“重新生成”时，**必须优先使用 `canvas.node.update`（`target: \"@图5\"`）原地更新该节点**，并在 summary 第一句说明“已为你原地更新 @图5，点击「应用修改并立即运行」即可直接在原节点重新生成”，严禁无故新建一堆重复废节点！只有当用户明确要求“保留原图另建一张”或生成衍生新资产（如基于正打 @图7 生成反打新节点）时，才使用 `canvas.image.add` 并在 `refs` 中填入上游 `@图n`。",
-        "4. 每轮都会给你【当前画布完整快照】：全部节点（类型、标题、提示词、模型、比例、状态、分组、位置）、每个节点的上游输入和全部连线。回答和改图都以快照为准，不要猜，也不要说看不到连线。",
-        "5. 【全局参数确认闸门（Gate 0）】在批量创建短剧/短片资产节点之前，若用户尚未明确拍板**「成片画幅（16:9 横屏 vs 9:16 竖屏）」、「视觉画风」、「核心角色造型尺度」**，必须先在 summary 中向用户确认（此时 changes 设为 []），严禁未对齐画幅和造型就直接批量弹出一堆节点导致整批返工！",
-        "6. 【DAG 分波次出图铁律（严禁将有视觉依赖的资产同批并发弹出）】",
-        "   - 波次 1（无上游画布图片依赖的独立基础资产）：角色正面全身设定图、主场景正打（S01）、独立道具设定图（P01，通常用 1:1）；",
-        "   - 波次 2（依赖波次 1 成图的衍生资产）：如 S02 反打空镜（必须参考已出图的 S01 正打 @图n 才能保证材质/色温/光源一致）、16:9 角色身份板（必须参考已出图的角色全身图 @图n）、角色换装图，**必须等波次 1 在画布上生成图片并确认后**，在下一轮将对应 `@图n` 填入 `refs` 弹出！严禁在波次 1 尚未出图时把正打和反打同批并发弹出！",
-        "   - 波次 3（视频节点）：必须等本镜所需的角色图、场景图、道具图全部在画布生成定稿后，再带齐对应 `@图n` 的 `refs` 弹出 `canvas.video.add`。",
-        "7. 【生图 Prompt 纯正向视觉描写铁律（零元指令、零否定词）】`canvas.image.add` 和 `canvas.node.update` 的图片 `prompt` 必须 **100% 是相机可拍的正向、纯视觉画面描写（所见即所得）**：",
-        "   - 严禁出现任何元指令（如“生成一张…”、“严格保持…”、“参考@图X…”、“做一张设定图”）；",
-        "   - 严禁出现任何否定词（如“不要/没有/不戴/不拿/禁止/无水印/无人/画面里绝对没有人/双手不拿任何物品/没有表情”），防止触发图像模型的反向注意力把违禁元素画进画面！一律改写为正向状态（例如用“空旷寂静的废土公路纯环境空镜，仅有沙丘与生锈油罐车”代替“画面里绝对没有人”，用“双臂自然垂于身体两侧，掌心空置舒展，神情平静”代替“双手不拿任何物品、没有表情”，用“自然披散黑发，头顶清爽”代替“不戴帽子”）。",
+        "1. 当用户只是聊天、提问、讨论剧情时，把回答写在 summary 中，changes 设为空数组 []。",
+        "2. 当用户说“改”、“重出”、“出卡”或要求创建/修改节点时：**先给卡片（必须写入 changes 数组），summary 解释最多一句话**，严禁长篇大论自我检讨或光在文字里嘴炮不传 changes！",
+        "3. 【改图自动新开卡对比 vs 草稿原地更新】修改画布已有节点（如 @图5）时，可用 `canvas.node.update`（`target: \"@图5\"`）或 `canvas.image.add`：若 @图5 已有生成结果，系统会自动在旧图旁边新开一张卡并继承原参考图（保留旧图供对比抽卡）；若 @图5 是尚未生成的草稿，系统会原地修改。",
+        "4. 每轮都会给你【当前画布完整快照】：全部节点、上游输入和全部连线。回答和改图都以快照为准。",
+        "5. 【DAG 分波次出图与正反打黄金公式】",
+        "   - 拆景先定正反两面空间：正打（S01）与反打（S02）是摄影机原地转 180° 看到的相反方向，**反打严禁重复正打的主体标志物**（如正打拍加油站与油罐车，反打必须拍对面的荒漠公路、路牌与远山，绝不能在反打里再画一遍加油站站房和油罐车，否则必被模型水平镜像翻转！）。",
+        "   - 波次 1（无参考图独立资产）：角色正面全身图、主场景正打（S01）、独立道具图（P01，固定 1:1）；",
+        "   - 波次 2（带 refs 衍生资产）：S02 反打空镜（refs 填正打 @图n 以继承色调与材质）、角色身份板、换装图，必须等波次 1 出图后再弹出；",
+        "   - 波次 3（视频节点）：必须等参考图片全部出图后再带 refs 弹出。",
+        "7. 【视频提示词铁律（只写具体画面与具体动作，严禁写文档、严禁写编号代号、严禁抽象词）】：",
+        "   - 传给视频模型后图片名称和编号已经变了，模型看不到任何 `@图5 / @图30 / 图1 / 图2 / CH01 / 角色A / 女主`！要让模型找到对应的参考图，必须**直接描绘出那张参考图里的画面特征**来称呼主体（如：`扎低马尾、穿深棕短款皮夹克和黑色短裤长靴的女孩（脸部与衣服和白底横版女孩三视图一致）`、`留络腮胡、穿红棕无袖皮马甲的壮汉（脸部与衣服和白底横版壮汉三视图一致）`、`两端黄铜包裹、中间亮着蓝光的玻璃圆筒管（与白底蓝光圆筒图一致）`）。",
+        "   - **严禁写 `一、人物 / 二、站位 / 三、场景 / 四、镜头叙事 / 规则： / 负面排除：` 等文档标题和列表！**",
+        "   - **严禁写 `压低重心戒备、跨步逼近、神情冷冽、交锋对峙、左右不颠倒` 等抽象词！** 只用一段大白话写清：谁站在哪边、身体哪个部位做什么具体动作（如往前迈一大步伸右手去抓玻璃管、把玻璃管收到胸前退开一步躲过、抬左手拨开对方手腕）、镜头怎么移动（如从正面中景缓慢往前推、跟着后退顺势摇到近景侧面）。",
+        "   - 当用户说「下一步」时，直接输出下一步对应的 changes 卡片，严禁让用户自己去建空节点或重贴剧本！",
     ].join("\n");
 
     const storyboardSystemPrompt = [
@@ -985,10 +1075,17 @@ export async function buildStoryboardAgentMessages(
         : "";
     const systemEnforcementGuard = [
         "【系统级最高优先级执行协议（高于任何 Skill 内置模板与默认值，违者直接判错）】",
-        "1. 原地更新优先：用户要求修改/重写画布已有节点（如 @图5、@文1、@视2）时，必须使用 `canvas.node.update`（`target: \"@图5\"`）原地更新，严禁新建替代节点让用户手动删旧节点！",
-        "2. 前置参数闸门：开启新剧集/新项目出图前，若用户尚未明确拍板「成片画幅（16:9 横屏 vs 9:16 竖屏）」、「画风」和「核心角色造型」，严禁直接按 Skill 默认值批量弹卡，必须先在 summary 中提问确认（changes: []）。",
-        "3. DAG 分波次出图：严禁将有上下游视觉依赖的节点同批并发弹出！波次 1 只弹无上游依赖的独立基础资产（角色正面全身图、主场景正打 S01、独立道具 P01[1:1]）；波次 2（如依赖正打 @图n 的 S02 反打空镜、依赖角色全身图的 16:9 身份板）必须等波次 1 成图定稿后，在下一轮带 `refs: \"@图n\"` 弹出；波次 3（视频节点）必须等所有参考图片成图定稿后再带 `refs` 弹出。",
-        "4. 生图 Prompt 100% 纯正向视觉铁律：所有图片节点的 `prompt` / `imgPrompt` 只能写镜头拍得到的正向纯视觉画面描写（所见即所得）。即便 Skill 模板或自检清单中出现了“生成一张 / 严格保持 / 保持…不变”等元指令，或“不要 / 没有 / 不戴 / 不拿 / 无水印 / 画面里没有人 / 手里不拿东西 / 没有表情”等否定词，你在写入 `prompt` 时也**必须 100% 转化为纯正向视觉描写**（如“空旷寂静的纯景画面”、“双臂自然垂于身侧，掌心空置舒展，神情平静”、“纯白无缝影棚背景”），绝对禁止在生图 prompt 中出现任何元指令和否定词！",
+        `1. 项目当前画幅为 ${activeRatio}（界面已设定）：除独立道具图固定 "1:1" 外，其余节点默认使用 "${activeRatio}"，不要再追问横竖屏。${turnaroundLayoutHint}。`,
+        "2. 用户说“改”或“出卡”时：先给卡片（changes 数组必填），summary 解释最多一句，严禁空谈检讨或漏传 changes。",
+        "3. DAG 分波次出图与正反打防镜像铁律：波次 1 只弹无参考图的独立资产（角色全身图、主场景正打 S01、独立道具 P01[1:1]）；波次 2（反打 S02、角色身份板、换装）必须等波次 1 出图后带 `refs: \"@图n\"` 弹出；波次 3（视频节点）等参考图全部出图后再弹。",
+        "4. 生图提示词双轨规则与反打黄金三要素：",
+        "   - 没参考图（refs 为空）：只写画面里看得见的东西，不写“生成一张”等元指令，不用“不要/没有/无人/不拿”等否定词。",
+        "   - 有参考图（refs 非空）：严禁写“禁止水平翻转/不是镜像/180度反打”，严禁重复点名正打里已有的主体建筑或车辆！反打必须按「10%边缘前景遮挡（如画面左侧边缘半根生锈加油棚铁柱）+ 90%对面全新景物（如荒漠公路、倾倒路牌与远山）+ 光源反转（如夕阳在镜头后方画外打顺光，长影投向远方，天空为干净暮色）」直给画面。",
+        "5. 视频提示词（vidPrompt / canvas.video.add）铁律（高于任何 Skill 模板）：",
+        "   - **严禁输出 `一、人物 / 二、站位 / 三、场景 / 四、镜头叙事 / 规则： / 负面排除：` 等文档标题和列表！严禁写 `角色 A / 角色 B / 女主` 或 `@图5 / @图30 / 图1 / 图2`！**",
+        "   - 模型看不到图片名字或编号，必须**直接描绘参考图里的外貌画面**让模型找到对应的图（如：`扎低马尾、穿深棕短款皮夹克和黑色短裤长靴的女孩（脸部和衣服与白底横版女孩三视图一致）`、`留络腮胡、穿红棕无袖皮马甲的壮汉（脸部和衣服与白底横版壮汉三视图一致）`、`两端黄铜包裹、中间亮蓝光的玻璃圆筒管（与白底蓝光玻璃圆筒图一致）`）。",
+        "   - **严禁抽象词汇**（如“压低重心戒备、神情冷冽、交锋对峙”），只用一段大白话具体描述谁在哪边、手脚身体怎么动、镜头怎么推拉摇移。",
+        "6. 用户说「下一步」时，直接在 changes 中给出下一步卡片，严禁让用户自己去拉空节点或手动贴剧本；在分镜模式下，视频统一通过分镜表行（`row.add` / `row.update` 的 `vidPrompt` 与 `duration`）生成，不要单独调 `canvas.video.add` 乱建画布视频节点。",
     ].join("\n");
     const withSkills = (base: string) => [base, skillIndex, skillBodies, skillRefFiles, systemEnforcementGuard].filter(Boolean).join("\n\n");
 
@@ -1185,6 +1282,7 @@ export async function requestStoryboardPlan(params: {
     /** Enabled skills (their name+description go in the index) and the ones the user switched on for this chat. */
     skills?: { available: AgentSkill[]; activeNames: string[] };
     connections?: CanvasConnection[];
+    projectAspectRatio?: string;
 }): Promise<
     | { ok: true; plan: Plan; raw: string; mediaFailures: string[]; autoLoadedSkills: string[] }
     | { ok: false; raw: string; error: string; mediaFailures: string[]; autoLoadedSkills: string[] }
@@ -1258,6 +1356,7 @@ async function requestPlanOnce(
             signal: params.signal,
             skills,
             connections: params.connections,
+            projectAspectRatio: params.projectAspectRatio,
             onMediaFailures: (failures) => {
                 mediaFailures = failures;
             },
@@ -1266,6 +1365,8 @@ async function requestPlanOnce(
 
     let lastRaw = "";
     let lastError = "";
+    const claimsCardAction = (text: string) =>
+        /(已为你|已弹出|已生成|已创建|已新建|已更新|已原地更新|重新弹出|已重出|点击「应用|修改并立即运行|应用修改)/.test(text);
 
     for (let attempt = 0; attempt < 3; attempt++) {
         const retryMessages: AiTextMessage[] =
@@ -1276,7 +1377,7 @@ async function requestPlanOnce(
                       { role: "assistant", content: lastRaw },
                       {
                           role: "user",
-                          content: `上次输出校验失败：${lastError}\n请严格修正并输出合法 JSON 对象。`,
+                          content: `上次输出校验失败：${lastError}\n请严格修正并输出包含有效 changes 数组的合法 JSON 对象。`,
                       },
                   ];
 
@@ -1291,12 +1392,44 @@ async function requestPlanOnce(
         try {
             const trimmed = raw.trim();
             if (!trimmed.includes('"changes"')) {
-                return { ok: true, plan: { summary: summaryOnlyText(trimmed), changes: [], loadSkills: loadSkillsOf(trimmed) }, raw, mediaFailures };
+                const summaryText = summaryOnlyText(trimmed);
+                const skillsWanted = loadSkillsOf(trimmed);
+                if (!skillsWanted?.length && claimsCardAction(summaryText)) {
+                    lastError = "你在回复中声称已弹出或修改了卡片，但没有输出 JSON 的 changes 数组！请把节点卡片放进 changes 数组中重发。";
+                    continue;
+                }
+                return { ok: true, plan: { summary: summaryText, changes: [], loadSkills: skillsWanted }, raw, mediaFailures };
             }
             const parsed = JSON.parse(extractJsonObject(raw));
             const validated = PlanSchema.safeParse(parsed);
             if (validated.success) {
-                return { ok: true, plan: validated.data, raw, mediaFailures };
+                const plan = validated.data;
+                if (
+                    plan.changes.length === 0 &&
+                    !plan.loadSkills?.length &&
+                    !plan.loadSkillFiles?.length &&
+                    claimsCardAction(plan.summary)
+                ) {
+                    lastError = "你在 summary 中声称已弹出或修改了节点卡片，但 changes 数组为空 []！请直接把对应的节点写入 changes 数组后重新输出。";
+                    continue;
+                }
+                const hasDocFormatVideoPrompt = plan.changes.some((c) => {
+                    const vp =
+                        c.kind === "canvas.video.add"
+                            ? c.prompt
+                            : c.kind === "row.add"
+                              ? c.row.vidPrompt
+                              : c.kind === "row.update"
+                                ? c.patch.vidPrompt
+                                : "";
+                    return Boolean(vp && /(?:^|\n)\s*[一二三四五六七八]、\s*(?:人物|站位|场景|镜头|滤镜|画面|音频|负面)/.test(vp));
+                });
+                if (hasDocFormatVideoPrompt) {
+                    lastError =
+                        "视频提示词（vidPrompt / canvas.video.add）严禁使用「一、人物 / 二、站位 / 三、场景 / 四、镜头叙事」等八股文档标题和列表！请重写为一段自然连贯的电影镜头剧情描写：开头简单描绘图1（首帧）、图2、图3分别是什么外观，接着直接用连贯句子描写本段真实发生的剧情动作、人物交锋互动、运镜推进与光影音效。";
+                    continue;
+                }
+                return { ok: true, plan, raw, mediaFailures };
             }
             lastError = validated.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
         } catch (err) {

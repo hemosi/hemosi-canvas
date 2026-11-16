@@ -27,9 +27,19 @@ export function BatchParamsPanel({ nodes, config, onApply, onClose }: { nodes: C
     const [kind, setKind] = useState<Kind>("image");
     const [touched, setTouched] = useState<{ image: Record<string, string>; video: Record<string, string> }>({ image: {}, video: {} });
     const current = touched[kind];
-    const count = useMemo(() => nodes.filter((n) => n.type === (kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video) && isUngenerated(n)).length, [nodes, kind]);
+    const ungeneratedOfKind = useMemo(
+        () => nodes.filter((n) => n.type === (kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video) && isUngenerated(n)),
+        [nodes, kind],
+    );
+    const count = ungeneratedOfKind.length;
     const baseModel = kind === "image" ? config.imageModel || config.model : config.videoModel;
-    const draftConfig = { ...config, model: current.model || baseModel, ...current } as AiConfig;
+    const firstVideoSeconds = ungeneratedOfKind[0]?.metadata?.seconds;
+    const draftConfig = {
+        ...config,
+        ...(kind === "video" && firstVideoSeconds ? { videoSeconds: String(firstVideoSeconds) } : {}),
+        model: current.model || baseModel,
+        ...current,
+    } as AiConfig;
     const set = (key: string, value: string) => setTouched((prev) => ({ ...prev, [kind]: { ...prev[kind], [key]: value } }));
     const changed = Object.keys(current).length;
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Bookmark, Box, Clapperboard, Columns2, Copy, Film, Flame, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, PanelBottom, Play, Ratio, RotateCcw, Rows3, Search, SlidersHorizontal, Table2, Trash2, Video } from "lucide-react";
+import { Bookmark, Box, Clapperboard, Columns2, Copy, Film, Flame, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, PanelBottom, Play, Ratio, RotateCcw, Rows3, Search, SlidersHorizontal, Square, Table2, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -553,11 +553,15 @@ function InfiniteCanvasPage() {
                             for (const layer of layerByUpstream(stage.tasks, connectionsRef.current)) {
                                 const stageRes = await runWithConcurrency(layer, concurrency, async (task) => {
                                     const targetNode = nodesRef.current.find((n) => n.id === task.nodeId);
-                                    const upstreamMissing = connectionsRef.current.some((c) => c.toNodeId === task.nodeId && c.fromNodeId !== task.nodeId && stage.tasks.some((t) => t.nodeId === c.fromNodeId) && !nodesRef.current.find((n) => n.id === c.fromNodeId)?.metadata?.content);
+                                    const upstreamMissing = connectionsRef.current.some((c) => {
+                                        if (c.toNodeId !== task.nodeId || c.fromNodeId === task.nodeId) return false;
+                                        const upNode = nodesRef.current.find((n) => n.id === c.fromNodeId);
+                                        return upNode && (upNode.type === CanvasNodeType.Image || upNode.type === CanvasNodeType.Video) && !upNode.metadata?.content;
+                                    });
                                     if (!targetNode || upstreamMissing) {
                                         failed++;
                                         if (targetNode && upstreamMissing) {
-                                            setNodes((prev) => prev.map((item) => (item.id === task.nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "上游参考图没出成，这张没生成：先把上游重新生成，再点这张生成" } } : item)));
+                                            setNodes((prev) => prev.map((item) => (item.id === task.nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "上游参考图尚未生成，已拦截运行：请先生成上游参考节点" } } : item)));
                                         }
                                         return;
                                     }
@@ -743,33 +747,106 @@ function InfiniteCanvasPage() {
     );
 
     const stopGenerationByRunningId = useCallback((runningId: string) => {
-        const affectedNodeIds = new Set<string>();
+        const affectedNodeIds = new Set<string>([runningId]);
+        const targetNode = nodesRef.current.find((n) => n.id === runningId);
+        const matchIds = new Set<string>([runningId]);
+        if (targetNode?.metadata?.generationSourceId) matchIds.add(targetNode.metadata.generationSourceId);
+        if (targetNode?.type === CanvasNodeType.Group) {
+            nodesRef.current.forEach((n) => {
+                if (n.metadata?.groupId === runningId) matchIds.add(n.id);
+            });
+        }
         generationRequestsRef.current.forEach((request) => {
-            if (request.runningNodeId !== runningId) return;
+            if (!matchIds.has(request.runningNodeId) && !matchIds.has(request.targetNodeId) && !matchIds.has(request.originNodeId)) return;
             request.controller.abort();
             generationRequestsRef.current.delete(request.targetNodeId);
             affectedNodeIds.add(request.targetNodeId);
             affectedNodeIds.add(request.originNodeId);
         });
-        setRunningNodeId((current) => (current === runningId ? null : current));
-        if (!affectedNodeIds.size) return;
+        matchIds.forEach((id) => {
+            affectedNodeIds.add(id);
+            videoPollIdsRef.current.delete(id);
+        });
+        const logStore = useGenerationLogStore.getState();
+        logStore.records.forEach((r) => {
+            if (r.status === "running" && (affectedNodeIds.has(r.nodeId) || (r.resultNodeId && affectedNodeIds.has(r.resultNodeId)))) {
+                logStore.finish(r.id, "canceled", t("common.requestCanceled"));
+            }
+        });
+        setRunningNodeId((current) => (current && affectedNodeIds.has(current) ? null : current));
         setNodes((prev) =>
-            prev.map((node) =>
-                affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING
-                    ? {
-                          ...node,
-                          metadata: {
-                              ...node.metadata,
-                              status: NODE_STATUS_IDLE,
-                              errorDetails: undefined,
-                              images: node.metadata.images?.map((image) => (image.status === NODE_STATUS_LOADING ? { ...image, status: NODE_STATUS_ERROR, errorDetails: t("common.requestCanceled") } : image)),
-                              texts: node.metadata.texts?.map((text) => (text.status === NODE_STATUS_LOADING ? { ...text, status: NODE_STATUS_ERROR, errorDetails: t("common.requestCanceled") } : text)),
-                          },
-                      }
-                    : node,
-            ),
+            prev.map((node) => {
+                if (!affectedNodeIds.has(node.id)) return node;
+                const isShotLoading = node.metadata?.shotStatus?.image === "loading" || node.metadata?.shotStatus?.video === "loading";
+                if (node.metadata?.status !== NODE_STATUS_LOADING && !isShotLoading) return node;
+                return {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        status: node.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_IDLE,
+                        videoTaskId: undefined,
+                        errorDetails: undefined,
+                        ...(node.metadata?.shotStatus
+                            ? {
+                                  shotStatus: {
+                                      ...node.metadata.shotStatus,
+                                      ...(node.metadata.shotStatus.image === "loading" ? { image: "idle" as const } : {}),
+                                      ...(node.metadata.shotStatus.video === "loading" ? { video: "idle" as const } : {}),
+                                  },
+                              }
+                            : {}),
+                        images: node.metadata?.images?.filter((image) => image.status !== NODE_STATUS_LOADING),
+                        texts: node.metadata?.texts?.filter((text) => text.status !== NODE_STATUS_LOADING),
+                    },
+                };
+            }),
         );
     }, [t]);
+
+    const stopAllGenerations = useCallback(() => {
+        generationRequestsRef.current.forEach((request) => {
+            request.controller.abort();
+        });
+        generationRequestsRef.current.clear();
+        videoPollIdsRef.current.clear();
+        const logStore = useGenerationLogStore.getState();
+        logStore.records.forEach((r) => {
+            if (r.projectId === projectId && r.status === "running") {
+                logStore.finish(r.id, "canceled", t("common.requestCanceled"));
+            }
+        });
+        setRunningNodeId(null);
+        setNodes((prev) =>
+            prev.map((node) => {
+                const isShotLoading = node.metadata?.shotStatus?.image === "loading" || node.metadata?.shotStatus?.video === "loading";
+                const hasLoadingSlot =
+                    node.metadata?.images?.some((img) => img.status === NODE_STATUS_LOADING) ||
+                    node.metadata?.texts?.some((txt) => txt.status === NODE_STATUS_LOADING);
+                if (node.metadata?.status !== NODE_STATUS_LOADING && !isShotLoading && !hasLoadingSlot) return node;
+                return {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        status: node.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_IDLE,
+                        videoTaskId: undefined,
+                        errorDetails: undefined,
+                        ...(node.metadata?.shotStatus
+                            ? {
+                                  shotStatus: {
+                                      ...node.metadata.shotStatus,
+                                      ...(node.metadata.shotStatus.image === "loading" ? { image: "idle" as const } : {}),
+                                      ...(node.metadata.shotStatus.video === "loading" ? { video: "idle" as const } : {}),
+                                  },
+                              }
+                            : {}),
+                        images: node.metadata?.images?.filter((image) => image.status !== NODE_STATUS_LOADING),
+                        texts: node.metadata?.texts?.filter((text) => text.status !== NODE_STATUS_LOADING),
+                    },
+                };
+            }),
+        );
+        message.info("已全部停止生成");
+    }, [message, projectId, t]);
 
     const confirmStopGeneration = useCallback(
         (nodeId: string) => {
@@ -1309,6 +1386,13 @@ function InfiniteCanvasPage() {
             if (lockedIds.length) message.warning(t("p1.node.lockedSkip", { count: lockedIds.length }));
             const allIds = new Set([...ids].filter((id) => !lockedIds.includes(id)));
             if (!allIds.size) return;
+            // 删除节点时同步中断该节点正在进行的生成请求
+            generationRequestsRef.current.forEach((request) => {
+                if (allIds.has(request.targetNodeId) || allIds.has(request.originNodeId) || allIds.has(request.runningNodeId)) {
+                    request.controller.abort();
+                    generationRequestsRef.current.delete(request.targetNodeId);
+                }
+            });
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
                 return next.map((node) => {
@@ -1372,9 +1456,15 @@ function InfiniteCanvasPage() {
 
     const layoutNodes = useCallback(() => {
         const ids = selectedNodeIdsRef.current.size > 1 ? new Set(selectedNodeIdsRef.current) : new Set(nodesRef.current.map((node) => node.id));
-        setNodes((prev) => (selectedNodeIdsRef.current.size > 1 ? stackNodesVertically(prev, ids) : autoLayoutNodes(prev, connectionsRef.current, ids)));
+        setNodes((prev) => autoLayoutNodes(prev, connectionsRef.current, ids));
         message.success(t("p1.batch.laidOut", { count: ids.size }));
     }, [message, t]);
+
+    const stackSelectedVertically = useCallback(() => {
+        const ids = selectedNodeIdsRef.current.size > 1 ? new Set(selectedNodeIdsRef.current) : new Set(nodesRef.current.map((node) => node.id));
+        setNodes((prev) => stackNodesVertically(prev, ids));
+        message.success(`已竖排 ${ids.size} 个节点`);
+    }, [message]);
 
     const updateNodeById = useCallback((nodeId: string, update: (node: CanvasNodeData) => CanvasNodeData) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? update(node) : node)));
@@ -3984,8 +4074,8 @@ function InfiniteCanvasPage() {
                                   ...item,
                                   metadata: {
                                       ...item.metadata,
-                                      status: item.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
-                                      errorDetails: item.metadata?.content ? undefined : errorDetails,
+                                      status: NODE_STATUS_ERROR,
+                                      errorDetails,
                                       images: item.metadata?.images?.map((image) => (image.id === imageId ? { ...image, status: NODE_STATUS_ERROR, errorDetails } : image)),
                                       ...(isVideoTaskFailed(error) && item.type === CanvasNodeType.Video ? { videoTaskId: undefined } : {}),
                                   },
@@ -4214,7 +4304,9 @@ function InfiniteCanvasPage() {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [rowModelIds, setRowModelIds] = useState<string[] | null>(null);
     const projectRecords = useGenerationLogStore((state) => state.records);
-    const queueCount = useMemo(() => collectQueueItems(nodes, projectRecords.filter((record) => record.projectId === projectId)).length, [nodes, projectId, projectRecords]);
+    const queueItems = useMemo(() => collectQueueItems(nodes, projectRecords.filter((record) => record.projectId === projectId)), [nodes, projectId, projectRecords]);
+    const queueCount = queueItems.length;
+    const runningQueueCount = useMemo(() => queueItems.filter((item) => item.state !== "error").length, [queueItems]);
 
     const locateNode = useCallback(
         (nodeId: string) => {
@@ -4227,7 +4319,7 @@ function InfiniteCanvasPage() {
 
     const confirmBatch = useCallback(
         (title: string, run: () => void) => {
-            if (!useConfigStore.getState().config.confirmBeforeGenerate) return run();
+            // 整组/批量执行始终弹窗二次确认，防止误触一次性并发触发整组重跑
             modal.confirm({ title, content: t("p1.batch.costHint"), okText: t("p1.batch.run"), cancelText: t("common.cancel"), onOk: run });
         },
         [modal, t],
@@ -4637,6 +4729,7 @@ function InfiniteCanvasPage() {
                                 : [{ id: "run", label: t("p1.batch.run"), title: t("p1.batch.runHint"), icon: <Play className="size-4" />, onClick: () => batchExecute([...selectedNodeIds]) }]),
                             { id: "retry", label: t("p1.batch.retryFailed"), icon: <RotateCcw className="size-4" />, onClick: () => retryFailedIn([...selectedNodeIds]) },
                             { id: "layout", label: t("p1.batch.layout"), icon: <LayoutGrid className="size-4" />, onClick: layoutNodes },
+                            { id: "stack-vertical", label: "竖排", title: "将选中节点按上下顺序竖排成一列", icon: <Rows3 className="size-4" />, onClick: stackSelectedVertically },
                             { id: "download", label: t("p1.batch.download"), title: t("p1.batch.downloadTitle"), icon: <Download className="size-4" />, onClick: () => void exportNodes([...selectedNodeIds]) },
                             { id: "delete", label: t("common.delete"), icon: <Trash2 className="size-4" />, onClick: () => requestDeleteNodes(new Set(selectedNodeIds)) },
                         ]}
@@ -4664,6 +4757,16 @@ function InfiniteCanvasPage() {
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },
                         { id: "tool-batch-params", label: "批量改未生成节点的参数", icon: <SlidersHorizontal className="size-4.5" />, active: batchOpen, onClick: () => setBatchOpen((value) => !value) },
                         { id: "tool-queue", label: queueCount ? `生成队列 · ${queueCount} 项` : "生成队列 / 记录", icon: <span className="relative"><ListChecks className="size-4.5" />{queueCount ? <span className="absolute -right-1.5 -top-1.5 grid min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-bold" style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}>{queueCount}</span> : null}</span>, active: queueOpen, onClick: () => setQueueOpen((value) => !value) },
+                        ...(runningQueueCount > 0
+                            ? [
+                                  {
+                                      id: "tool-stop-all",
+                                      label: `全部停止生成（${runningQueueCount} 项进行中）`,
+                                      icon: <Square className="size-4 fill-red-500 text-red-500" />,
+                                      onClick: stopAllGenerations,
+                                  },
+                              ]
+                            : []),
                     ]}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
@@ -4683,7 +4786,29 @@ function InfiniteCanvasPage() {
                         onClose={() => setBatchOpen(false)}
                         onApply={(kind, patch) => {
                             const type = kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video;
-                            setNodes((prev) => prev.map((n) => (n.type === type && isUngenerated(n) ? { ...n, metadata: { ...n.metadata, ...patch } } : n)));
+                            const nextDuration = kind === "video" && patch.seconds ? Number(patch.seconds) : undefined;
+                            setNodes((prev) => {
+                                const targetIds = new Set(prev.filter((n) => n.type === type && isUngenerated(n)).map((n) => n.id));
+                                return prev.map((n) => {
+                                    if (targetIds.has(n.id)) {
+                                        return { ...n, metadata: { ...n.metadata, ...patch } };
+                                    }
+                                    if (nextDuration && n.type === HemosiNodeType.Storyboard && n.metadata?.storyboard?.rows?.length) {
+                                        const sb = n.metadata.storyboard;
+                                        return {
+                                            ...n,
+                                            metadata: {
+                                                ...n.metadata,
+                                                storyboard: {
+                                                    ...sb,
+                                                    rows: sb.rows.map((r) => (r.videoNodeId && targetIds.has(r.videoNodeId) ? { ...r, duration: nextDuration } : r)),
+                                                },
+                                            },
+                                        };
+                                    }
+                                    return n;
+                                });
+                            });
                             message.success("已批量修改未生成的节点");
                         }}
                     />
@@ -4878,7 +5003,8 @@ function InfiniteCanvasPage() {
                     }}
                     onRetry={(item) => retryQueueItems([item], false)}
                     onRetryAll={(items) => confirmBatch(t("p1.batch.retryTitle", { count: items.length }), () => retryQueueItems(items, true))}
-                    onStop={confirmStopGeneration}
+                    onStop={stopGenerationByRunningId}
+                    onStopAll={stopAllGenerations}
                 />
 
                 <Modal title="快捷键清单" open={shortcutsOpen} centered width={760} footer={null} onCancel={() => setShortcutsOpen(false)}>

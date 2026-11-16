@@ -40,6 +40,7 @@ export function withCinematography<T extends AiConfig>(config: T, context: Pick<
 
 export type NodeGenerationResourceInput = {
     nodeId: string;
+    refId?: string;
     type: "text" | "image" | "video" | "audio";
     title: string;
     /** Text block label override (anchors). */
@@ -95,6 +96,20 @@ function buildBaseGenerationContext(nodeId: string, nodes: CanvasNodeData[], con
     const referenceVideos = resourceInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video) && !continueVideos.includes(video!));
     const audioInputs = resourceInputs.filter((input) => input.audio);
     const referenceAudios = audioInputs.map((input) => input.audio!);
+
+    // 自动将提示词中的画布 @图N 编号替换为实际发送给模型的局部槽位 图1/图2/图3（带简短描述），防止模型收到 @图30/@图5 不认识
+    let normalizedPrompt = prompt;
+    imageInputs.forEach((input, index) => {
+        const slotName = imageReferenceLabel(index + continueVideos.length);
+        const rolePrefix = input.role === "firstFrame" ? "首帧" : input.role === "lastFrame" ? "尾帧" : "";
+        const cleanTitle = (input.title || "").replace(/\s*\([^)]*\)\s*/g, "").trim();
+        const replacement = cleanTitle ? `${slotName}（${rolePrefix ? `${rolePrefix}：` : ""}${cleanTitle}）` : slotName;
+        if (input.refId) {
+            const escaped = input.refId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            normalizedPrompt = normalizedPrompt.replace(new RegExp(`@${escaped}(?![0-9])`, "g"), replacement);
+        }
+    });
+
     const roleNotes = [
         // With more than one image (or any labeled one), list every image so the model can match each by its order, plain reference images included.
         ...(imageInputs.length > 1 || imageInputs.some((input) => input.role && input.role !== "reference")
@@ -105,7 +120,7 @@ function buildBaseGenerationContext(nodeId: string, nodes: CanvasNodeData[], con
     const blocks = [upstreamText, roleNotes.length ? textBlock("参考素材说明", roleNotes.join("\n")) : ""].filter(Boolean).join("\n\n");
 
     return {
-        prompt: blocks ? `${prompt}\n\n${blocks}` : prompt,
+        prompt: blocks ? `${normalizedPrompt}\n\n${blocks}` : normalizedPrompt,
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -206,7 +221,7 @@ function flattenGenerationInputs(inputs: NodeGenerationInput[]) {
 function readNodeGenerationResource(node: CanvasNodeData, _nodes?: CanvasNodeData[], _connections?: CanvasConnection[]): NodeGenerationResourceInput[] {
     if (node.type === HemosiNodeType.Shot) return readShotResources(node);
     const image = readReferenceImage(node);
-    if (image) return [{ nodeId: node.id, type: "image", title: node.title, image, role: node.metadata?.imageRole }];
+    if (image) return [{ nodeId: node.id, refId: node.metadata?.refId, type: "image", title: node.title, image, role: node.metadata?.imageRole }];
     const video = readReferenceVideo(node);
     if (video) return [{ nodeId: node.id, type: "video", title: node.title, video }];
     const audio = readReferenceAudio(node);
