@@ -115,11 +115,8 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
         const temporaryTool = event.ctrlKey || event.shiftKey || isSpacePressed;
         const activeTool = temporaryTool ? (tool === "select" ? "pan" : "select") : tool;
-        if (event.button === 0 && isBackgroundClick && !temporaryTool && onSelectionPress?.(event)) {
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            return;
-        }
+        // 多选框内空白处按下 = 整体拖动；不能 preventDefault，否则后续 mousemove 被吞掉，拖不动。
+        if (event.button === 0 && isBackgroundClick && !temporaryTool && onSelectionPress?.(event)) return;
         const shouldPan = event.button === 1 || (event.button === 0 && activeTool === "pan" && isBackgroundClick);
 
         if (shouldPan) {

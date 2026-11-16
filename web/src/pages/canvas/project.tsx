@@ -59,6 +59,7 @@ import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { allocateRefId, ensureNodeRefIds } from "@/lib/canvas/node-ref-id";
 import { BatchParamsPanel, isUngenerated } from "@/components/canvas/batch-params-button";
 import { BIND_PANEL_EVENT, BindPanelLines, StoryboardBindPanel } from "@/components/canvas/storyboard-bind-panel";
+import { SETTING_UNBOUND, isDefaultImageTitle } from "@/lib/canvas/storyboard-utils";
 import { createEmptyStoryboardData, nextSettingId, reconcileStoryboardGraph, settingImageNode } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -104,7 +105,7 @@ import { CanvasNodeVersionsModal } from "@/components/canvas/canvas-node-version
 import { CanvasGenerationQueue, collectQueueItems, type QueueItem } from "@/components/canvas/canvas-generation-queue";
 import { CanvasNodeSearch, flashNode } from "@/components/canvas/canvas-node-search";
 import { CanvasShortcutsList } from "@/components/canvas/canvas-shortcuts-list";
-import { autoLayoutNodes } from "@/lib/canvas/canvas-layout";
+import { autoLayoutNodes, stackNodesVertically } from "@/lib/canvas/canvas-layout";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { useGenerationLogStore } from "@/stores/canvas/use-generation-log-store";
 import { ModelPicker } from "@/components/model-picker";
@@ -1313,6 +1314,11 @@ function InfiniteCanvasPage() {
                 return next.map((node) => {
                     const groupId = node.metadata?.groupId;
                     if (groupId && allIds.has(groupId)) return { ...node, metadata: { ...node.metadata, groupId: undefined } };
+                    // 设定绑定的图被删：解绑、解锁，卡槽显示空，不自动补空图。
+                    const sb = node.type === HemosiNodeType.Storyboard ? node.metadata?.storyboard : undefined;
+                    if (sb?.settings.some((x) => x.imageNodeId && allIds.has(x.imageNodeId))) {
+                        return { ...node, metadata: { ...node.metadata, storyboard: { ...sb, settings: sb.settings.map((x) => (x.imageNodeId && allIds.has(x.imageNodeId) ? { ...x, imageNodeId: SETTING_UNBOUND, locked: false } : x)) } } };
+                    }
                     return node;
                 });
             });
@@ -1366,7 +1372,7 @@ function InfiniteCanvasPage() {
 
     const layoutNodes = useCallback(() => {
         const ids = selectedNodeIdsRef.current.size > 1 ? new Set(selectedNodeIdsRef.current) : new Set(nodesRef.current.map((node) => node.id));
-        setNodes((prev) => autoLayoutNodes(prev, connectionsRef.current, ids));
+        setNodes((prev) => (selectedNodeIdsRef.current.size > 1 ? stackNodesVertically(prev, ids) : autoLayoutNodes(prev, connectionsRef.current, ids)));
         message.success(t("p1.batch.laidOut", { count: ids.size }));
     }, [message, t]);
 
@@ -2250,19 +2256,31 @@ function InfiniteCanvasPage() {
                 message.info(`设定 ${slotId} 已经绑定了图片`);
                 return true;
             }
-            setNodes((prev) => prev.map((n) => (n.id === table.id && n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: n.metadata.storyboard.settings.map((s) => (s.id === slotId ? { ...s, imageNodeId: image.id } : s)) } } } : n)));
+            const keepNodeTitle = !isDefaultImageTitle(image.title);
+            setNodes((prev) =>
+                prev.map((n) => {
+                    if (n.id === image.id && !keepNodeTitle) return { ...n, title: target.name };
+                    if (n.id === table.id && n.metadata?.storyboard) return { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: n.metadata.storyboard.settings.map((s) => (s.id === slotId ? { ...s, imageNodeId: image.id, name: keepNodeTitle ? image.title : s.name } : s)) } } };
+                    return n;
+                }),
+            );
             message.success(`已绑定到设定 ${slotId}「${target.name}」`);
             return true;
         }
         const role = image.metadata?.imageRole;
         const kind = role === "scene" ? "scene" : role === "reference" ? "prop" : "person";
         const refId = image.metadata?.refId;
-        const defaultTitle = !image.title || image.title === getNodeSpec(CanvasNodeType.Image).title || /^(Generated|电影|真人|写实)/.test(image.title);
+        const defaultTitle = isDefaultImageTitle(image.title);
         const prompt = (image.metadata?.prompt || "").trim();
         const name = defaultTitle ? (prompt.split(/[，,。\n]/)[0] || refId || "新设定").slice(0, 20) : image.title;
         const id = nextSettingId(kind, data.settings);
         const setting = { id, kind, name, desc: `${prompt.slice(0, 80)}${refId ? ` @${refId}` : ""}`.trim(), prompt: prompt || undefined, imageNodeId: image.id, locked: false } as (typeof data.settings)[number];
-        setNodes((prev) => prev.map((n) => (n.id === table.id && n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: [...n.metadata.storyboard.settings, setting] } } } : n)));
+        setNodes((prev) =>
+            prev.map((n) => {
+                if (n.id === image.id && defaultTitle) return { ...n, title: name };
+                return n.id === table.id && n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings: [...n.metadata.storyboard.settings, setting] } } } : n;
+            }),
+        );
         message.success(`已绑定为设定 ${id}「${name}」，可在分镜表里改名或锁定`);
         return true;
     };
@@ -4457,7 +4475,13 @@ function InfiniteCanvasPage() {
                     <StoryboardGhostLayer ghosts={storyboardGhostNodes} />
 
                     {bindPanelTableId && nodeById.get(bindPanelTableId) ? (
-                        <StoryboardBindPanel table={nodeById.get(bindPanelTableId)!} nodes={nodes} theme={{ panel: theme.toolbar.panel, border: theme.toolbar.border, text: theme.node.text, muted: theme.node.muted }} onClose={() => setBindPanelTableId(null)} />
+                        <StoryboardBindPanel
+                            table={nodeById.get(bindPanelTableId)!}
+                            nodes={nodes}
+                            theme={{ panel: theme.toolbar.panel, border: theme.toolbar.border, text: theme.node.text, muted: theme.node.muted }}
+                            onClose={() => setBindPanelTableId(null)}
+                            onChangeSettings={(settings) => updateNodeById(bindPanelTableId, (n) => (n.metadata?.storyboard ? { ...n, metadata: { ...n.metadata, storyboard: { ...n.metadata.storyboard, settings } } } : n))}
+                        />
                     ) : null}
 
                     {visibleNodes.map((node) => (
@@ -4635,10 +4659,6 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={() => createNode(CanvasNodeType.Group)}
                     extraButtons={[
-                        { id: "tool-storyboard", label: "分镜表", icon: <Clapperboard className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Storyboard) },
-                        { id: "tool-compare", label: "双图拉帘对比", icon: <Columns2 className="size-4.5" />, onClick: () => createNode(HemosiNodeType.ImageCompare) },
-                        { id: "tool-bookmark", label: "书签快速导航 (按 1~9 闪现)", icon: <Bookmark className="size-4.5" />, onClick: () => createNode(HemosiNodeType.Bookmark) },
-                        { id: "tool-scene3d", label: "3D 导演工作台", icon: <Box className="size-4.5" />, onClick: () => createNode(DIRECTOR_NODE_TYPE) },
                         { id: "tool-search", label: "搜索节点 (Ctrl+F)", icon: <Search className="size-4.5" />, active: searchOpen, onClick: () => setSearchOpen((value) => !value) },
                         { id: "tool-prompt-panel", label: config.autoOpenPromptPanel ? "点击节点弹出提示词栏：开（点击关闭）" : "点击节点弹出提示词栏：关（点击开启，节点顶栏「编辑」可手动展开）", icon: <PanelBottom className="size-4.5" />, active: !config.autoOpenPromptPanel, onClick: () => useConfigStore.getState().updateConfig("autoOpenPromptPanel", !config.autoOpenPromptPanel) },
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },

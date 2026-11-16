@@ -65,6 +65,25 @@ export function autoLayoutNodes(nodes: CanvasNodeData[], connections: CanvasConn
     });
 }
 
+/** 选中状态的「整理」：选中的节点按原来的上下顺序竖排成一列，左边对齐；分组整体移动。 */
+export function stackNodesVertically(nodes: CanvasNodeData[], ids: Set<string>) {
+    const chosen = nodes.filter((node) => ids.has(node.id));
+    const groupIds = new Set(chosen.filter((node) => node.type === CanvasNodeType.Group).map((node) => node.id));
+    const units = chosen.filter((node) => !(node.metadata?.groupId && groupIds.has(node.metadata.groupId))).sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+    if (units.length < 2) return nodes;
+    const left = Math.min(...units.map((unit) => unit.position.x));
+    let y = Math.min(...units.map((unit) => unit.position.y));
+    const delta = new Map<string, { x: number; y: number }>();
+    units.forEach((unit) => {
+        delta.set(unit.id, { x: left - unit.position.x, y: y - unit.position.y });
+        y += unit.height + GAP_Y;
+    });
+    return nodes.map((node) => {
+        const move = delta.get(node.id) || (node.metadata?.groupId ? delta.get(node.metadata.groupId) : undefined);
+        return move ? { ...node, position: { x: node.position.x + move.x, y: node.position.y + move.y } } : node;
+    });
+}
+
 /** Nodes whose title or text matches the query (title, text, prompt, shot description). */
 export function searchNodes(nodes: CanvasNodeData[], query: string) {
     const q = query.trim().toLowerCase();

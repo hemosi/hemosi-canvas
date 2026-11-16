@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { allocateRefId } from "@/lib/canvas/node-ref-id";
+import { getNodeSpec } from "@/lib/canvas/node-registry";
 import type { SettingItem, SettingKind, StoryboardData, StoryboardRow } from "@/lib/canvas/storyboard-types";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -94,6 +95,20 @@ export function deriveNodeHealth(node: CanvasNodeData | undefined): NodeHealth {
 export function settingsGate(settings: SettingItem[]): { ready: boolean; empty: boolean; unlocked: string[] } {
     const unlocked = settings.filter((s) => !s.locked).map((s) => s.id);
     return { ready: settings.length > 0 && unlocked.length === 0, empty: settings.length === 0, unlocked };
+}
+
+/** 设定的图被删后写入的占位：表示「已解绑、卡槽为空」，同步时不再自动补空图。 */
+export const SETTING_UNBOUND = "__unbound__";
+
+/** 图片节点还是默认名（没被起过名字）。 */
+export function isDefaultImageTitle(title?: string) {
+    return !title || title === getNodeSpec(CanvasNodeType.Image).title || /^(Generated|电影|真人|写实|Image|图片)/.test(title);
+}
+
+/** 设定显示的名字：绑了图且图有正经名字就用图片节点的名字，否则用设定自己的。 */
+export function settingDisplayName(setting: SettingItem, nodes: CanvasNodeData[]) {
+    const image = settingImageNode(setting, nodes);
+    return image && !isDefaultImageTitle(image.title) ? image.title : setting.name;
 }
 
 /** 设定绑定的图片节点：只认写死的 imageNodeId，一个设定对一张图。描述里的 @图n 不决定绑定。 */
@@ -279,6 +294,10 @@ export function reconcileStoryboardGraph(params: {
     const nextSettings: SettingItem[] = params.data.settings.map((originalSetting) => {
         let setting = originalSetting;
         let bound = settingImageNode(setting, nextNodes);
+        // 图被删过（或绑定的节点已不在）：保持未绑定，不补空图；只有「生成全部设定图」会清掉占位再建。
+        if (!bound && setting.imageNodeId) {
+            return setting.imageNodeId === SETTING_UNBOUND ? setting : { ...setting, imageNodeId: SETTING_UNBOUND, locked: false };
+        }
         if (!bound) {
             const guess = guessSettingImageNode(setting, nextNodes);
             if (guess && !claimed.has(guess.id)) {
@@ -303,7 +322,8 @@ export function reconcileStoryboardGraph(params: {
             if (setting.prompt && !bound.metadata?.content && !bound.metadata?.manualPrompt && bound.metadata?.prompt !== setting.prompt) {
                 nextNodes = nextNodes.map((n) => (n.id === bound.id ? { ...n, metadata: { ...n.metadata, prompt: setting.prompt } } : n));
             }
-            return setting.imageNodeId === bound.id ? setting : { ...setting, imageNodeId: bound.id };
+            const nodeName = isDefaultImageTitle(bound.title) ? "" : bound.title;
+            return setting.imageNodeId === bound.id && (!nodeName || nodeName === setting.name) ? setting : { ...setting, imageNodeId: bound.id, name: nodeName || setting.name };
         }
 
         const allocated = allocateRefId(CanvasNodeType.Image, nextNodes, nextCounters);

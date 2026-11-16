@@ -17,6 +17,8 @@ import {
     resolveRowReferenceImageNodeIds,
     rowHealth,
     settingImageNode,
+    settingDisplayName,
+    SETTING_UNBOUND,
     settingImagesSignature,
     type NodeHealth,
 } from "@/lib/canvas/storyboard-utils";
@@ -558,18 +560,9 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                             style={{ border: `1px solid ${s.locked ? "#34d399" : conflict ? "#f59e0b" : border}` }}
                             title={[s.desc || s.name, s.review ? `Agent 审图：${s.review}` : "", s.locked ? "已锁定" : hasPicture ? "未锁定：确认设定图没问题后点锁" : "未锁定：还没有设定图"].filter(Boolean).join("\n")}
                         >
-                            <button type="button" className="inline-flex items-center gap-1 rounded-l px-2 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10" onClick={() => setEditingSetting(s)}>
+                            <button type="button" className="inline-flex items-center gap-1 rounded px-2 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10" onClick={() => setEditingSetting(s)}>
                                 <span className="font-semibold opacity-70">{s.id}</span>
-                                <span>{s.name}</span>
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded-r px-1 py-0.5 transition hover:bg-black/5 dark:hover:bg-white/10"
-                                style={{ color: s.locked ? "#34d399" : muted }}
-                                title={s.locked ? "已锁定，点击解锁" : "锁定这个设定（确认设定图和描述没问题）"}
-                                onClick={() => commit({ ...data, settings: data.settings.map((x) => (x.id === s.id ? { ...x, locked: !x.locked } : x)) })}
-                            >
-                                {s.locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+                                <span>{settingDisplayName(s, allNodes)}</span>
                             </button>
                         </span>
                     );
@@ -605,6 +598,12 @@ export function StoryboardContent({ ctx }: { ctx: CanvasNodeContext }) {
                         style={{ color: muted }}
                         title="一次生成所有还没有图的设定图（已有图的跳过）"
                         onClick={() => {
+                            // 图被删过的设定：先清掉「已解绑」占位，让分镜表补建空图，再生成。
+                            if (data.settings.some((x) => x.imageNodeId === SETTING_UNBOUND)) {
+                                commit({ ...data, settings: data.settings.map((x) => (x.imageNodeId === SETTING_UNBOUND ? { ...x, imageNodeId: undefined } : x)) });
+                                message.info("已为空卡槽补建设定图节点，再点一次开始生成");
+                                return;
+                            }
                             const tasks = collectAutopilotTasks({ ...data, rows: [] }, host?.getAllNodes?.() || []).settingTasks;
                             if (!tasks.length || !host?.runStoryboardBatch) {
                                 message.info(tasks.length ? "当前画布不支持批量生成" : "设定图都已就绪或正在生成");
