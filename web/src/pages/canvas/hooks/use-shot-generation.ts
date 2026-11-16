@@ -46,7 +46,7 @@ function prepareShotRun(node: CanvasNodeData, kind: ShotKind, nodes: CanvasNodeD
     localRefs.forEach((ref, index) => extraInputs.push({ nodeId: `${node.id}~${ref.id}`, type: "image", title: `参考${index + 1}`, role: ref.role, image: { id: `${node.id}~${ref.id}`, name: `ref-${index + 1}.png`, type: ref.mimeType || "image/png", dataUrl: ref.content, storageKey: ref.storageKey } }));
     const context = buildNodeGenerationContext(node.id, nodes, connections, prompt, { mode: kind, extraInputs });
     const base = shotGenerationConfig(config, node, kind);
-    const draft = Boolean(meta.draft);
+    const draft = false; // 草稿已下线
     const requestConfig = withCinematography({ ...(draft ? applyDraftConfig(base, kind) : base), count: "1" }, context);
     return { prompt, context, base, requestConfig, draft };
 }

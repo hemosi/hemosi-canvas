@@ -1,69 +1,88 @@
 import { useMemo, useState } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { X } from "lucide-react";
 import { ModelPicker } from "@/components/model-picker";
+import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { VideoSettingsPanel } from "@/components/video-settings-panel";
+import { canvasThemes } from "@/lib/canvas-theme";
+import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
-
-const RATIOS = ["9:16", "16:9", "1:1", "4:3", "3:4", "21:9"];
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 /** 尚未出内容的节点（含生成失败的），已出图/视频的不动。 */
 export const isUngenerated = (node: CanvasNodeData) => !node.metadata?.content && node.metadata?.status !== "loading";
 
 type Kind = "image" | "video";
 
-/** 画布右上角：批量改「还没生成」的图片/视频节点的模型和画幅。 */
-export function BatchParamsButton({ nodes, config, onApply }: { nodes: CanvasNodeData[]; config: AiConfig; onApply: (kind: Kind, patch: { model?: string; size?: string }) => void }) {
-    const [open, setOpen] = useState(false);
+/** 设置面板的配置键 → 节点 metadata 键（与节点提示词栏一致）。 */
+function toNodePatch(key: string, value: string): CanvasNodeMetadata {
+    if (key === "videoSeconds") return { seconds: value };
+    if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoWatermark") return { watermark: value };
+    return { [key]: value } as CanvasNodeMetadata;
+}
+
+/** 底部工具栏弹出：批量改「还没生成」的图片/视频节点参数，界面与节点自己的设置一致；只改动过的项才写入。 */
+export function BatchParamsPanel({ nodes, config, onApply, onClose }: { nodes: CanvasNodeData[]; config: AiConfig; onApply: (kind: Kind, patch: CanvasNodeMetadata) => void; onClose: () => void }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [kind, setKind] = useState<Kind>("image");
-    const [model, setModel] = useState("");
-    const [size, setSize] = useState("");
+    const [touched, setTouched] = useState<{ image: Record<string, string>; video: Record<string, string> }>({ image: {}, video: {} });
+    const current = touched[kind];
     const count = useMemo(() => nodes.filter((n) => n.type === (kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video) && isUngenerated(n)).length, [nodes, kind]);
+    const baseModel = kind === "image" ? config.imageModel || config.model : config.videoModel;
+    const draftConfig = { ...config, model: current.model || baseModel, ...current } as AiConfig;
+    const set = (key: string, value: string) => setTouched((prev) => ({ ...prev, [kind]: { ...prev[kind], [key]: value } }));
+    const changed = Object.keys(current).length;
+
     return (
-        <div className="pointer-events-auto absolute right-4 top-16 z-50">
-            <button type="button" title="批量修改未生成节点的模型/画幅" className="flex h-9 items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 text-xs text-white/90 backdrop-blur-md hover:border-[#00d0c4] hover:text-[#00d0c4]" onClick={() => setOpen((v) => !v)}>
-                <SlidersHorizontal className="size-3.5" />
-                <span>批量改参数</span>
-            </button>
-            {open ? (
-                <div className="absolute right-0 top-11 w-72 space-y-2.5 rounded-2xl border border-white/15 bg-[#0d1114]/95 p-3 text-xs text-gray-200 shadow-2xl backdrop-blur-xl" onMouseDown={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-                    <div className="flex gap-1">
-                        {(["image", "video"] as Kind[]).map((k) => (
-                            <button key={k} type="button" className={`flex-1 rounded-lg border px-2 py-1 ${kind === k ? "border-[#00d0c4] text-[#00d0c4]" : "border-white/15"}`} onClick={() => (setKind(k), setModel(""))}>
-                                {k === "image" ? "图片" : "视频"}
-                            </button>
-                        ))}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                        <span className="w-10 shrink-0 opacity-70">模型</span>
-                        <div className="min-w-0 flex-1">
-                            <ModelPicker config={config} capability={kind} fullWidth value={model} onChange={setModel} placeholder="不改" />
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                        <span className="w-10 shrink-0 opacity-70">画幅</span>
-                        <select className="flex-1 rounded-md border border-white/15 bg-transparent px-1.5 py-1" value={size} onChange={(e) => setSize(e.target.value)}>
-                            <option value="">不改</option>
-                            {RATIOS.map((r) => (
-                                <option key={r} value={r} className="bg-[#0d1114]">
-                                    {r}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <button
-                        type="button"
-                        disabled={!count || (!model && !size)}
-                        className="w-full rounded-lg bg-[#00d0c4] px-2 py-1.5 font-medium text-black disabled:opacity-40"
-                        onClick={() => {
-                            onApply(kind, { model: model || undefined, size: size || undefined });
-                            setOpen(false);
-                        }}
-                    >
-                        修改 {count} 个未生成的{kind === "image" ? "图片" : "视频"}节点
+        <div
+            className="thin-scrollbar pointer-events-auto absolute bottom-[84px] left-1/2 z-40 max-h-[70vh] w-[360px] -translate-x-1/2 space-y-3 overflow-y-auto rounded-2xl border p-3 shadow-2xl backdrop-blur-xl"
+            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+            data-canvas-no-zoom
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+        >
+            <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold">批量改未生成节点</div>
+                <button type="button" className="rounded p-1 opacity-60 hover:opacity-100" onClick={onClose} aria-label="关闭">
+                    <X className="size-4" />
+                </button>
+            </div>
+            <div className="flex gap-1 text-xs">
+                {(["image", "video"] as Kind[]).map((k) => (
+                    <button key={k} type="button" className="flex-1 rounded-lg border px-2 py-1" style={{ borderColor: kind === k ? theme.node.activeStroke : theme.node.stroke, color: kind === k ? theme.node.activeStroke : theme.node.text }} onClick={() => setKind(k)}>
+                        {k === "image" ? "图片" : "视频"}
                     </button>
-                    <div className="opacity-50">已生成内容的节点不会改动。</div>
+                ))}
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+                <span className="shrink-0 opacity-70">模型</span>
+                <div className="min-w-0 flex-1">
+                    <ModelPicker config={config} capability={kind} fullWidth value={current.model || ""} onChange={(model) => set("model", model)} placeholder="不改" />
                 </div>
-            ) : null}
+            </div>
+            {kind === "image" ? (
+                <ImageSettingsPanel config={draftConfig} theme={theme} showTitle={false} className="w-full space-y-4" onConfigChange={(key, value) => set(key, value)} />
+            ) : (
+                <VideoSettingsPanel config={draftConfig} theme={theme} showTitle={false} className="w-full space-y-4" onConfigChange={(key, value) => set(key, value)} />
+            )}
+            <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: theme.toolbar.border }}>
+                <button
+                    type="button"
+                    disabled={!count || !changed}
+                    className="w-full rounded-lg px-2 py-2 text-xs font-medium disabled:opacity-40"
+                    style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}
+                    onClick={() => {
+                        const patch = Object.entries(current).reduce<CanvasNodeMetadata>((acc, [key, value]) => ({ ...acc, ...toNodePatch(key, value) }), {});
+                        onApply(kind, patch);
+                        setTouched((prev) => ({ ...prev, [kind]: {} }));
+                        onClose();
+                    }}
+                >
+                    {changed ? `把改动的 ${changed} 项应用到 ${count} 个未生成的${kind === "image" ? "图片" : "视频"}节点` : "先改上面的参数"}
+                </button>
+                <div className="text-[11px] opacity-50">只写入你动过的项；已生成内容的节点不会改动。</div>
+            </div>
         </div>
     );
 }

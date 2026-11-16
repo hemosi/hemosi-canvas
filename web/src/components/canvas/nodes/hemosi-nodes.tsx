@@ -6,7 +6,6 @@ import { ArrowLeftRight, Bookmark, ChevronLeft, ChevronRight, Clapperboard, Colu
 import { ModelPicker } from "@/components/model-picker";
 import { StoryboardContent } from "@/components/canvas/nodes/storyboard-node";
 import { createEmptyStoryboardData } from "@/lib/canvas/storyboard-utils";
-import { CanvasDraftToggle } from "@/components/canvas/canvas-draft-toggle";
 import { CanvasImageSettingsPopover } from "@/components/canvas/canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "@/components/canvas/canvas-video-settings-popover";
 import { CanvasNodeParamExtras } from "@/components/canvas/canvas-node-param-extras";
@@ -182,7 +181,6 @@ function ShotContent({ ctx }: { ctx: CanvasNodeContext }) {
                     />
                 </div>
                 <div className="flex items-center gap-1">
-                    <CanvasDraftToggle className="h-8" checked={Boolean(meta.draft)} onChange={(draft) => patch({ draft })} />
                     <CanvasNodeParamExtras
                         node={ctx.node}
                         mode="shot"

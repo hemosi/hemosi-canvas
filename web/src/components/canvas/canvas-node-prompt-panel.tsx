@@ -17,8 +17,7 @@ import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
 import { CanvasNodeParamExtras } from "./canvas-node-param-extras";
-import { CanvasDraftToggle } from "./canvas-draft-toggle";
-import { draftParamsFor, showsBuiltinParams } from "@/lib/canvas/canvas-draft";
+import { showsBuiltinParams } from "@/lib/canvas/canvas-draft";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -51,7 +50,6 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);
     // Built-in image/video nodes always get 草稿; plugin nodes only when they expose size/quality/resolution/duration.
-    const showDraft = (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || Boolean(modeOverride)) && Boolean(draftParamsFor(node, mode));
     const showParams = showsBuiltinParams(node);
 
     // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
@@ -113,15 +111,11 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             /> : null}
-                            {showDraft ? <CanvasDraftToggle className="h-10 shrink-0" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
-                            {showParams ? <CanvasNodeParamExtras node={node} mode="image" onChange={onConfigChange} /> : null}
                         </>
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="!h-10 min-w-0 shrink-0" />
                             {showParams ? <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 shrink-0 !justify-start !rounded-full !px-3 inline-flex items-center gap-1.5" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} /> : null}
-                            {showDraft ? <CanvasDraftToggle className="h-10 shrink-0" checked={Boolean(node.metadata?.draft)} onChange={(draft) => onConfigChange(node.id, { draft })} /> : null}
-                            {showParams ? <CanvasNodeParamExtras node={node} mode="video" onChange={onConfigChange} /> : null}
                         </>
                     ) : mode === "audio" ? (
                         <>
@@ -135,6 +129,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                         </>
                     )}
                 </div>
+                {showParams && (mode === "image" || mode === "video") ? <CanvasNodeParamExtras node={node} mode={mode} onChange={onConfigChange} /> : null}
                 <Button
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"

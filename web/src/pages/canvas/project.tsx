@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Bookmark, Box, Clapperboard, Columns2, Copy, Film, Flame, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, PanelBottom, Play, Ratio, RotateCcw, Rows3, Search, Table2, Trash2, Video } from "lucide-react";
+import { Bookmark, Box, Clapperboard, Columns2, Copy, Film, Flame, Download, Group, History, Image as ImageIcon, Keyboard, LayoutGrid, Link2, ListChecks, PanelBottom, Play, Ratio, RotateCcw, Rows3, Search, SlidersHorizontal, Table2, Trash2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -57,7 +57,7 @@ import { applyCanvasPlan, applyPlan, type GhostPreviewNode } from "@/lib/canvas/
 import { layerByUpstream, runWithConcurrency, summarizeStoryboardRun } from "@/lib/canvas/storyboard-queue";
 import { emitCanvasEvent } from "@/lib/canvas/canvas-event-bus";
 import { allocateRefId, ensureNodeRefIds } from "@/lib/canvas/node-ref-id";
-import { BatchParamsButton, isUngenerated } from "@/components/canvas/batch-params-button";
+import { BatchParamsPanel, isUngenerated } from "@/components/canvas/batch-params-button";
 import { createEmptyStoryboardData, nextSettingId, reconcileStoryboardGraph, settingImageNode } from "@/lib/canvas/storyboard-utils";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -3310,7 +3310,7 @@ function InfiniteCanvasPage() {
             }
 
             const draftParams = draftParamsFor(sourceNode, mode);
-            const isDraft = Boolean(draftParams) && Boolean(sourceNode?.metadata?.draft);
+            const isDraft = false && Boolean(draftParams); // 草稿已下线
             const requestConfig = withCinematography(isDraft && draftParams ? applyDraftConfig(generationConfig, mode, draftParams) : generationConfig, buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt, { mode }));
 
             {
@@ -4164,6 +4164,7 @@ function InfiniteCanvasPage() {
     }, []);
 
     const [queueOpen, setQueueOpen] = useState(false);
+    const [batchOpen, setBatchOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [rowModelIds, setRowModelIds] = useState<string[] | null>(null);
@@ -4330,15 +4331,6 @@ function InfiniteCanvasPage() {
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onHoverNode={setHoverPreviewNodeId} onInsertAsset={handleAssetInsert} projectId={projectId} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
-                <BatchParamsButton
-                    nodes={nodes}
-                    config={config}
-                    onApply={(kind, patch) => {
-                        const type = kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video;
-                        setNodes((prev) => prev.map((n) => (n.type === type && isUngenerated(n) ? { ...n, metadata: { ...n.metadata, ...(patch.model ? { model: patch.model } : {}), ...(patch.size ? { size: patch.size } : {}) } } : n)));
-                        message.success("已批量修改未生成的节点");
-                    }}
-                />
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
                     titleDraft={titleDraft}
@@ -4618,6 +4610,7 @@ function InfiniteCanvasPage() {
                         { id: "tool-search", label: "搜索节点 (Ctrl+F)", icon: <Search className="size-4.5" />, active: searchOpen, onClick: () => setSearchOpen((value) => !value) },
                         { id: "tool-prompt-panel", label: config.autoOpenPromptPanel ? "点击节点弹出提示词栏：开（点击关闭）" : "点击节点弹出提示词栏：关（点击开启，节点顶栏「编辑」可手动展开）", icon: <PanelBottom className="size-4.5" />, active: !config.autoOpenPromptPanel, onClick: () => useConfigStore.getState().updateConfig("autoOpenPromptPanel", !config.autoOpenPromptPanel) },
                         { id: "tool-layout", label: "一键整理布局 (Ctrl+Shift+L)", icon: <LayoutGrid className="size-4.5" />, onClick: layoutNodes },
+                        { id: "tool-batch-params", label: "批量改未生成节点的参数", icon: <SlidersHorizontal className="size-4.5" />, active: batchOpen, onClick: () => setBatchOpen((value) => !value) },
                         { id: "tool-queue", label: queueCount ? `生成队列 · ${queueCount} 项` : "生成队列 / 记录", icon: <span className="relative"><ListChecks className="size-4.5" />{queueCount ? <span className="absolute -right-1.5 -top-1.5 grid min-w-3.5 place-items-center rounded-full px-0.5 text-[9px] font-bold" style={{ background: "var(--hemosi-accent)", color: "#0a0c0e" }}>{queueCount}</span> : null}</span>, active: queueOpen, onClick: () => setQueueOpen((value) => !value) },
                     ]}
                     onAddExtensionNode={(type) => createNode(type)}
@@ -4630,6 +4623,19 @@ function InfiniteCanvasPage() {
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                 />
+
+                {batchOpen ? (
+                    <BatchParamsPanel
+                        nodes={nodes}
+                        config={config}
+                        onClose={() => setBatchOpen(false)}
+                        onApply={(kind, patch) => {
+                            const type = kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video;
+                            setNodes((prev) => prev.map((n) => (n.type === type && isUngenerated(n) ? { ...n, metadata: { ...n.metadata, ...patch } } : n)));
+                            message.success("已批量修改未生成的节点");
+                        }}
+                    />
+                ) : null}
 
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 

@@ -1,15 +1,14 @@
 import { useState } from "react";
 import { Button, Input, Popover, Tooltip } from "antd";
-import { Bookmark, Dice5, Trash2 } from "lucide-react";
+import { Bookmark, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useGenerationPresetStore, type GenerationPreset } from "@/stores/use-generation-preset-store";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
-import { CanvasCinematographyButton } from "./canvas-cinematography-popover";
 
 /** Seed input and parameter presets for one generation node; changes only touch this node. */
-export function CanvasNodeParamExtras({ node, mode, onChange, inheritedLighting, onSplitAngles }: { node: CanvasNodeData; mode: GenerationPreset["mode"]; onChange: (nodeId: string, patch: CanvasNodeMetadata) => void; inheritedLighting?: string; onSplitAngles?: (angles: string[]) => void }) {
+export function CanvasNodeParamExtras({ node, mode, onChange }: { node: CanvasNodeData; mode: GenerationPreset["mode"]; onChange: (nodeId: string, patch: CanvasNodeMetadata) => void; inheritedLighting?: string; onSplitAngles?: (angles: string[]) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const presets = useGenerationPresetStore((state) => state.presets).filter((preset) => preset.mode === mode);
     const addPreset = useGenerationPresetStore((state) => state.addPreset);
@@ -63,19 +62,6 @@ export function CanvasNodeParamExtras({ node, mode, onChange, inheritedLighting,
 
     return (
         <div className="flex shrink-0 items-center gap-1">
-            <Tooltip title="种子：留空为随机；填同一个数可复现构图（需模型支持）">
-                <span className="flex h-10 items-center gap-1 rounded-full px-2" style={{ color: theme.node.text }}>
-                    <Dice5 className="size-3.5 opacity-60" />
-                    <input
-                        className="w-16 bg-transparent text-xs outline-none"
-                        inputMode="numeric"
-                        placeholder="随机"
-                        value={node.metadata?.seed || ""}
-                        onChange={(event) => onChange(node.id, { seed: event.target.value.replace(/[^\d-]/g, "") || undefined })}
-                    />
-                </span>
-            </Tooltip>
-            <CanvasCinematographyButton camera={node.metadata?.camera} lighting={node.metadata?.lighting} inheritedLighting={inheritedLighting} onCameraChange={(camera) => onChange(node.id, { camera })} onLightingChange={(lighting) => onChange(node.id, { lighting })} onSplitAngles={onSplitAngles} />
             <Popover open={open} onOpenChange={setOpen} trigger="click" placement="topLeft" content={content}>
                 <Tooltip title="参数预设">
                     <Button type="text" className="!h-10 !w-10 !min-w-10 !rounded-full !p-0" style={{ color: theme.node.text }} icon={<Bookmark className="size-3.5" />} />
