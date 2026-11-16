@@ -53,6 +53,7 @@ export function CanvasGenerationQueue({
     onEdit,
     onRetry,
     onStop,
+    onStopAll,
     onRetryAll,
 }: {
     open: boolean;
