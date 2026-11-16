@@ -96,10 +96,13 @@ export function settingsGate(settings: SettingItem[]): { ready: boolean; empty: 
     return { ready: settings.length > 0 && unlocked.length === 0, empty: settings.length === 0, unlocked };
 }
 
-/** The image node bound to a setting: explicit imageNodeId first, else the first @图n in its desc that is not listed in refs (refs are upstream references, not the picture itself). */
+/** 设定绑定的图片节点：只认写死的 imageNodeId，一个设定对一张图。描述里的 @图n 不决定绑定。 */
 export function settingImageNode(setting: SettingItem, nodes: CanvasNodeData[]): CanvasNodeData | undefined {
-    const explicit = setting.imageNodeId ? nodes.find((n) => n.type === CanvasNodeType.Image && n.id === setting.imageNodeId) : undefined;
-    if (explicit) return explicit;
+    return setting.imageNodeId ? nodes.find((n) => n.type === CanvasNodeType.Image && n.id === setting.imageNodeId) : undefined;
+}
+
+/** 仅供旧项目一次性迁移：没有 imageNodeId 时，按描述里第一个 @图n（不在 refs 里）猜一张图。 */
+export function guessSettingImageNode(setting: SettingItem, nodes: CanvasNodeData[]): CanvasNodeData | undefined {
     const refTokens = new Set(extractAtTokens(setting.refs || ""));
     for (const tok of extractAtTokens(setting.desc)) {
         if (refTokens.has(tok)) continue;
@@ -271,9 +274,18 @@ export function reconcileStoryboardGraph(params: {
     // 1. Ensure each setting has a bound image node; settings built on other pictures (refs) get a NEW node wired to them.
     const settingNodeIds = new Map<string, string>();
     const refEdges: CanvasConnection[] = [];
+    // 一对一：已写死绑定的图先占位；旧项目按 @ 猜到的图只有没被别的设定占用时才转成绑定。
+    const claimed = new Set(params.data.settings.map((x) => settingImageNode(x, nextNodes)?.id).filter(Boolean) as string[]);
     const nextSettings: SettingItem[] = params.data.settings.map((originalSetting) => {
         let setting = originalSetting;
         let bound = settingImageNode(setting, nextNodes);
+        if (!bound) {
+            const guess = guessSettingImageNode(setting, nextNodes);
+            if (guess && !claimed.has(guess.id)) {
+                bound = guess;
+                claimed.add(guess.id);
+            }
+        }
         // 描述里提到的是一张已出图、且名字明显是别的角色/场景的卡（如日常角色卡）：当上游参考，新建节点，不占用原卡。
         if (bound && !setting.imageNodeId && bound.metadata?.content && bound.metadata?.refId) {
             const title = (bound.title || "").trim();
