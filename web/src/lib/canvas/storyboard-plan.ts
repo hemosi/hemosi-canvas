@@ -117,6 +117,18 @@ export const ChangeSchema = z.discriminatedUnion("kind", [
         size: z.string().optional(),
         refs: z.string().default(""),
     }),
+    z.object({
+        id: z.string().min(1),
+        kind: z.literal("canvas.node.update"),
+        /** Target node refId (e.g. "@图5" or "图5") or node id. */
+        target: z.string().min(1),
+        title: z.string().optional(),
+        prompt: z.string().optional(),
+        content: z.string().optional(),
+        duration: z.number().positive().optional(),
+        size: z.string().optional(),
+        refs: z.string().optional(),
+    }),
 ]);
 export type Change = z.infer<typeof ChangeSchema>;
 export type AgentMode = "canvas" | "storyboard";
@@ -380,6 +392,17 @@ export function previewPlan(
     };
 }
 
+function extractCanvasRefTokens(refsText: string, promptText: string): string[] {
+    const out = new Set<string>(extractAtTokens(`${refsText} ${promptText}`));
+    const tempRe = /(?:[@$](c\d+)|\b(c\d+)\b)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = tempRe.exec(refsText)) !== null) {
+        const token = m[1] || m[2];
+        if (token) out.add(token);
+    }
+    return [...out];
+}
+
 export function applyCanvasPlan(params: {
     plan: Plan;
     enabledIds: Set<string>;
@@ -398,22 +421,98 @@ export function applyCanvasPlan(params: {
     const refToNode = new Map<string, CanvasNodeData>();
     for (const n of nextNodes) {
         if (n.metadata?.refId) refToNode.set(n.metadata.refId, n);
+        refToNode.set(n.id, n);
     }
 
     let offsetIdx = 0;
     for (const ch of params.plan.changes) {
         if (!params.enabledIds.has(ch.id)) continue;
-        if (ch.kind !== "canvas.text.add" && ch.kind !== "canvas.image.add" && ch.kind !== "canvas.video.add") {
+        if (
+            ch.kind !== "canvas.text.add" &&
+            ch.kind !== "canvas.image.add" &&
+            ch.kind !== "canvas.video.add" &&
+            ch.kind !== "canvas.node.update"
+        ) {
             continue;
         }
 
         const refTokens =
             ch.kind === "canvas.text.add"
                 ? []
-                : extractAtTokens(`${ch.refs || ""} ${ch.prompt || ""}`);
+                : extractCanvasRefTokens(ch.refs || "", ch.prompt || "");
         const refNodes = refTokens
-            .map((t) => refToNode.get(t))
+            .map((t) => refToNode.get(t) || refToNode.get(t.replace(/^[@$]/, "")))
             .filter((n): n is CanvasNodeData => Boolean(n));
+
+        if (ch.kind === "canvas.node.update") {
+            const cleanTarget = ch.target.replace(/^[@$]/, "").trim();
+            const targetNode =
+                refToNode.get(cleanTarget) ||
+                nextNodes.find((n) => n.id === cleanTarget || n.metadata?.refId === cleanTarget);
+            if (!targetNode) continue;
+            const idx = nextNodes.findIndex((n) => n.id === targetNode.id);
+            if (idx < 0) continue;
+
+            const updated: CanvasNodeData = {
+                ...targetNode,
+                title: ch.title || targetNode.title,
+                metadata: { ...targetNode.metadata },
+            };
+
+            if (updated.type === CanvasNodeType.Text) {
+                const nextText = ch.content ?? ch.prompt;
+                if (nextText !== undefined) {
+                    const textId = updated.metadata?.primaryTextId || updated.metadata?.texts?.[0]?.id || nanoid();
+                    const existingTexts = updated.metadata?.texts || [];
+                    const nextTexts = existingTexts.some((t) => t.id === textId)
+                        ? existingTexts.map((t) => (t.id === textId ? { ...t, content: nextText, status: "success" as const } : t))
+                        : [{ id: textId, content: nextText, status: "success" as const }, ...existingTexts];
+                    updated.metadata = {
+                        ...updated.metadata,
+                        content: nextText,
+                        texts: nextTexts,
+                        primaryTextId: textId,
+                    };
+                }
+            } else if (updated.type === CanvasNodeType.Image || updated.type === CanvasNodeType.Video) {
+                if (ch.prompt !== undefined) updated.metadata!.prompt = ch.prompt;
+                if (ch.size) updated.metadata!.size = ch.size;
+                if (updated.type === CanvasNodeType.Video && ch.duration) {
+                    updated.metadata!.seconds = String(ch.duration);
+                }
+                if (ch.refs !== undefined) {
+                    nextConnections = nextConnections.filter(
+                        (c) => !(c.toNodeId === updated.id && (c.kind || "reference") === "reference"),
+                    );
+                    for (const rn of refNodes) {
+                        if (rn.type === CanvasNodeType.Image && rn.id !== updated.id) {
+                            nextConnections.push({
+                                id: nanoid(),
+                                fromNodeId: rn.id,
+                                toNodeId: updated.id,
+                                kind: "reference",
+                            });
+                        }
+                    }
+                }
+                const finalPrompt = updated.metadata?.prompt || "";
+                if (finalPrompt) {
+                    createdTasks.push({
+                        nodeId: updated.id,
+                        kind: updated.type === CanvasNodeType.Video ? "video" : "image",
+                        label: `@${updated.metadata?.refId || updated.id} ${updated.title}`,
+                        prompt: finalPrompt,
+                    });
+                }
+            }
+
+            nextNodes[idx] = updated;
+            if (updated.metadata?.refId) refToNode.set(updated.metadata.refId, updated);
+            refToNode.set(updated.id, updated);
+            refToNode.set(ch.id, updated);
+            refToNode.set(`$${ch.id}`, updated);
+            continue;
+        }
 
         const baseAnchor = refNodes[0]
             ? { x: refNodes[0].position.x + refNodes[0].width + 120, y: refNodes[0].position.y }
@@ -434,6 +533,9 @@ export function applyCanvasPlan(params: {
             created.title = ch.title || "文本";
             nextNodes.push(created);
             refToNode.set(allocated.refId, created);
+            refToNode.set(created.id, created);
+            refToNode.set(ch.id, created);
+            refToNode.set(`$${ch.id}`, created);
             continue;
         }
 
@@ -444,12 +546,15 @@ export function applyCanvasPlan(params: {
                 refId: allocated.refId,
                 prompt: ch.prompt,
                 ...(presets?.imageModel ? { model: presets.imageModel } : {}),
-                // The ratio picked on the confirm card wins, so images and videos of one plan share it.
-                size: presets?.imageSize || ch.size || "9:16",
+                // Per-node ch.size wins (e.g. 1:1 prop vs 16:9 scene); preset ratio is the fallback.
+                size: ch.size || presets?.imageSize || "9:16",
             });
             created.title = ch.title || "图片";
             nextNodes.push(created);
             refToNode.set(allocated.refId, created);
+            refToNode.set(created.id, created);
+            refToNode.set(ch.id, created);
+            refToNode.set(`$${ch.id}`, created);
             for (const rn of refNodes) {
                 if (rn.type === CanvasNodeType.Image) {
                     nextConnections.push({
@@ -477,11 +582,14 @@ export function applyCanvasPlan(params: {
                 prompt: ch.prompt,
                 seconds: String(ch.duration || 5),
                 ...(presets?.videoModel ? { model: presets.videoModel, videoModel: presets.videoModel } : {}),
-                size: presets?.videoSize || ch.size || "16:9",
+                size: ch.size || presets?.videoSize || "16:9",
             });
             created.title = ch.title || "视频";
             nextNodes.push(created);
             refToNode.set(allocated.refId, created);
+            refToNode.set(created.id, created);
+            refToNode.set(ch.id, created);
+            refToNode.set(`$${ch.id}`, created);
             for (const rn of refNodes) {
                 if (rn.type === CanvasNodeType.Image) {
                     nextConnections.push({
@@ -794,50 +902,59 @@ export async function buildStoryboardAgentMessages(
         .map((n) => `@${n.metadata!.refId} (${n.title || n.type})`);
 
     const canvasSystemPrompt = [
-        "你是 HemosiTV 画布助手，既可以和用户自然对话（看图、看视频、改写剧本、讨论创意），也可以根据用户要求直接在画布上生成「文本节点」、「图片节点（含角色卡/场景图）」或「视频节点」。",
+        "你是 HemosiTV 画布助手，既可以和用户自然对话（看图、看视频、改写剧本、讨论创意），也可以根据用户要求直接在画布上生成或原地更新「文本节点」、「图片节点（含角色卡/场景图/道具图）」或「视频节点」。",
         "请输出合法 JSON 对象（不要加多余包裹），结构如下：",
         `{
-  "summary": "你对用户的自然回复（纯聊天/分析时写完整回答；生成画布节点时写简明说明）",
+  "summary": "你对用户的自然回复（纯聊天/分析时写完整回答；生成或更新画布节点时写简明说明）",
   "changes": [
     { "id": "c1", "kind": "canvas.text.add", "title": "文本标题", "content": "文本节点的完整内容" },
-    { "id": "c2", "kind": "canvas.image.add", "title": "图片标题（如：林佳佳·废土角色卡）", "prompt": "完整详细的生图提示词", "size": "9:16|16:9|1:1", "refs": "@图20（如需垫图/参考画布已有图片，填对应 @图n，会自动连线；无则填 空字符串）" },
-    { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "完整详细的生视频提示词", "duration": 5, "size": "16:9|9:16", "refs": "@图20（如需以画布图片作为首帧/参考图，填对应 @图n）" }
+    { "id": "c2", "kind": "canvas.image.add", "title": "图片标题（如：林佳佳·废土角色卡）", "prompt": "100%正向纯视觉的画面描写提示词", "size": "9:16|16:9|1:1", "refs": "@图20（如需垫图/参考画布已有图片，填对应 @图n，会自动连线；无则填空字符串）" },
+    { "id": "c3", "kind": "canvas.video.add", "title": "视频标题", "prompt": "完整详细的生视频提示词", "duration": 5, "size": "16:9|9:16", "refs": "@图20（如需以画布图片作为首帧/参考图，填对应 @图n）" },
+    { "id": "c4", "kind": "canvas.node.update", "target": "@图5", "title": "可选新标题", "prompt": "原地更新后的提示词", "size": "16:9|9:16|1:1（可选）", "refs": "@图1（可选，不填则保留原节点已有上游连线）" }
   ],
   "loadSkills": ["需要加载的 skill 名称（可省略）"],
   "loadSkillFiles": ["需要按需读取的 skill 内部参考文件路径，如 references/xxx.md（可省略）"]
 }`,
         "铁律：",
-        "1. 当用户只是聊天、提问、讨论剧情时，把回答写在 summary 中，changes 设为空数组 []。",
-        "2. 当用户明确让你生成角色卡、图片节点、文本节点或视频节点（例如说“生成一张角色卡”、“出图”、“写个剧本放画布上”）时，必须输出对应的 canvas.image.add / canvas.text.add / canvas.video.add 到 changes 数组中，绝不能只在文字里嘴炮说“已建好”而不输出 changes！",
-        "3. 如果用户提供了参考图（如 @图20）让你基于它生成新角色卡或新图片，必须在 canvas.image.add 的 refs 字段里写上 \"@图20\"，系统会自动把 @图20 连线给新生成的图片节点。",
+        "1. 当用户只是聊天、提问、讨论剧情，或者处于需先与用户对齐全局参数（画幅比例、画风、核心角色造型）的阶段时，把回答写在 summary 中，changes 设为空数组 []。",
+        "2. 当用户明确让你新建角色卡、图片节点、文本节点或视频节点时，输出对应的 canvas.image.add / canvas.text.add / canvas.video.add 到 changes 数组中，绝不能只在文字里嘴炮说“已建好”而不输出 changes！",
+        "3. 【原地更新 vs 新建节点】当用户选中或点名某个已有节点（如 @图5、@文1、@视2）要求“重写提示词”、“修改细节”、“改比例”或“重新生成”时，**必须优先使用 `canvas.node.update`（`target: \"@图5\"`）原地更新该节点**，并在 summary 第一句说明“已为你原地更新 @图5，点击「应用修改并立即运行」即可直接在原节点重新生成”，严禁无故新建一堆重复废节点！只有当用户明确要求“保留原图另建一张”或生成衍生新资产（如基于正打 @图7 生成反打新节点）时，才使用 `canvas.image.add` 并在 `refs` 中填入上游 `@图n`。",
         "4. 每轮都会给你【当前画布完整快照】：全部节点（类型、标题、提示词、模型、比例、状态、分组、位置）、每个节点的上游输入和全部连线。回答和改图都以快照为准，不要猜，也不要说看不到连线。",
-        "5. 用户要你改某张已有图（如 @图9）重新生成时：先看快照里 @图9 的提示词和「上游输入」，新节点的 refs 沿用 @图9 原来的上游参考图（已关闭的除外），除非用户明确要换参考。",
+        "5. 【全局参数确认闸门（Gate 0）】在批量创建短剧/短片资产节点之前，若用户尚未明确拍板**「成片画幅（16:9 横屏 vs 9:16 竖屏）」、「视觉画风」、「核心角色造型尺度」**，必须先在 summary 中向用户确认（此时 changes 设为 []），严禁未对齐画幅和造型就直接批量弹出一堆节点导致整批返工！",
+        "6. 【DAG 分波次出图铁律（严禁将有视觉依赖的资产同批并发弹出）】",
+        "   - 波次 1（无上游画布图片依赖的独立基础资产）：角色正面全身设定图、主场景正打（S01）、独立道具设定图（P01，通常用 1:1）；",
+        "   - 波次 2（依赖波次 1 成图的衍生资产）：如 S02 反打空镜（必须参考已出图的 S01 正打 @图n 才能保证材质/色温/光源一致）、16:9 角色身份板（必须参考已出图的角色全身图 @图n）、角色换装图，**必须等波次 1 在画布上生成图片并确认后**，在下一轮将对应 `@图n` 填入 `refs` 弹出！严禁在波次 1 尚未出图时把正打和反打同批并发弹出！",
+        "   - 波次 3（视频节点）：必须等本镜所需的角色图、场景图、道具图全部在画布生成定稿后，再带齐对应 `@图n` 的 `refs` 弹出 `canvas.video.add`。",
+        "7. 【生图 Prompt 纯正向视觉描写铁律（零元指令、零否定词）】`canvas.image.add` 和 `canvas.node.update` 的图片 `prompt` 必须 **100% 是相机可拍的正向、纯视觉画面描写（所见即所得）**：",
+        "   - 严禁出现任何元指令（如“生成一张…”、“严格保持…”、“参考@图X…”、“做一张设定图”）；",
+        "   - 严禁出现任何否定词（如“不要/没有/不戴/不拿/禁止/无水印/无人/画面里绝对没有人/双手不拿任何物品/没有表情”），防止触发图像模型的反向注意力把违禁元素画进画面！一律改写为正向状态（例如用“空旷寂静的废土公路纯环境空镜，仅有沙丘与生锈油罐车”代替“画面里绝对没有人”，用“双臂自然垂于身体两侧，掌心空置舒展，神情平静”代替“双手不拿任何物品、没有表情”，用“自然披散黑发，头顶清爽”代替“不戴帽子”）。",
     ].join("\n");
 
     const storyboardSystemPrompt = [
-        "你是 HemosiTV 分镜导演 Agent，负责和用户一起把一句话需求做成：故事梗概 → 设定（角色/场景/物品）→ 设定图 → 10 列分镜表（同时也支持生成独立画布节点）。",
+        "你是 HemosiTV 分镜导演 Agent，负责和用户一起把一句话需求做成：故事梗概 → 设定（角色/场景/物品）→ 设定图 → 10 列分镜表（同时也支持生成或更新独立画布节点）。",
         "请输出 JSON 对象（不要加多余包裹），结构如下：",
         `{
   "summary": "你对用户的自然回复或修改说明（可用 markdown）",
   "changes": [
-    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称（同一角色换装就拆成两个设定，如：林佳佳·皮夹克）", "desc": "外观要点 + 出现镜号（写 @图1 表示这张图就是设定图，直接绑定）", "imgPrompt": "可直接生成设定图的完整提示词", "refs": "可选：@图1 或 @S1，表示参考它另出一张新设定图（不占用被引用的图），无则空字符串" } },
+    { "id": "c1", "kind": "setting.add", "setting": { "kind": "person|scene|prop", "name": "名称（同一角色换装就拆成两个设定，如：林佳佳·皮夹克）", "desc": "外观要点 + 出现镜号（写 @图1 表示这张图就是设定图，直接绑定）", "imgPrompt": "100%正向纯视觉的设定图提示词", "refs": "可选：@图1 或 @S1，表示参考它另出一张新设定图（不占用被引用的图），无则空字符串" } },
     { "id": "c2", "kind": "setting.update", "settingId": "R1", "patch": { "desc": "…", "imgPrompt": "…" } },
     { "id": "c3", "kind": "setting.review", "settingId": "R1", "actual": "这张设定图实际画了什么（服装/发型/配色/背景/时间天气/载具外形）", "conflicts": "与梗概或设定描述冲突的地方，没有就填空字符串", "ok": true },
-    { "id": "c4", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 @S1 @P1", "note": "[切镜] 备注", "imgPrompt": "图片提示词", "vidPrompt": "视频提示词" } },
+    { "id": "c4", "kind": "row.add", "row": { "code": "S01", "duration": 4, "shotSize": "全景", "move": "缓推", "staticScreen": "静态画面", "action": "单一动作", "line": "台词或——", "sfx": "音效或——", "refs": "@R1 @S1 @P1", "note": "[切镜] 备注", "imgPrompt": "100%正向纯视觉图片提示词", "vidPrompt": "视频提示词" } },
     { "id": "c5", "kind": "row.update", "rowId": "S01", "patch": { ... } },
     { "id": "c6", "kind": "row.remove", "rowId": "S01" },
     { "id": "c7", "kind": "row.move", "rowId": "S01", "to": 0 },
-    { "id": "c8", "kind": "canvas.image.add", "title": "图片标题", "prompt": "生图提示词", "size": "9:16|16:9", "refs": "@图1" }
+    { "id": "c8", "kind": "canvas.image.add", "title": "图片标题", "prompt": "100%正向纯视觉生图提示词", "size": "9:16|16:9|1:1", "refs": "@图1" },
+    { "id": "c9", "kind": "canvas.node.update", "target": "@图5", "title": "可选新标题", "prompt": "原地更新后的提示词", "size": "16:9|9:16|1:1", "refs": "@图1" }
   ],
   "suggestRun": { "rowIds": ["S01"], "kind": "image|video|both" },
   "loadSkills": ["需要加载的 skill 名称（可省略）"],
   "loadSkillFiles": ["需要按需读取的 skill 内部参考文件路径，如 references/xxx.md（可省略）"]
 }`,
         "【基础交互与画布操作规则】",
-        "0. 用户只是讨论、写剧本或闲聊（或者当前已加载的 skill 要求分步确认、先出文本/剧本再进下一步）时，把回答写在 summary 里，changes 设为 []。用户附带了图片或视频（如 @图1、@视1）时，你已收到真实画面，请直接观察。",
+        "0. 用户只是讨论、写剧本或闲聊（或者尚未确认成片横竖屏画幅 16:9 vs 9:16、画风、核心角色造型，或当前已加载的 skill 要求分步确认）时，把回答写在 summary 里，changes 设为 []。用户附带了图片或视频（如 @图1、@视1）时，你已收到真实画面，请直接观察。",
         "【先设计、后分镜】看快照里的 settingsGate：",
         "1. settingsGate.ready=false（表里没有设定，或有设定未锁定，或你判断关键的人物/场景/物品/载具还没有设定）时，本轮只能输出 setting.add / setting.update / setting.review，严禁 row.add / row.update。",
-        "   - 还没有设定：summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写能直接生成设定图的完整提示词（角色：全身定妆/三视图，服装与梗概一致；场景：无人空镜，交代时间天气光线；物品：多角度、干净背景）。系统会为每个设定建好图片节点并绑定。",
+        "   - 还没有设定：先确认已对齐画幅（16:9 vs 9:16）与画风；summary 先写故事梗概（按镜头节奏分段：开端-发展-高潮-结尾），再用 setting.add 列出全部设定：角色（每套服装/造型单独一个设定）、场景、物品和载具（包括敌方的）。desc 写外观要点和出现的镜号；imgPrompt 写 100% 正向纯视觉的设定图提示词（严禁任何元指令和不要/没有/无水印/无人等否定词）。系统会为每个设定建好图片节点并绑定。",
         "   - 本轮附带了设定图（标注为「设定 @R1 …」）：逐张观察，为每张输出 setting.review：actual 写图里实际画了什么，conflicts 写和梗概/设定描述对不上的地方。有冲突时 ok=false，并在 summary 里问用户是改图（你给出新的 imgPrompt 用 setting.update）还是改剧本，不要自己往下写分镜。",
         "   - 用户给的图数量和类型都不固定（可能 0 张，也可能多张角色/场景/物品/风格参考混在一起）：逐张看图判断它属于哪个设定。图本身就能当设定图（如角色三视图、定妆照、场景图）时，在该 setting.add 的 desc 里写上它的 @图n，系统会直接绑定这张图，不再新建空节点；只是参考（如风格图、局部参考）时不要绑定，把它的特征写进 imgPrompt。基于画布已有图改出新设定（如日常角色卡 @图1 → 剧情里的废土装）时，不要把 @图1 写进 desc，而是写进 refs：系统会新建一个以设定名命名的节点，并把 @图1 连线为它的上游参考图，原图不会被改动。同一空间的正反打场景，反打设定的 refs 写正打设定编号（如 \"@S1\"）：系统会先出正打，再带着正打图生成反打，反打 imgPrompt 里写明同一空间、相反机位。引用画布图片一律用 @图n，不要用节点 id。summary 里逐张说明每张图用在哪个设定、是直接用还是只作参考。",
         "   - 设定由用户点「锁定」确认（用户也可开启让你自动锁定：审核无冲突时 ok=true）。",
@@ -846,7 +963,7 @@ export async function buildStoryboardAgentMessages(
         "3. 每一行 refs 必须列出本镜画面里出现的全部设定（@R/@S/@P），一个都不能漏——系统按 refs 把设定图连到首帧图，漏写的设定在画面里就会走样。",
         "4. 每一镜的 staticScreen 和 imgPrompt 必须从上一镜结尾接着写：人物位置、朝向、姿态、手里拿的东西、所在载具、光线天气时间都承接上一镜结尾状态；状态要变（如上车、换装、换地点）就单独加一镜交代过程。",
         "5. note 开头必须标 [接上镜]（同一空间的连续动作）或 [切镜]（景别/机位/场景变化）。不使用尾帧接首帧，一律靠同一套锁定的设定图和承接描述保持一致。",
-        "6. staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与提示词模板写出每镜的 imgPrompt 与 vidPrompt。",
+        "6. staticScreen 只描述静态构图，一个字不提运动；action 只描述单一连贯动作；结合全剧上下文与提示词模板写出每镜的 imgPrompt（必须 100% 正向纯视觉描写，零元指令、零否定词）与 vidPrompt。",
         "7. 写完或改完分镜行后，summary 末尾必须有「衔接自检」：逐条列出你发现的断点（服装/道具/位置/光线跳变、缺少交代的动作、引用了未锁定或不存在的设定），没有就写「未发现断点」。",
     ].join("\n");
 
@@ -866,7 +983,14 @@ export async function buildStoryboardAgentMessages(
     const skillRefFiles = options?.skills?.loadedFiles?.length
         ? `【已按需读取的 skill 内部参考文件（L3）】\n${options.skills.loadedFiles.map((f) => `#### 参考文件：${f.path}\n${f.content}`).join("\n\n")}`
         : "";
-    const withSkills = (base: string) => [base, skillIndex, skillBodies, skillRefFiles].filter(Boolean).join("\n\n");
+    const systemEnforcementGuard = [
+        "【系统级最高优先级执行协议（高于任何 Skill 内置模板与默认值，违者直接判错）】",
+        "1. 原地更新优先：用户要求修改/重写画布已有节点（如 @图5、@文1、@视2）时，必须使用 `canvas.node.update`（`target: \"@图5\"`）原地更新，严禁新建替代节点让用户手动删旧节点！",
+        "2. 前置参数闸门：开启新剧集/新项目出图前，若用户尚未明确拍板「成片画幅（16:9 横屏 vs 9:16 竖屏）」、「画风」和「核心角色造型」，严禁直接按 Skill 默认值批量弹卡，必须先在 summary 中提问确认（changes: []）。",
+        "3. DAG 分波次出图：严禁将有上下游视觉依赖的节点同批并发弹出！波次 1 只弹无上游依赖的独立基础资产（角色正面全身图、主场景正打 S01、独立道具 P01[1:1]）；波次 2（如依赖正打 @图n 的 S02 反打空镜、依赖角色全身图的 16:9 身份板）必须等波次 1 成图定稿后，在下一轮带 `refs: \"@图n\"` 弹出；波次 3（视频节点）必须等所有参考图片成图定稿后再带 `refs` 弹出。",
+        "4. 生图 Prompt 100% 纯正向视觉铁律：所有图片节点的 `prompt` / `imgPrompt` 只能写镜头拍得到的正向纯视觉画面描写（所见即所得）。即便 Skill 模板或自检清单中出现了“生成一张 / 严格保持 / 保持…不变”等元指令，或“不要 / 没有 / 不戴 / 不拿 / 无水印 / 画面里没有人 / 手里不拿东西 / 没有表情”等否定词，你在写入 `prompt` 时也**必须 100% 转化为纯正向视觉描写**（如“空旷寂静的纯景画面”、“双臂自然垂于身侧，掌心空置舒展，神情平静”、“纯白无缝影棚背景”），绝对禁止在生图 prompt 中出现任何元指令和否定词！",
+    ].join("\n");
+    const withSkills = (base: string) => [base, skillIndex, skillBodies, skillRefFiles, systemEnforcementGuard].filter(Boolean).join("\n\n");
 
     const historyMessages: AiTextMessage[] = (options?.history || []).map((turn) => ({
         role: turn.role,
@@ -1022,6 +1146,31 @@ export function skillFilesToAutoLoad(
     return out;
 }
 
+/** Auto-infer L3 reference files for loaded skills based on user instruction keywords so the model never skips reading them. */
+function inferSkillFilesForInstruction(
+    instruction: string,
+    available: AgentSkill[],
+    loadedNames: string[],
+    alreadyLoadedPaths: Set<string>,
+): Array<{ path: string; content: string; skillName: string }> {
+    const text = instruction.toLowerCase();
+    const candidates: string[] = [];
+    if (/(剧本|梗概|大纲|故事|定盘|小说|改编)/.test(text)) {
+        candidates.push("references/script-engine.md");
+    }
+    if (/(分镜|站位|角色|人物|身份板|三视图|场景|空镜|正打|反打|道具|设定|资产|出图|提示词|重写|修改|@图)/.test(text)) {
+        candidates.push("references/storyboard-assets.md", "references/lighting-camera.md");
+    }
+    if (/(视频|抽卡|动态|动作|台词|h3|seedance|可灵|muse|镜头|@视)/.test(text)) {
+        candidates.push("references/gacha-prompts.md");
+    }
+    if (/(废片|崩|变脸|塑料|口型|重抽|剪映|剪辑)/.test(text)) {
+        candidates.push("references/diagnostics-editing.md");
+    }
+    if (!candidates.length) return [];
+    return skillFilesToAutoLoad(candidates, available, loadedNames, alreadyLoadedPaths);
+}
+
 export async function requestStoryboardPlan(params: {
     config: AiConfig;
     storyboardNode: CanvasNodeData | null;
@@ -1052,6 +1201,12 @@ export async function requestStoryboardPlan(params: {
     const loadedFiles: Array<{ path: string; content: string }> = [];
     const loadedFileKeys = new Set<string>();
 
+    // Pre-attach matched L3 reference files for any already-active skills so the model never skips reading them.
+    for (const wf of inferSkillFilesForInstruction(params.instruction, available, loadedNames, loadedFileKeys)) {
+        loadedFiles.push({ path: wf.path, content: wf.content });
+        autoLoadedSkills.push(wf.path);
+    }
+
     // Progressive disclosure: L1 (index) -> L2 (SKILL.md) -> L3 (references/* on demand).
     for (let round = 0; round < 3; round++) {
         const res = await requestPlanOnce(params, {
@@ -1063,7 +1218,11 @@ export async function requestStoryboardPlan(params: {
         });
         if (!res.ok || round === 2) return { ...res, autoLoadedSkills: [...new Set(autoLoadedSkills)] };
         const wantedSkills = skillsToAutoLoad(res.plan.loadSkills, available, loadedNames);
-        const wantedFiles = skillFilesToAutoLoad(res.plan.loadSkillFiles, available, [...loadedNames, ...wantedSkills], loadedFileKeys);
+        const nextLoadedNames = [...loadedNames, ...wantedSkills];
+        const wantedFiles = [
+            ...skillFilesToAutoLoad(res.plan.loadSkillFiles, available, nextLoadedNames, loadedFileKeys),
+            ...(wantedSkills.length ? inferSkillFilesForInstruction(params.instruction, available, nextLoadedNames, loadedFileKeys) : []),
+        ];
         if (!wantedSkills.length && !wantedFiles.length) {
             return { ...res, autoLoadedSkills: [...new Set(autoLoadedSkills)] };
         }

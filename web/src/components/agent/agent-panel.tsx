@@ -180,12 +180,25 @@ function changeLabel(ch: Change, codeOf: RowCodeOf = rawRowCode): { badge: strin
                 title: `${ch.title || "视频节点"} (${ch.duration}s · ${ch.size || "16:9"})${ch.refs ? ` · 参考 ${ch.refs}` : ""}`,
                 detail: ch.prompt,
             };
+        case "canvas.node.update": {
+            const targetTag = ch.target.startsWith("@") ? ch.target : `@${ch.target}`;
+            return {
+                badge: "改节点",
+                title: `${targetTag}${ch.title ? ` · ${ch.title}` : ""}${ch.size ? ` (${ch.size})` : ""}${ch.refs ? ` · 参考 ${ch.refs}` : ""}`,
+                detail: ch.prompt || ch.content || "",
+            };
+        }
     }
 }
 
 function planNeedsImagePreset(changes: Change[]): boolean {
     return changes.some(
-        (c) => c.kind === "canvas.image.add" || c.kind === "setting.add" || c.kind === "row.add" || c.kind === "row.update",
+        (c) =>
+            c.kind === "canvas.image.add" ||
+            c.kind === "canvas.node.update" ||
+            c.kind === "setting.add" ||
+            c.kind === "row.add" ||
+            c.kind === "row.update",
     );
 }
 
@@ -196,7 +209,13 @@ function planNeedsVideoPreset(changes: Change[]): boolean {
 function isCanvasOnlyPlan(changes: Change[]): boolean {
     return (
         changes.length > 0 &&
-        changes.every((c) => c.kind === "canvas.text.add" || c.kind === "canvas.image.add" || c.kind === "canvas.video.add")
+        changes.every(
+            (c) =>
+                c.kind === "canvas.text.add" ||
+                c.kind === "canvas.image.add" ||
+                c.kind === "canvas.video.add" ||
+                c.kind === "canvas.node.update",
+        )
     );
 }
 
@@ -615,7 +634,10 @@ export function AgentPanel() {
                 return;
             }
             createdTasks = res.createdTasks;
-            message.success(`已在画布上生成 ${enabledChanges.length} 个节点`);
+            const updateCount = enabledChanges.filter((c) => c.kind === "canvas.node.update").length;
+            const addCount = enabledChanges.length - updateCount;
+            const parts = [addCount > 0 ? `生成 ${addCount} 个节点` : "", updateCount > 0 ? `原地更新 ${updateCount} 个节点` : ""].filter(Boolean);
+            message.success(`已在画布上${parts.join("、")}`);
         } else {
             if (!host.applyStoryboardPlan) return;
             // Resolve the table now, so a plan card made before the table existed still works.
@@ -826,8 +848,13 @@ export function AgentPanel() {
                         const showImgPreset = planNeedsImagePreset(m.plan.changes);
                         const showVidPreset = planNeedsVideoPreset(m.plan.changes);
                         const hasDirectMediaAdd = m.plan.changes.some(
-                            (c) => c.kind === "canvas.image.add" || c.kind === "canvas.video.add",
+                            (c) =>
+                                c.kind === "canvas.image.add" ||
+                                c.kind === "canvas.video.add" ||
+                                (c.kind === "canvas.node.update" && Boolean(c.prompt)),
                         );
+                        const hasNodeUpdateOnly =
+                            m.plan.changes.length > 0 && m.plan.changes.every((c) => c.kind === "canvas.node.update");
                         const hasSettingPictures = m.plan.changes.some((c) => c.kind === "setting.add" || (c.kind === "setting.update" && Boolean(c.patch.imgPrompt)));
 
                         return (
@@ -890,8 +917,30 @@ export function AgentPanel() {
                                                         className="rounded border px-1.5 py-1 text-[11px] outline-none"
                                                         style={{ borderColor: border, background: theme.node.panel, color: theme.node.text }}
                                                         value={presetRatio}
-                                                        title="首帧图和视频共用这一个比例；只用于本次新建的节点，已有节点的尺寸不改"
-                                                        onChange={(e) => setPresetRatio(e.target.value)}
+                                                        title="默认优先使用每个节点自带比例（如道具 1:1、场景 16:9）；在此手动切换会统一覆盖本批节点比例"
+                                                        onChange={(e) => {
+                                                            const nextRatio = e.target.value;
+                                                            setPresetRatio(nextRatio);
+                                                            updateScopedMessages((prev) =>
+                                                                prev.map((item) =>
+                                                                    item.id === m.id && item.role === "plan" && item.status === "pending"
+                                                                        ? {
+                                                                              ...item,
+                                                                              plan: {
+                                                                                  ...item.plan,
+                                                                                  changes: item.plan.changes.map((c) =>
+                                                                                      c.kind === "canvas.image.add" ||
+                                                                                      c.kind === "canvas.video.add" ||
+                                                                                      c.kind === "canvas.node.update"
+                                                                                          ? { ...c, size: nextRatio }
+                                                                                          : c,
+                                                                                  ),
+                                                                              },
+                                                                          }
+                                                                        : item,
+                                                                ),
+                                                            );
+                                                        }}
                                                     >
                                                         {[...new Set([presetRatio, ...RATIO_OPTIONS])].map((ratio) => (
                                                             <option key={ratio} value={ratio} style={{ background: theme.node.panel, color: theme.node.text }}>
@@ -899,7 +948,7 @@ export function AgentPanel() {
                                                             </option>
                                                         ))}
                                                     </select>
-                                                    <span className="text-[10px] opacity-55">首帧和视频共用</span>
+                                                    <span className="text-[10px] opacity-55">各节点优先用自身比例，手改则统改</span>
                                                 </div>
                                                 {showImgPreset ? (
                                                     <div className="flex items-center gap-1.5">
@@ -955,7 +1004,7 @@ export function AgentPanel() {
                                                 className="flex-1 rounded-lg bg-sky-500 py-1.5 font-medium text-white transition hover:bg-sky-600"
                                                 onClick={() => handleApplyPlan(m.id, false)}
                                             >
-                                                确认生成节点
+                                                {hasNodeUpdateOnly ? "确认应用修改" : "确认生成节点"}
                                             </button>
                                             {hasDirectMediaAdd || hasSettingPictures ? (
                                                 <button
@@ -964,7 +1013,11 @@ export function AgentPanel() {
                                                     title="应用后弹出生成确认卡，确认后才开始生成"
                                                     onClick={() => handleApplyPlan(m.id, true)}
                                                 >
-                                                    {hasDirectMediaAdd ? "生成节点并立即运行" : "应用并生成设定图"}
+                                                    {hasNodeUpdateOnly
+                                                        ? "应用修改并立即运行"
+                                                        : hasDirectMediaAdd
+                                                          ? "生成节点并立即运行"
+                                                          : "应用并生成设定图"}
                                                 </button>
                                             ) : null}
                                             <button
